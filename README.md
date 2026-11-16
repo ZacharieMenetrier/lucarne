@@ -28,7 +28,7 @@ OPFS requires HTTPS or localhost: on iPad, use the built version (`npm run build
 ```
 my-game/
   palette.json       ["#1a1c2c", "#5d275d", …]
-  board.json         where each sprite sits on the editor's board
+  board.json         where each sprite sits on the editor's board, and its color
   sprites/hero.png   sheet: one row per direction, one column per frame
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
                        "directions": [{ "name": "default" }], "frames": [{ "duration": 100 }] }
@@ -52,6 +52,7 @@ Every change is saved automatically, about 0.4 s after the last stroke.
 | Zoom | trackpad pinch, ⌥ + wheel, + / − | two-finger pinch |
 | Pan | wheel, space + drag, middle button | two-finger drag |
 | Show every sprite, grid | 0, # | top bar |
+| Board color, saved with the game | swatch in the top bar | same |
 
 With a pen, only the pen draws: fingers and the palm leave no marks.
 

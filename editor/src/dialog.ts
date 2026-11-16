@@ -20,7 +20,8 @@ export function h<K extends keyof HTMLElementTagNameMap>(
 export interface DialogButton {
   label: string
   value: string
-  kind?: 'primary' | 'danger'
+  /** 'left' puts a plain button on the left, like 'danger'. */
+  kind?: 'primary' | 'danger' | 'left'
 }
 
 /**

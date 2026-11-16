@@ -140,11 +140,15 @@ describe('editor', () => {
 })
 
 describe('board', () => {
-  it('saves and reads positions', () => {
-    const text = serializeBoard(new Map([['slime', { x: 24, y: -8 }], ['hero', { x: 0, y: 0 }]]))
+  it('saves and reads positions and the board color', () => {
+    const placements = new Map([['slime', { x: 24, y: -8 }], ['hero', { x: 0, y: 0 }]])
+    const text = serializeBoard({ placements, background: null })
     expect(text).toContain('"hero": { "x": 0, "y": 0 },\n    "slime"')
-    expect(parseBoard(text)).toEqual(new Map([['hero', { x: 0, y: 0 }], ['slime', { x: 24, y: -8 }]]))
-    expect(parseBoard('{"sprites": {"bad": {"x": 1.5, "y": 0}}}').size).toBe(0)
+    expect(text).not.toContain('background')
+    expect(parseBoard(text)).toEqual({ placements: new Map([['hero', { x: 0, y: 0 }], ['slime', { x: 24, y: -8 }]]), background: null })
+    expect(parseBoard('{"sprites": {"bad": {"x": 1.5, "y": 0}}}').placements.size).toBe(0)
+    expect(parseBoard(serializeBoard({ placements, background: '#2a2a33' })).background).toBe('#2a2a33')
+    expect(parseBoard('{"background": "nope"}').background).toBeNull()
   })
 
   it('finds free space and lays out unplaced sprites', () => {

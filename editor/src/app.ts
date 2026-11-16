@@ -73,20 +73,20 @@ class Saver {
     clearTimeout(this.timer)
     if (!this.dirty) return this.chain
     const snapshots = [...this.sprites].map((n) => this.editor.snapshot(n)).filter((s): s is Sprite => s !== null)
-    const placements = this.board ? this.editor.placements() : null
+    const board = this.board ? this.editor.boardFile() : null
     this.sprites.clear()
     this.board = false
     this.set('saving')
     this.chain = this.chain
       .then(async () => {
         for (const s of snapshots) await this.project.saveSprite(s)
-        if (placements) await this.project.saveBoard(placements)
+        if (board) await this.project.saveBoard(board)
       })
       .then(
         () => this.set(this.dirty ? 'pending' : 'saved'),
         (err: Error) => {
           for (const s of snapshots) this.sprites.add(s.name)
-          if (placements) this.board = true
+          if (board) this.board = true
           this.set('error')
           toast(`Could not save: ${err.message}`)
         },
@@ -166,7 +166,8 @@ export class App {
 
   /** Loads every sprite and places it on the board. */
   private async loadBoard() {
-    const [names, placements] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
+    const [names, { placements, background }] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
+    this.editor.background = background
     const sprites = await Promise.all(
       names.map((name) =>
         this.project.loadSprite(name).catch((err: Error) => {
@@ -463,8 +464,47 @@ export class App {
     $('undo').addEventListener('click', () => this.editor.undo())
     $('redo').addEventListener('click', () => this.editor.redo())
     $('grid').addEventListener('click', () => this.toggleGrid())
+    $('background').addEventListener('click', () => void this.editBackground())
     $('fit').addEventListener('click', () => this.view.fit())
     $('sprite-info').addEventListener('click', () => void this.editSprite())
+  }
+
+  /** The editor's own board color, used when the game sets none. */
+  private get defaultBackground() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--stage-bg').trim() || '#202028'
+  }
+
+  private async editBackground() {
+    const initial = this.editor.background ?? this.defaultBackground
+    const picker = h('input', { type: 'color', value: initial })
+    const hex = h('input', { type: 'text', value: initial, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const set = (value: string) => {
+      picker.value = value
+      hex.value = value
+    }
+    picker.addEventListener('input', () => (hex.value = picker.value))
+    hex.addEventListener('input', () => {
+      if (isHex(hex.value)) picker.value = normalizeHex(hex.value).slice(0, 7)
+    })
+    const swatches = h('div', { className: 'bg-swatches' })
+    for (const c of this.project.palette) {
+      swatches.append(h('button', { type: 'button', className: 'swatch', title: c, style: `--c: ${c}`, onclick: () => set(c) }))
+    }
+    const body = h('div', { className: 'fields' },
+      h('p', { className: 'muted' }, 'Color behind the sprites, saved with this game. Try the color of your game’s sky or ground.'),
+      h('div', { className: 'color-row' }, picker, hex),
+      h('label', {}, 'From the palette', swatches),
+    )
+    const res = await openDialog('Board color', body, [
+      { label: 'Default', value: 'reset', kind: 'left' },
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Save', value: 'ok', kind: 'primary' },
+    ], (v) => (v === 'ok' && (!isHex(hex.value) || normalizeHex(hex.value).length !== 7) ? 'Use the #rrggbb format.' : null))
+    if (res === 'reset') this.editor.setBackground(null)
+    else if (res === 'ok') {
+      const value = normalizeHex(hex.value)
+      this.editor.setBackground(value === this.defaultBackground ? null : value)
+    }
   }
 
   private toggleGrid() {
@@ -582,6 +622,7 @@ export class App {
     $<HTMLButtonElement>('undo').disabled = !ed.canUndo
     $<HTMLButtonElement>('redo').disabled = !ed.canRedo
     $('grid').classList.toggle('active', this.view.showGrid)
+    $('background-swatch').style.background = ed.background ?? ''
 
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
       el.classList.toggle('active', el.dataset.tool === ed.tool)

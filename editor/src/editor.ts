@@ -23,7 +23,7 @@ import {
   type Point,
   type Rect,
 } from './bitmap'
-import { NAME_BAND, boundsOf, findFreeSpot, footprint, overlaps, resolveOverlaps, type Placements } from './board'
+import { NAME_BAND, boundsOf, findFreeSpot, footprint, overlaps, resolveOverlaps, type BoardFile, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
 import type { Sprite } from './sprite'
@@ -77,10 +77,12 @@ export class Editor {
   clipboard: Bitmap | null = null
   /** Pointer position on the board. */
   hover: Point | null = null
+  /** Board color for this game, "#rrggbb", or null for the default. */
+  background: string | null = null
 
   /** A sprite's pixels changed (to save it). */
   onEdit: (name: string) => void = () => {}
-  /** A sprite moved on the board (to save board.json). */
+  /** A sprite moved, or the board color changed (to save board.json). */
   onMoved: () => void = () => {}
   /** Undo touched a sprite that may be off screen. */
   onReveal: (name: string) => void = () => {}
@@ -197,6 +199,19 @@ export class Editor {
     for (const [name, p] of moved) this.placeFootprint(this.sprites.get(name)!, p)
     if (moved.size) this.emit()
     return moved.size > 0
+  }
+
+  /** Changes the board color (not undoable: it is a display setting). */
+  setBackground(hex: string | null) {
+    if (hex === this.background) return
+    this.background = hex
+    this.onMoved()
+    this.emit()
+  }
+
+  /** What board.json should contain. */
+  boardFile(): BoardFile {
+    return { placements: this.placements(), background: this.background }
   }
 
   placements(): Placements {

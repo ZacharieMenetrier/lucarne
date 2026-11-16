@@ -1,7 +1,9 @@
 {
   "version": 1,
+  "background": "#b13e53",
   "sprites": {
-    "sprite2": { "x": 31, "y": -16 },
-    "sprite3": { "x": -2, "y": 19 }
+    "sprite": { "x": -27, "y": 42 },
+    "sprite2": { "x": -10, "y": 26 },
+    "sprite3": { "x": -10, "y": 62 }
   }
 }

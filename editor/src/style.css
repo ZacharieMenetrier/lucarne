@@ -112,6 +112,21 @@ button.active {
 .spacer {
   flex: 1;
 }
+#background-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: var(--stage-bg);
+}
+.bg-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+.bg-swatches .swatch {
+  min-height: 0;
+}
 #save-status {
   font-size: 12px;
   color: var(--muted);
@@ -413,7 +428,8 @@ input[type='checkbox'] {
   gap: 8px;
   margin-top: 12px;
 }
-.dialog-actions .danger {
+.dialog-actions .danger,
+.dialog-actions .left {
   margin-right: auto;
 }
 

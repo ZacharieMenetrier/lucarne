@@ -13,8 +13,17 @@ export const MIN_ZOOM = 1
 export const MAX_ZOOM = 128
 
 const ACCENT = '#41a6f6'
-const OUTLINE = 'rgba(255, 255, 255, 0.16)'
-const LABEL = '#8a8a99'
+/** Lines and text that stay visible on the board color. */
+const ON_DARK = { outline: 'rgba(255, 255, 255, 0.16)', label: '#8a8a99', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff' }
+const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.22)', label: '#5c5c6a', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000' }
+
+function isLight(css: string) {
+  const m = /^#([0-9a-f]{6})/i.exec(css)
+  if (!m) return false
+  const n = parseInt(m[1], 16)
+  // Perceived brightness (ITU-R BT.601)
+  return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 140
+}
 const DANGER = '#e0566b'
 
 interface Label {
@@ -184,7 +193,8 @@ export class View {
     const dpr = this.dpr
     const style = getComputedStyle(canvas)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    const bg = style.getPropertyValue('--stage-bg').trim() || '#202028'
+    const bg = editor.background ?? (style.getPropertyValue('--stage-bg').trim() || '#202028')
+    const ink = isLight(bg) ? ON_LIGHT : ON_DARK
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     this.labels = []
@@ -242,13 +252,13 @@ export class View {
 
       // Grid
       if (this.showGrid && z >= 6 * dpr) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)'
+        ctx.fillStyle = ink.grid
         for (let i = 1; i < bmp.width; i++) ctx.fillRect(x + i * z, y, 1, h)
         for (let i = 1; i < bmp.height; i++) ctx.fillRect(x, y + i * z, w, 1)
       }
 
       // Outline, just outside the pixels; red while dropped on another sprite
-      ctx.strokeStyle = isActive ? (blocked ? DANGER : ACCENT) : OUTLINE
+      ctx.strokeStyle = isActive ? (blocked ? DANGER : ACCENT) : ink.outline
       ctx.lineWidth = lw
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
@@ -258,14 +268,14 @@ export class View {
     for (const { name, x, y, w } of visible) {
       this.labels.push({ name, x, y: y - band, w, h: band })
       if (fontSize < 7 * dpr) continue
-      ctx.fillStyle = name === editor.active ? ACCENT : LABEL
+      ctx.fillStyle = name === editor.active ? ACCENT : ink.label
       ctx.fillText(fitText(ctx, name, w), x, y - Math.max(2 * dpr, (band - fontSize) / 2))
     }
 
     // Hovered pixel outline (other drawing tools; the eraser, whose preview
     // is invisible on an empty pixel)
     if (hv && under && tool !== 'select' && tool !== 'pencil' && tool !== 'move') {
-      ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : colorToCss(editor.color)
+      ctx.strokeStyle = tool === 'eraser' ? ink.cursor : colorToCss(editor.color)
       ctx.lineWidth = lw
       ctx.strokeRect(this.ox + hv.x * z + 0.5, this.oy + hv.y * z + 0.5, z - 1, z - 1)
     }
