@@ -167,6 +167,10 @@ button.active {
 #canvas.hide-cursor {
   cursor: none;
 }
+#canvas.tool-move,
+#canvas.over-label {
+  cursor: grab;
+}
 
 #selbar {
   position: absolute;

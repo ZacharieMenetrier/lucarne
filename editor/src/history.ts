@@ -1,34 +1,32 @@
-import type { Bitmap } from './bitmap'
+/** Unlimited undo/redo for the length of the session. */
+export class History<T> {
+  private undos: T[] = []
+  private redos: T[] = []
 
-interface Entry {
-  before: Bitmap
-  after: Bitmap
-}
-
-/** Unlimited undo for one image, for the length of the session. */
-export class History {
-  private undos: Entry[] = []
-  private redos: Entry[] = []
-
-  /** Records a change. Ignored if the image did not change. */
-  push(before: Bitmap, after: Bitmap) {
-    if (before.equals(after)) return
-    this.undos.push({ before: before.clone(), after: after.clone() })
+  push(change: T) {
+    this.undos.push(change)
     this.redos = []
   }
 
-  undo(): Bitmap | null {
-    const e = this.undos.pop()
-    if (!e) return null
-    this.redos.push(e)
-    return e.before.clone()
+  undo(): T | null {
+    const c = this.undos.pop()
+    if (!c) return null
+    this.redos.push(c)
+    return c
   }
 
-  redo(): Bitmap | null {
-    const e = this.redos.pop()
-    if (!e) return null
-    this.undos.push(e)
-    return e.after.clone()
+  redo(): T | null {
+    const c = this.redos.pop()
+    if (!c) return null
+    this.undos.push(c)
+    return c
+  }
+
+  /** Rewrites every change; returning null drops it (renamed or deleted sprite). */
+  rewrite(fn: (change: T) => T | null) {
+    const map = (list: T[]) => list.map(fn).filter((c): c is T => c !== null)
+    this.undos = map(this.undos)
+    this.redos = map(this.redos)
   }
 
   get canUndo() {

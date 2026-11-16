@@ -1,5 +1,8 @@
 // Editor state and tool behavior, with no knowledge of the DOM.
-// Incoming coordinates are in sprite pixels.
+//
+// Every sprite of the game sits on one board. Pointer coordinates are board
+// coordinates, in sprite pixels; a press acts on the sprite under it, which
+// becomes the active one. Undo covers the whole board.
 
 import {
   Bitmap,
@@ -20,15 +23,23 @@ import {
   type Point,
   type Rect,
 } from './bitmap'
+import { NAME_BAND, boundsOf, findFreeSpot, footprint, overlaps, resolveOverlaps, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
 import type { Sprite } from './sprite'
 
-export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select'
+export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move'
 
 export interface PointerInput extends Point {
   shift: boolean
   alt: boolean
+}
+
+/** A sprite and its position on the board. */
+export interface Placed {
+  sprite: Sprite
+  x: number
+  y: number
 }
 
 interface Floating {
@@ -39,30 +50,44 @@ interface Floating {
   before: Bitmap
 }
 
+/** One undoable change. Pixel changes are for frame [d][f] of a sprite. */
+type Change =
+  | { kind: 'pixels'; name: string; d: number; f: number; before: Bitmap; after: Bitmap }
+  | { kind: 'place'; name: string; from: Point; to: Point }
+  | { kind: 'group'; items: Change[] }
+
+// Drag points are local to the active sprite, except 'place' (board).
 type Drag =
   | { kind: 'paint'; before: Bitmap; last: Point }
   | { kind: 'shape'; start: Point }
   | { kind: 'select'; start: Point; moved: boolean }
-  | { kind: 'move'; start: Point; origin: Point }
+  | { kind: 'float'; start: Point; origin: Point }
   | { kind: 'pick' }
+  | { kind: 'place'; name: string; start: Point; origin: Point }
 
 export class Editor {
-  sprite: Sprite | null = null
+  readonly sprites = new Map<string, Placed>()
+  active: string | null = null
   tool: ToolId = 'pencil'
   color: Color
-  /** Preview of a line or rectangle in progress. */
+  /** Preview of a line or rectangle in progress (active sprite). */
   overlay: Bitmap | null = null
   selection: Rect | null = null
   floating: Floating | null = null
   clipboard: Bitmap | null = null
+  /** Pointer position on the board. */
   hover: Point | null = null
 
-  /** Called when pixels changed (for saving). */
-  onEdit: () => void = () => {}
+  /** A sprite's pixels changed (to save it). */
+  onEdit: (name: string) => void = () => {}
+  /** A sprite moved on the board (to save board.json). */
+  onMoved: () => void = () => {}
+  /** Undo touched a sprite that may be off screen. */
+  onReveal: (name: string) => void = () => {}
   onMessage: (text: string) => void = () => {}
 
   private drag: Drag | null = null
-  private histories = new Map<string, History>()
+  private history = new History<Change>()
   private listeners = new Set<() => void>()
 
   constructor(public palette: string[]) {
@@ -81,57 +106,163 @@ export class Editor {
     for (const fn of this.listeners) fn()
   }
 
-  private edited() {
-    this.onEdit()
-    this.emit()
+  // -------------------------------------------------------------------------
+  // Board
+
+  get placed(): Placed | null {
+    return (this.active && this.sprites.get(this.active)) || null
   }
 
-  // -------------------------------------------------------------------------
-  // Current image
+  get sprite(): Sprite | null {
+    return this.placed?.sprite ?? null
+  }
 
+  /** Image being edited: first frame of the active sprite. */
   get bmp(): Bitmap | null {
     return this.sprite?.frames[0][0] ?? null
   }
 
-  private setBmp(bmp: Bitmap) {
-    if (!this.sprite) return
-    this.sprite.frames[0][0] = bmp
-    this.sprite.meta.frameWidth = bmp.width
-    this.sprite.meta.frameHeight = bmp.height
+  get dragging() {
+    return this.drag !== null
   }
 
-  get history(): History | null {
-    if (!this.sprite) return null
-    let h = this.histories.get(this.sprite.name)
-    if (!h) this.histories.set(this.sprite.name, (h = new History()))
-    return h
+  get canUndo() {
+    return this.history.canUndo || this.floating !== null
   }
 
-  renameHistory(from: string, to: string) {
-    const h = this.histories.get(from)
-    this.histories.delete(from)
-    if (h) this.histories.set(to, h)
+  get canRedo() {
+    return this.history.canRedo
   }
 
-  forgetHistory(name: string) {
-    this.histories.delete(name)
+  rectOf(name: string): Rect | null {
+    const pl = this.sprites.get(name)
+    if (!pl) return null
+    const b = pl.sprite.frames[0][0]
+    return { x: pl.x, y: pl.y, w: b.width, h: b.height }
   }
 
-  setSprite(sprite: Sprite | null) {
+  bounds(): Rect | null {
+    return boundsOf([...this.sprites.keys()].map((n) => this.footprintOf(n)!))
+  }
+
+  /** Names in drawing order: alphabetical, active sprite last (on top). */
+  drawOrder(): string[] {
+    const names = [...this.sprites.keys()].sort()
+    if (this.active) {
+      names.splice(names.indexOf(this.active), 1)
+      names.push(this.active)
+    }
+    return names
+  }
+
+  /** Sprite under a board point (the topmost one). */
+  hitTest(p: Point): string | null {
+    const order = this.drawOrder()
+    for (let i = order.length - 1; i >= 0; i--) {
+      if (rectContains(this.rectOf(order[i])!, p)) return order[i]
+    }
+    return null
+  }
+
+  /** Space a sprite claims on the board, name band included. */
+  footprintOf(name: string): Rect | null {
+    const r = this.rectOf(name)
+    return r && footprint(r)
+  }
+
+  /** Footprints of every sprite but one. */
+  private othersThan(name: string): Rect[] {
+    return [...this.sprites.keys()].filter((n) => n !== name).map((n) => this.footprintOf(n)!)
+  }
+
+  /** Moves a sprite so its footprint's top-left is at `p`. */
+  private placeFootprint(pl: Placed, p: Point) {
+    pl.x = p.x
+    pl.y = p.y + NAME_BAND
+  }
+
+  /** True while a sprite being moved sits on another one (it will be pushed aside). */
+  get placeBlocked(): boolean {
+    const d = this.drag
+    if (d?.kind !== 'place') return false
+    const r = this.footprintOf(d.name)!
+    return this.othersThan(d.name).some((o) => overlaps(r, o))
+  }
+
+  /** Separates sprites that overlap (board.json edited by hand, older boards).
+   * Not undoable. Returns true if anything moved. */
+  untangle(): boolean {
+    const names = [...this.sprites.keys()].sort()
+    const moved = resolveOverlaps([], names.map((name) => ({ name, rect: this.footprintOf(name)! })))
+    for (const [name, p] of moved) this.placeFootprint(this.sprites.get(name)!, p)
+    if (moved.size) this.emit()
+    return moved.size > 0
+  }
+
+  placements(): Placements {
+    return new Map([...this.sprites].map(([name, pl]) => [name, { x: pl.x, y: pl.y }]))
+  }
+
+  addSprite(sprite: Sprite, x: number, y: number) {
+    this.sprites.set(sprite.name, { sprite, x, y })
+    this.emit()
+  }
+
+  removeSprite(name: string) {
+    if (this.active === name) {
+      this.drag = null
+      this.overlay = null
+      this.selection = null
+      this.floating = null
+      this.active = null
+    }
+    this.sprites.delete(name)
+    this.history.rewrite((c) => renameChange(c, (n) => (n === name ? null : n)))
+    this.emit()
+  }
+
+  renameSprite(from: string, to: string) {
+    const pl = this.sprites.get(from)
+    if (!pl) return
+    this.sprites.delete(from)
+    pl.sprite.name = to
+    this.sprites.set(to, pl)
+    if (this.active === from) this.active = to
+    this.history.rewrite((c) => renameChange(c, (n) => (n === from ? to : n)))
+    this.emit()
+  }
+
+  /** Makes a sprite the one being edited (drops any floating selection first). */
+  activate(name: string | null) {
+    if (name === this.active) return
     this.commitFloating()
     this.drag = null
     this.overlay = null
     this.selection = null
-    this.sprite = sprite
+    this.active = name && this.sprites.has(name) ? name : null
     this.emit()
   }
 
-  /** Copy of the sprite as it should be saved (floating selection included). */
-  snapshot(): Sprite | null {
-    if (!this.sprite) return null
-    const frames = this.sprite.frames.map((row) => row.map((b) => b.clone()))
-    if (this.floating) blit(frames[0][0], this.floating.bmp, this.floating.x, this.floating.y)
-    return { name: this.sprite.name, meta: structuredClone(this.sprite.meta), frames }
+  /** Copy of a sprite as it should be saved (floating selection included). */
+  snapshot(name = this.active): Sprite | null {
+    const sprite = name ? this.sprites.get(name)?.sprite : null
+    if (!sprite) return null
+    const frames = sprite.frames.map((row) => row.map((b) => b.clone()))
+    if (name === this.active && this.floating) blit(frames[0][0], this.floating.bmp, this.floating.x, this.floating.y)
+    return { name: sprite.name, meta: structuredClone(sprite.meta), frames }
+  }
+
+  private setFrame(pl: Placed, d: number, f: number, bmp: Bitmap) {
+    pl.sprite.frames[d][f] = bmp
+    if (d === 0 && f === 0) {
+      pl.sprite.meta.frameWidth = bmp.width
+      pl.sprite.meta.frameHeight = bmp.height
+    }
+  }
+
+  private toLocal(p: PointerInput): PointerInput {
+    const pl = this.placed!
+    return { ...p, x: p.x - pl.x, y: p.y - pl.y }
   }
 
   // -------------------------------------------------------------------------
@@ -145,7 +276,9 @@ export class Editor {
 
   setColor(color: Color) {
     this.color = color
-    if (this.tool === 'eraser' || this.tool === 'picker' || this.tool === 'select') this.tool = 'pencil'
+    if (this.tool === 'eraser' || this.tool === 'picker' || this.tool === 'select' || this.tool === 'move') {
+      this.tool = 'pencil'
+    }
     this.emit()
   }
 
@@ -160,62 +293,105 @@ export class Editor {
   }
 
   // -------------------------------------------------------------------------
-  // Pointer
+  // Pointer (board coordinates)
 
   down(p: PointerInput) {
-    const bmp = this.bmp
-    if (!bmp || this.drag) return
+    if (this.drag) return
+    if (this.tool === 'move') {
+      const name = this.hitTest(p)
+      if (name) this.grab(name, p)
+      return
+    }
+    if (!this.target(p)) {
+      if (this.tool === 'select') this.deselect()
+      return
+    }
+    const q = this.toLocal(p)
+    const bmp = this.bmp!
     switch (this.tool) {
       case 'pencil':
       case 'eraser':
-        this.drag = { kind: 'paint', before: bmp.clone(), last: p }
-        this.plot(p)
+        this.drag = { kind: 'paint', before: bmp.clone(), last: q }
+        this.plot(q)
         break
       case 'fill': {
         const before = bmp.clone()
-        if (floodFill(bmp, p.x, p.y, this.color)) this.commit(before)
+        if (floodFill(bmp, q.x, q.y, this.color)) this.commit(before)
         break
       }
       case 'picker':
         this.drag = { kind: 'pick' }
-        this.pick(p)
+        this.pick(q)
         break
       case 'line':
       case 'rect':
       case 'rectFill':
-        this.drag = { kind: 'shape', start: p }
-        this.updateShape(p)
+        this.drag = { kind: 'shape', start: q }
+        this.updateShape(q)
         break
       case 'select':
-        this.selectDown(p)
+        this.selectDown(q)
         break
     }
     this.emit()
   }
 
+  /** Starts moving a sprite on the board (Move tool, or dragging its name). */
+  grab(name: string, p: Point) {
+    if (this.drag || !this.sprites.has(name)) return
+    this.activate(name)
+    const pl = this.sprites.get(name)!
+    this.drag = { kind: 'place', name, start: { x: p.x, y: p.y }, origin: { x: pl.x, y: pl.y } }
+    this.emit()
+  }
+
+  /** Chooses the sprite a press acts on and activates it. */
+  private target(p: PointerInput): boolean {
+    if (this.tool === 'select' && this.placed) {
+      // Moving the current selection may start outside the sprite.
+      const q = this.toLocal(p)
+      const f = this.floating
+      if (f && rectContains({ x: f.x, y: f.y, w: f.bmp.width, h: f.bmp.height }, q)) return true
+      if (!f && this.selection && rectContains(this.selection, q)) return true
+    }
+    const name = this.hitTest(p)
+    if (!name) return false
+    this.activate(name)
+    return true
+  }
+
   move(p: PointerInput) {
-    this.hover = p
+    this.hover = { x: p.x, y: p.y }
     const d = this.drag
     if (!d) return this.emit()
+    if (d.kind === 'place') {
+      const pl = this.sprites.get(d.name)
+      if (pl) {
+        pl.x = d.origin.x + p.x - d.start.x
+        pl.y = d.origin.y + p.y - d.start.y
+      }
+      return this.emit()
+    }
+    const q = this.toLocal(p)
     switch (d.kind) {
       case 'paint':
-        this.plot(p, d.last)
-        d.last = p
+        this.plot(q, d.last)
+        d.last = q
         break
       case 'pick':
-        this.pick(p)
+        this.pick(q)
         break
       case 'shape':
-        this.updateShape(p)
+        this.updateShape(q)
         break
       case 'select':
-        if (p.x !== d.start.x || p.y !== d.start.y) d.moved = true
-        this.selection = this.clipToImage(rectFromCorners(d.start, p))
+        if (q.x !== d.start.x || q.y !== d.start.y) d.moved = true
+        this.selection = this.clipToImage(rectFromCorners(d.start, q))
         break
-      case 'move':
+      case 'float':
         if (this.floating) {
-          this.floating.x = d.origin.x + p.x - d.start.x
-          this.floating.y = d.origin.y + p.y - d.start.y
+          this.floating.x = d.origin.x + q.x - d.start.x
+          this.floating.y = d.origin.y + q.y - d.start.y
           this.selection = { x: this.floating.x, y: this.floating.y, w: this.floating.bmp.width, h: this.floating.bmp.height }
         }
         break
@@ -225,15 +401,31 @@ export class Editor {
 
   up(p: PointerInput) {
     const d = this.drag
-    const bmp = this.bmp
     this.drag = null
-    if (!d || !bmp) return
+    if (!d) return
+    if (d.kind === 'place') {
+      const pl = this.sprites.get(d.name)
+      const others = this.othersThan(d.name)
+      const mine = this.footprintOf(d.name)
+      if (pl && mine && others.some((o) => overlaps(mine, o))) {
+        // Sprites never overlap, nor cover a name (they may touch): closest free spot.
+        this.placeFootprint(pl, findFreeSpot(mine.w, mine.h, mine, others, 0))
+      }
+      if (pl && (pl.x !== d.origin.x || pl.y !== d.origin.y)) {
+        this.history.push({ kind: 'place', name: d.name, from: d.origin, to: { x: pl.x, y: pl.y } })
+        this.onMoved()
+      }
+      return this.emit()
+    }
+    const bmp = this.bmp
+    if (!bmp) return
+    const q = this.toLocal(p)
     switch (d.kind) {
       case 'paint':
         this.commit(d.before)
         break
       case 'shape':
-        this.updateShape(p)
+        this.updateShape(q)
         if (this.overlay) {
           const before = bmp.clone()
           blit(bmp, this.overlay, 0, 0)
@@ -244,9 +436,9 @@ export class Editor {
       case 'select':
         if (!d.moved) this.selection = null
         break
-      case 'move':
+      case 'float':
         // Saving includes the floating selection at its new position.
-        this.onEdit()
+        this.onEdit(this.active!)
         break
     }
     this.emit()
@@ -290,16 +482,18 @@ export class Editor {
     this.overlay = overlay
   }
 
-  /** Records a change in the history. */
+  /** Records a change of the active image in the history. */
   private commit(before: Bitmap) {
     const bmp = this.bmp
-    if (!bmp || before.equals(bmp)) return
-    this.history!.push(before, bmp)
-    this.edited()
+    const name = this.active
+    if (!bmp || !name || before.equals(bmp)) return
+    this.history.push({ kind: 'pixels', name, d: 0, f: 0, before, after: bmp.clone() })
+    this.onEdit(name)
+    this.emit()
   }
 
   // -------------------------------------------------------------------------
-  // Selection
+  // Selection (active sprite, local coordinates)
 
   private clipToImage(r: Rect) {
     const bmp = this.bmp!
@@ -310,12 +504,12 @@ export class Editor {
     const f = this.floating
     if (f && rectContains({ x: f.x, y: f.y, w: f.bmp.width, h: f.bmp.height }, p)) {
       if (p.alt) this.stamp()
-      this.drag = { kind: 'move', start: p, origin: { x: f.x, y: f.y } }
+      this.drag = { kind: 'float', start: p, origin: { x: f.x, y: f.y } }
       return
     }
     if (!f && this.selection && rectContains(this.selection, p)) {
       this.lift(!p.alt)
-      this.drag = { kind: 'move', start: p, origin: { x: this.floating!.x, y: this.floating!.y } }
+      this.drag = { kind: 'float', start: p, origin: { x: this.floating!.x, y: this.floating!.y } }
       return
     }
     this.commitFloating()
@@ -374,17 +568,19 @@ export class Editor {
 
   flip(axis: 'h' | 'v') {
     const bmp = this.bmp
-    if (!bmp) return
+    const pl = this.placed
+    if (!bmp || !pl) return
     if (!this.selection) {
       // No selection: the whole image.
       const before = bmp.clone()
-      this.setBmp(axis === 'h' ? flipH(bmp) : flipV(bmp))
+      this.setFrame(pl, 0, 0, axis === 'h' ? flipH(bmp) : flipV(bmp))
       return this.commit(before)
     }
     this.lift(true)
     const f = this.floating!
     f.bmp = axis === 'h' ? flipH(f.bmp) : flipV(f.bmp)
-    this.edited()
+    this.onEdit(this.active!)
+    this.emit()
   }
 
   deleteSelection() {
@@ -416,6 +612,7 @@ export class Editor {
     this.deleteSelection()
   }
 
+  /** Pastes into the active sprite (which may differ from the one copied from). */
   paste() {
     const bmp = this.bmp
     if (!bmp || !this.clipboard) return
@@ -425,7 +622,8 @@ export class Editor {
     this.floating = { bmp: this.clipboard.clone(), x, y, before: bmp.clone() }
     this.selection = { x, y, w: this.clipboard.width, h: this.clipboard.height }
     this.tool = 'select'
-    this.edited()
+    this.onEdit(this.active!)
+    this.emit()
   }
 
   // -------------------------------------------------------------------------
@@ -434,40 +632,111 @@ export class Editor {
   undo() {
     if (this.drag) return
     this.commitFloating()
-    const bmp = this.history?.undo()
-    if (bmp) this.restore(bmp)
+    const c = this.history.undo()
+    if (c) this.apply(c, true)
   }
 
   redo() {
     if (this.drag) return
     this.commitFloating()
-    const bmp = this.history?.redo()
-    if (bmp) this.restore(bmp)
+    const c = this.history.redo()
+    if (c) this.apply(c, false)
   }
 
-  private restore(bmp: Bitmap) {
-    this.selection = null
-    this.setBmp(bmp)
-    this.edited()
+  private apply(c: Change, undo: boolean, single = true) {
+    if (c.kind === 'group') {
+      const items = undo ? [...c.items].reverse() : c.items
+      for (const item of items) this.apply(item, undo, false)
+      return this.emit()
+    }
+    const pl = this.sprites.get(c.name)
+    if (!pl) return
+    if (c.kind === 'pixels') {
+      this.setFrame(pl, c.d, c.f, (undo ? c.before : c.after).clone())
+      this.onEdit(c.name)
+    } else {
+      const to = undo ? c.from : c.to
+      pl.x = to.x
+      pl.y = to.y
+      this.onMoved()
+    }
+    if (single) {
+      // Show what was undone: make that sprite active, and visible.
+      this.activate(c.name)
+      this.selection = null
+      this.onReveal(c.name)
+      this.emit()
+    }
   }
 
-  /** Resizes the image; the old image is placed at (ox, oy). */
+  /** Resizes the active image; the old image goes at (ox, oy), and the sprite
+   * moves on the board so the drawing stays where it was. */
   resize(w: number, h: number, ox: number, oy: number) {
     const bmp = this.bmp
-    if (!bmp) return
+    const pl = this.placed
+    const name = this.active
+    if (!bmp || !pl || !name) return
     this.commitFloating()
     this.selection = null
     const before = bmp.clone()
-    this.setBmp(resized(bmp, w, h, ox, oy))
-    this.commit(before)
+    this.setFrame(pl, 0, 0, resized(bmp, w, h, ox, oy))
+    const items: Change[] = [{ kind: 'pixels', name, d: 0, f: 0, before, after: this.bmp!.clone() }]
+    if (ox || oy) {
+      const from = { x: pl.x, y: pl.y }
+      pl.x -= ox
+      pl.y -= oy
+      items.push({ kind: 'place', name, from, to: { x: pl.x, y: pl.y } })
+    }
+    // A bigger sprite pushes aside the neighbours it now covers.
+    const mine = this.footprintOf(name)!
+    const others = [...this.sprites.keys()].filter((n) => n !== name).sort()
+    const covered = others.filter((n) => overlaps(mine, this.footprintOf(n)!))
+    const pushed = resolveOverlaps(
+      [mine, ...others.filter((n) => !covered.includes(n)).map((n) => this.footprintOf(n)!)],
+      covered.map((n) => ({ name: n, rect: this.footprintOf(n)! })),
+    )
+    for (const [n, p] of pushed) {
+      const other = this.sprites.get(n)!
+      const from = { x: other.x, y: other.y }
+      this.placeFootprint(other, p)
+      items.push({ kind: 'place', name: n, from, to: { x: other.x, y: other.y } })
+    }
+    if (items.length > 1) this.onMoved()
+    this.history.push({ kind: 'group', items })
+    this.onEdit(name)
+    this.emit()
   }
 
-  /** Replaces a color in the current image (undoable). */
-  replaceColor(from: Color, to: Color) {
-    const bmp = this.bmp
-    if (!bmp) return
+  /** Replaces a color in every sprite, as a single undo step. Returns the sprites changed. */
+  replaceColorEverywhere(from: Color, to: Color): string[] {
     this.commitFloating()
-    const before = bmp.clone()
-    if (replaceColor(bmp, from, to)) this.commit(before)
+    const items: Change[] = []
+    const changed: string[] = []
+    for (const [name, pl] of this.sprites) {
+      let any = false
+      pl.sprite.frames.forEach((row, d) =>
+        row.forEach((b, f) => {
+          const after = b.clone()
+          if (!replaceColor(after, from, to)) return
+          items.push({ kind: 'pixels', name, d, f, before: b, after: after.clone() })
+          pl.sprite.frames[d][f] = after
+          any = true
+        }),
+      )
+      if (any) changed.push(name)
+    }
+    if (items.length) this.history.push({ kind: 'group', items })
+    for (const name of changed) this.onEdit(name)
+    this.emit()
+    return changed
   }
+}
+
+function renameChange(c: Change, rename: (name: string) => string | null): Change | null {
+  if (c.kind === 'group') {
+    const items = c.items.map((i) => renameChange(i, rename)).filter((i): i is Change => i !== null)
+    return items.length ? { kind: 'group', items } : null
+  }
+  const name = rename(c.name)
+  return name === null ? null : { ...c, name }
 }

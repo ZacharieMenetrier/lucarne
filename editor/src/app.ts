@@ -1,13 +1,14 @@
 // The interface: toolbars, palette, sprite list, shortcuts, autosave.
 
-import { Bitmap, replaceColor } from './bitmap'
+import type { Bitmap } from './bitmap'
+import { BOARD_GAP, NAME_BAND, findFreeSpot, shelfLayout } from './board'
 import { colorToHex, hexToColor, isHex } from './color'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { Editor, type ToolId } from './editor'
 import { icon } from './icons'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
-import { MAX_SIZE, NAME_RE, newSprite } from './sprite'
+import { MAX_SIZE, NAME_RE, newSprite, type Sprite } from './sprite'
 import { toImageData } from './png'
 import { View } from './view'
 
@@ -20,6 +21,7 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: 'rect', label: 'Rectangle', key: 'R' },
   { id: 'rectFill', label: 'Filled rectangle', key: '⇧R' },
   { id: 'select', label: 'Select', key: 'M' },
+  { id: 'move', label: 'Move sprite', key: 'V' },
 ]
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -31,7 +33,8 @@ type SaveStatus = 'saved' | 'pending' | 'saving' | 'error'
 
 class Saver {
   status: SaveStatus = 'saved'
-  private dirty = false
+  private sprites = new Set<string>()
+  private board = false
   private timer = 0
   private chain: Promise<void> = Promise.resolve()
 
@@ -41,12 +44,25 @@ class Saver {
     private readonly onStatus: (s: SaveStatus) => void,
   ) {}
 
+  private get dirty() {
+    return this.sprites.size > 0 || this.board
+  }
+
   get busy() {
     return this.dirty || this.status === 'saving'
   }
 
-  schedule() {
-    this.dirty = true
+  sprite(name: string) {
+    this.sprites.add(name)
+    this.schedule()
+  }
+
+  boardMoved() {
+    this.board = true
+    this.schedule()
+  }
+
+  private schedule() {
     this.set('pending')
     clearTimeout(this.timer)
     this.timer = window.setTimeout(() => void this.flush(), 400)
@@ -56,16 +72,21 @@ class Saver {
   flush(): Promise<void> {
     clearTimeout(this.timer)
     if (!this.dirty) return this.chain
-    this.dirty = false
-    const snapshot = this.editor.snapshot()
-    if (!snapshot) return this.chain
+    const snapshots = [...this.sprites].map((n) => this.editor.snapshot(n)).filter((s): s is Sprite => s !== null)
+    const placements = this.board ? this.editor.placements() : null
+    this.sprites.clear()
+    this.board = false
     this.set('saving')
     this.chain = this.chain
-      .then(() => this.project.saveSprite(snapshot))
+      .then(async () => {
+        for (const s of snapshots) await this.project.saveSprite(s)
+        if (placements) await this.project.saveBoard(placements)
+      })
       .then(
         () => this.set(this.dirty ? 'pending' : 'saved'),
         (err: Error) => {
-          this.dirty = true
+          for (const s of snapshots) this.sprites.add(s.name)
+          if (placements) this.board = true
           this.set('error')
           toast(`Could not save: ${err.message}`)
         },
@@ -73,11 +94,13 @@ class Saver {
     return this.chain
   }
 
-  /** Drops pending changes (deleted sprite). */
-  discard() {
-    clearTimeout(this.timer)
-    this.dirty = false
-    this.set('saved')
+  /** Drops pending changes to a sprite (deleted). */
+  discard(name: string) {
+    this.sprites.delete(name)
+    if (!this.dirty) {
+      clearTimeout(this.timer)
+      this.set('saved')
+    }
   }
 
   private set(s: SaveStatus) {
@@ -96,15 +119,19 @@ export class App {
   private thumbs = new Map<string, HTMLCanvasElement>()
   private editingPalette = false
   private thumbTimer = 0
+  private staleThumbs = new Set<string>()
+  private rememberedSprite: string | null = null
 
   constructor(private readonly project: Project) {
     this.editor = new Editor(project.palette)
     this.view = new View($<HTMLCanvasElement>('canvas'), this.editor)
     this.saver = new Saver(project, this.editor, (s) => this.renderStatus(s))
-    this.editor.onEdit = () => {
-      this.saver.schedule()
-      this.scheduleThumb()
+    this.editor.onEdit = (name) => {
+      this.saver.sprite(name)
+      this.scheduleThumb(name)
     }
+    this.editor.onMoved = () => this.saver.boardMoved()
+    this.editor.onReveal = (name) => this.view.reveal(name)
     this.editor.onMessage = toast
   }
 
@@ -130,11 +157,44 @@ export class App {
 
     $('project-name').textContent = this.project.name
     this.renderPalette()
-    await this.refreshSprites()
+    await this.loadBoard()
     const last = this.lastSprite
-    const first = last && this.spriteNames.includes(last) ? last : this.spriteNames[0]
-    if (first) await this.openSprite(first)
+    this.editor.activate(last && this.spriteNames.includes(last) ? last : (this.spriteNames[0] ?? null))
+    this.view.fit()
     this.render()
+  }
+
+  /** Loads every sprite and places it on the board. */
+  private async loadBoard() {
+    const [names, placements] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
+    const sprites = await Promise.all(
+      names.map((name) =>
+        this.project.loadSprite(name).catch((err: Error) => {
+          toast(err.message)
+          return null
+        }),
+      ),
+    )
+    const unplaced: { name: string; w: number; h: number }[] = []
+    for (const s of sprites) {
+      if (!s) continue
+      const p = placements.get(s.name)
+      if (p) this.editor.addSprite(s, p.x, p.y)
+      else unplaced.push({ name: s.name, w: s.meta.frameWidth, h: s.meta.frameHeight })
+    }
+    // Sprites with no position yet (first opening, files added by hand) go
+    // in rows below the others.
+    const b = this.editor.bounds()
+    const origin = b ? { x: b.x, y: b.y + b.h + BOARD_GAP * 2 } : { x: 0, y: 0 }
+    const layout = shelfLayout(unplaced, origin)
+    for (const s of sprites) {
+      const p = s && layout.get(s.name)
+      if (p) this.editor.addSprite(s, p.x, p.y)
+    }
+    const stale = [...placements.keys()].some((n) => !this.editor.sprites.has(n))
+    const untangled = this.editor.untangle()
+    if (unplaced.length || stale || untangled) this.saver.boardMoved()
+    this.refreshSprites()
   }
 
   // --- Sprites --------------------------------------------------------------
@@ -160,32 +220,19 @@ export class App {
     }
   }
 
-  async openSprite(name: string) {
-    if (this.editor.sprite?.name === name) return
-    await this.saver.flush()
-    try {
-      const sprite = await this.project.loadSprite(name)
-      this.editor.setSprite(sprite)
-      this.lastSprite = name
-    } catch (err) {
-      toast((err as Error).message)
-    }
-    this.renderSprites()
+  /** Makes a sprite active and brings it into view (sprite list). */
+  focusSprite(name: string) {
+    this.editor.activate(name)
+    this.view.focus(name)
   }
 
-  private async refreshSprites() {
-    this.spriteNames = await this.project.listSprites()
-    await Promise.all(
-      this.spriteNames.map(async (name) => {
-        if (this.thumbs.has(name)) return
-        try {
-          const s = await this.project.loadSprite(name)
-          this.thumbs.set(name, makeThumb(s.frames[0][0]))
-        } catch {
-          // Unreadable sprite: no thumbnail.
-        }
-      }),
-    )
+  /** Rebuilds the sprite list from the board. */
+  private refreshSprites() {
+    this.spriteNames = [...this.editor.sprites.keys()].sort()
+    for (const name of this.spriteNames) {
+      if (!this.thumbs.has(name)) this.thumbs.set(name, makeThumb(this.editor.sprites.get(name)!.sprite.frames[0][0]))
+    }
+    for (const name of this.thumbs.keys()) if (!this.editor.sprites.has(name)) this.thumbs.delete(name)
     this.renderSprites()
   }
 
@@ -239,17 +286,20 @@ export class App {
 
     const name = nameInput.value.trim()
     const { w, h: hh } = size.read()
-    await this.saver.flush()
     const sprite = newSprite(name, w, hh)
     try {
       await this.project.saveSprite(sprite)
     } catch (err) {
       return toast(`Could not create: ${(err as Error).message}`)
     }
-    this.editor.setSprite(sprite)
-    this.lastSprite = name
-    this.thumbs.set(name, makeThumb(sprite.frames[0][0]))
-    await this.refreshSprites()
+    // In free space, near the middle of the screen.
+    const c = this.view.center()
+    const taken = [...this.editor.sprites.keys()].map((n) => this.editor.footprintOf(n)!)
+    const spot = findFreeSpot(w, hh + NAME_BAND, { x: c.x - w / 2, y: c.y - hh / 2 - NAME_BAND }, taken)
+    this.editor.addSprite(sprite, spot.x, spot.y + NAME_BAND)
+    this.saver.boardMoved()
+    this.refreshSprites()
+    this.focusSprite(name)
   }
 
   async editSprite() {
@@ -290,7 +340,6 @@ export class App {
 
   private async renameSprite(from: string, to: string) {
     await this.saver.flush()
-    const sprite = this.editor.sprite!
     const snapshot = this.editor.snapshot()!
     snapshot.name = to
     try {
@@ -299,14 +348,12 @@ export class App {
     } catch (err) {
       return toast(`Could not rename: ${(err as Error).message}`)
     }
-    sprite.name = to
-    this.editor.renameHistory(from, to)
+    this.editor.renameSprite(from, to)
+    this.saver.boardMoved()
     const thumb = this.thumbs.get(from)
     this.thumbs.delete(from)
     if (thumb) this.thumbs.set(to, thumb)
-    this.lastSprite = to
-    await this.refreshSprites()
-    this.editor.emit()
+    this.refreshSprites()
   }
 
   private async deleteSprite() {
@@ -319,27 +366,32 @@ export class App {
       true,
     )
     if (!ok) return
-    this.saver.discard()
-    await this.project.deleteSprite(sprite.name)
-    this.editor.forgetHistory(sprite.name)
-    this.thumbs.delete(sprite.name)
-    this.editor.setSprite(null)
-    this.lastSprite = null
-    await this.refreshSprites()
-    if (this.spriteNames[0]) await this.openSprite(this.spriteNames[0])
+    const name = sprite.name
+    this.saver.discard(name)
+    try {
+      await this.project.deleteSprite(name)
+    } catch (err) {
+      return toast(`Could not delete: ${(err as Error).message}`)
+    }
+    this.editor.removeSprite(name)
+    this.saver.boardMoved()
+    this.refreshSprites()
   }
 
-  private scheduleThumb() {
+  private scheduleThumb(name: string) {
+    this.staleThumbs.add(name)
     if (this.thumbTimer) return
     this.thumbTimer = window.setTimeout(() => {
       this.thumbTimer = 0
-      const snap = this.editor.snapshot()
-      if (!snap) return
-      const old = this.thumbs.get(snap.name)
-      const thumb = makeThumb(snap.frames[0][0])
-      this.thumbs.set(snap.name, thumb)
-      if (old) old.replaceWith(thumb)
-      else this.renderSprites()
+      for (const n of this.staleThumbs) {
+        const snap = this.editor.snapshot(n)
+        if (!snap) continue
+        const old = this.thumbs.get(n)
+        const thumb = makeThumb(snap.frames[0][0])
+        this.thumbs.set(n, thumb)
+        old?.replaceWith(thumb)
+      }
+      this.staleThumbs.clear()
     }, 250)
   }
 
@@ -380,7 +432,7 @@ export class App {
       const value = normalizeHex(hex.value)
       if (index === null) palette.push(value)
       else palette[index] = value
-      if (old && old !== value && replace.checked) await this.replaceEverywhere(old, value)
+      if (old && old !== value && replace.checked) this.replaceEverywhere(old, value)
     }
     this.project.palette = palette
     this.editor.setPalette(palette)
@@ -392,31 +444,13 @@ export class App {
     this.renderPalette()
   }
 
-  private async replaceEverywhere(fromHex: string, toHex: string) {
+  private replaceEverywhere(fromHex: string, toHex: string) {
     const from = hexToColor(fromHex)
     const to = hexToColor(toHex)
     if (this.editor.color === from) this.editor.color = to
-    await this.saver.flush()
-    // Open sprite: undoable.
-    this.editor.replaceColor(from, to)
-    let count = 0
-    for (const name of this.spriteNames) {
-      if (name === this.editor.sprite?.name) continue
-      try {
-        const s = await this.project.loadSprite(name)
-        let changed = false
-        for (const row of s.frames) for (const b of row) changed = replaceColor(b, from, to) || changed
-        if (changed) {
-          await this.project.saveSprite(s)
-          this.thumbs.set(name, makeThumb(s.frames[0][0]))
-          count++
-        }
-      } catch (err) {
-        toast(`${name}: ${(err as Error).message}`)
-      }
-    }
-    if (count) toast(`Color replaced in ${count} other sprite${count > 1 ? 's' : ''}`)
-    this.renderSprites()
+    // Every sprite, as a single undo step.
+    const count = this.editor.replaceColorEverywhere(from, to).length
+    if (count) toast(`Color replaced in ${count} sprite${count > 1 ? 's' : ''}`)
   }
 
   // --- Construction ---------------------------------------------------------
@@ -474,7 +508,7 @@ export class App {
 
   private bindKeys() {
     const input = attachInput(this.view.canvas, this.view, this.editor)
-    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select' }
+    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select', v: 'move' }
 
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement
@@ -537,12 +571,16 @@ export class App {
     const sprite = ed.sprite
     const bmp = ed.bmp
 
-    $('app').classList.toggle('no-sprite', !sprite)
+    $('app').classList.toggle('no-sprite', ed.sprites.size === 0)
+    if (sprite && sprite.name !== this.rememberedSprite) {
+      this.rememberedSprite = sprite.name
+      this.lastSprite = sprite.name
+    }
     $('sprite-name').textContent = sprite?.name ?? '—'
     $('sprite-size').textContent = bmp ? `${bmp.width}×${bmp.height}` : ''
     $<HTMLButtonElement>('sprite-info').disabled = !sprite
-    $<HTMLButtonElement>('undo').disabled = !ed.history?.canUndo && !ed.floating
-    $<HTMLButtonElement>('redo').disabled = !ed.history?.canRedo
+    $<HTMLButtonElement>('undo').disabled = !ed.canUndo
+    $<HTMLButtonElement>('redo').disabled = !ed.canRedo
     $('grid').classList.toggle('active', this.view.showGrid)
 
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
@@ -605,7 +643,7 @@ export class App {
         h('button', {
           className: 'sprite-item',
           'data-name': name,
-          onclick: () => void this.openSprite(name),
+          onclick: () => this.focusSprite(name),
         },
         this.thumbs.get(name) ?? h('span', { className: 'thumb' }),
         h('span', { className: 'sprite-label' }, name)),

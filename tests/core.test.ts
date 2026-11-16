@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Bitmap, constrainLine, floodFill, flipH, linePoints, resized } from '../editor/src/bitmap'
 import { colorToHex, hexToColor } from '../editor/src/color'
 import { Editor } from '../editor/src/editor'
+import { findFreeSpot, overlaps, parseBoard, resolveOverlaps, serializeBoard, shelfLayout } from '../editor/src/board'
 import { parsePalette } from '../editor/src/project'
 import { composeSheet, newSprite, parseMeta, splitSheet } from '../editor/src/sprite'
 
@@ -67,7 +68,8 @@ describe('sprite', () => {
 describe('editor', () => {
   function setup() {
     const ed = new Editor(['#ff0000', '#0000ff'])
-    ed.setSprite(newSprite('test', 8, 8))
+    ed.addSprite(newSprite('test', 8, 8), 0, 0)
+    ed.activate('test')
     return ed
   }
 
@@ -134,5 +136,154 @@ describe('editor', () => {
     ed.up(at(4, 3))
     expect(ed.bmp!.get(4, 3)).toBe(BLUE)
     expect(ed.bmp!.get(2, 2)).toBe(0)
+  })
+})
+
+describe('board', () => {
+  it('saves and reads positions', () => {
+    const text = serializeBoard(new Map([['slime', { x: 24, y: -8 }], ['hero', { x: 0, y: 0 }]]))
+    expect(text).toContain('"hero": { "x": 0, "y": 0 },\n    "slime"')
+    expect(parseBoard(text)).toEqual(new Map([['hero', { x: 0, y: 0 }], ['slime', { x: 24, y: -8 }]]))
+    expect(parseBoard('{"sprites": {"bad": {"x": 1.5, "y": 0}}}').size).toBe(0)
+  })
+
+  it('finds free space and lays out unplaced sprites', () => {
+    const taken = [{ x: 0, y: 0, w: 16, h: 16 }]
+    const p = findFreeSpot(16, 16, { x: 0, y: 0 }, taken)
+    expect(overlaps({ ...p, w: 16, h: 16 }, taken[0], 8)).toBe(false)
+    const layout = shelfLayout([{ name: 'a', w: 16, h: 16 }, { name: 'b', w: 16, h: 16 }], { x: 0, y: 40 })
+    expect(layout.get('a')).toEqual({ x: 0, y: 40 })
+    expect(layout.get('b')!.x).toBeGreaterThanOrEqual(24)
+  })
+
+  function board() {
+    const ed = new Editor(['#ff0000', '#0000ff'])
+    ed.addSprite(newSprite('hero', 8, 8), 0, 0)
+    ed.addSprite(newSprite('slime', 8, 8), 20, 0)
+    return ed
+  }
+
+  it('draws on the sprite under the pointer and makes it active', () => {
+    const ed = board()
+    ed.down(at(21, 2))
+    ed.up(at(21, 2))
+    expect(ed.active).toBe('slime')
+    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 2)).toBe(RED)
+    ed.down(at(12, 2)) // between the two: nothing
+    ed.up(at(12, 2))
+    expect(ed.active).toBe('slime')
+  })
+
+  it('undoes across sprites, in order', () => {
+    const ed = board()
+    const edits: string[] = []
+    ed.onEdit = (n) => edits.push(n)
+    ed.down(at(1, 1))
+    ed.up(at(1, 1))
+    ed.down(at(21, 1))
+    ed.up(at(21, 1))
+    ed.undo()
+    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 1)).toBe(0)
+    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(1, 1)).toBe(RED)
+    ed.undo()
+    expect(ed.active).toBe('hero')
+    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(1, 1)).toBe(0)
+    expect(edits).toEqual(['hero', 'slime', 'slime', 'hero'])
+  })
+
+  it('moves a sprite with the Move tool, undoably', () => {
+    const ed = board()
+    let moved = 0
+    ed.onMoved = () => moved++
+    ed.setTool('move')
+    ed.down(at(22, 3))
+    ed.move(at(30, 13))
+    ed.up(at(30, 13))
+    expect(ed.rectOf('slime')).toEqual({ x: 28, y: 10, w: 8, h: 8 })
+    ed.undo()
+    expect(ed.rectOf('slime')).toEqual({ x: 20, y: 0, w: 8, h: 8 })
+    expect(moved).toBe(2)
+  })
+
+  it('pastes into another sprite', () => {
+    const ed = board()
+    ed.down(at(0, 0))
+    ed.up(at(0, 0))
+    ed.copy()
+    ed.activate('slime')
+    ed.paste()
+    ed.deselect()
+    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
+  })
+
+  it('replaces a color in every sprite as one undo step', () => {
+    const ed = board()
+    ed.down(at(0, 0))
+    ed.up(at(0, 0))
+    ed.down(at(20, 0))
+    ed.up(at(20, 0))
+    expect(ed.replaceColorEverywhere(RED, BLUE).sort()).toEqual(['hero', 'slime'])
+    ed.undo()
+    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
+    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
+  })
+
+  it('keeps the drawing in place when resizing from the center', () => {
+    const ed = board()
+    ed.activate('slime')
+    ed.resize(10, 10, 1, 1)
+    expect(ed.rectOf('slime')).toEqual({ x: 19, y: -1, w: 10, h: 10 })
+  })
+
+  it('finds the closest free spot, touching allowed', () => {
+    const taken = [{ x: 0, y: 0, w: 16, h: 16 }]
+    expect(findFreeSpot(8, 8, { x: 10, y: 2 }, taken, 0)).toEqual({ x: 16, y: 2 })
+    expect(resolveOverlaps([], [
+      { name: 'a', rect: { x: 0, y: 0, w: 8, h: 8 } },
+      { name: 'b', rect: { x: 0, y: 1, w: 8, h: 8 } },
+    ])).toEqual(new Map([['b', { x: 0, y: 8 }]]))
+  })
+
+  it('pushes a sprite dropped onto another to the closest free spot', () => {
+    const ed = board()
+    ed.setTool('move')
+    ed.down(at(21, 1))
+    ed.move(at(5, 2)) // slime now at (4, 1), on top of hero
+    expect(ed.placeBlocked).toBe(true)
+    ed.up(at(5, 2))
+    expect(ed.rectOf('slime')).toEqual({ x: 8, y: 1, w: 8, h: 8 })
+    ed.undo()
+    expect(ed.rectOf('slime')).toEqual({ x: 20, y: 0, w: 8, h: 8 })
+  })
+
+  it('pushes neighbours aside when a sprite grows, in one undo step', () => {
+    const ed = board()
+    ed.activate('hero')
+    ed.resize(24, 8, 0, 0)
+    expect(ed.rectOf('hero')).toEqual({ x: 0, y: 0, w: 24, h: 8 })
+    expect(overlaps(ed.rectOf('hero')!, ed.rectOf('slime')!)).toBe(false)
+    ed.undo()
+    expect(ed.rectOf('slime')).toEqual({ x: 20, y: 0, w: 8, h: 8 })
+    expect(ed.rectOf('hero')).toEqual({ x: 0, y: 0, w: 8, h: 8 })
+  })
+
+  it('separates sprites that overlap when the board is opened', () => {
+    const ed = new Editor(['#ff0000'])
+    ed.addSprite(newSprite('a', 8, 8), 0, 0)
+    ed.addSprite(newSprite('b', 8, 8), 4, 4)
+    expect(ed.untangle()).toBe(true)
+    expect(overlaps(ed.rectOf('a')!, ed.rectOf('b')!)).toBe(false)
+    expect(ed.rectOf('a')).toEqual({ x: 0, y: 0, w: 8, h: 8 })
+  })
+
+  it('never lets a sprite cover the name of the one below', () => {
+    const ed = board()
+    ed.setTool('move')
+    ed.down(at(21, 1))
+    ed.move(at(1, 9)) // slime at (0, 8): touching hero's bottom, on its own name band
+    expect(ed.placeBlocked).toBe(true)
+    ed.up(at(1, 9))
+    const slime = ed.rectOf('slime')!
+    expect(slime.x === 8 || slime.y >= 8 + 4).toBe(true)
   })
 })

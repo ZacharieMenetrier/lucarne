@@ -1,6 +1,7 @@
 // The game folder as the editor sees it: the palette and the sprites.
 
 import { Bitmap } from './bitmap'
+import { parseBoard, serializeBoard, type Placements } from './board'
 import { isHex } from './color'
 import { decodePng, encodePng } from './png'
 import {
@@ -24,6 +25,7 @@ export const DEFAULT_PALETTE = [
 export const PALETTE_WARNING = 32
 
 const PALETTE_FILE = 'palette.json'
+const BOARD_FILE = 'board.json'
 const SPRITES_DIR = 'sprites'
 
 export function parsePalette(text: string): string[] {
@@ -59,6 +61,21 @@ export class Project {
 
   async savePalette() {
     await writeText(this.storage, PALETTE_FILE, JSON.stringify(this.palette, null, 2) + '\n')
+  }
+
+  /** Sprite positions on the board (empty if the file is missing or unreadable). */
+  async loadBoard(): Promise<Placements> {
+    const text = await readText(this.storage, BOARD_FILE)
+    if (text === null) return new Map()
+    try {
+      return parseBoard(text)
+    } catch {
+      return new Map()
+    }
+  }
+
+  async saveBoard(placements: Placements) {
+    await writeText(this.storage, BOARD_FILE, serializeBoard(placements))
   }
 
   /** Sprite names (a PNG alone, without JSON, counts too). */

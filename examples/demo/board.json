@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "sprites": {
+    "sprite2": { "x": 31, "y": -16 },
+    "sprite3": { "x": -2, "y": 19 }
+  }
+}

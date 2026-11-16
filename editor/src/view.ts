@@ -1,8 +1,10 @@
-// Draws the sprite in the canvas: zoom, panning, grid, selection.
+// Draws the board in the canvas: every sprite at the same scale, with its
+// outline and name, plus zoom, panning, grid and selection.
 // Zoom is a whole number of screen pixels per sprite pixel, so every pixel
-// stays crisp.
+// stays crisp. There is no checkerboard: transparent pixels show the board.
 
-import { Bitmap, blit } from './bitmap'
+import { Bitmap, blit, type Rect } from './bitmap'
+import { NAME_BAND } from './board'
 import { colorToCss } from './color'
 import type { Editor } from './editor'
 import { toImageData } from './png'
@@ -10,37 +12,44 @@ import { toImageData } from './png'
 export const MIN_ZOOM = 1
 export const MAX_ZOOM = 128
 
+const ACCENT = '#41a6f6'
+const OUTLINE = 'rgba(255, 255, 255, 0.16)'
+const LABEL = '#8a8a99'
+const DANGER = '#e0566b'
+
+interface Label {
+  name: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export class View {
   /** Continuous zoom (gestures), rounded for display. */
   zoomRaw = 8
-  /** Offset of the sprite origin, in physical canvas pixels. */
+  /** Position of the board origin, in physical canvas pixels. */
   ox = 0
   oy = 0
-  showGrid = true
+  showGrid = false
 
   private ctx: CanvasRenderingContext2D
-  private sheet = document.createElement('canvas')
-  private sheetCtx: CanvasRenderingContext2D
+  /** One canvas per sprite redrawn every frame. Never shared: Safari may
+   * draw a canvas lazily, showing whatever it contains at the end. */
+  private live = new Map<string, HTMLCanvasElement>()
+  /** Pixels of sprites that are not being edited, ready to draw. */
+  private cache = new WeakMap<Bitmap, HTMLCanvasElement>()
   private frame = 0
-  private fitted: string | null = null
+  /** Sprite names as drawn last time, in canvas pixels, for hit testing. */
+  private labels: Label[] = []
 
   constructor(
     readonly canvas: HTMLCanvasElement,
     private readonly editor: Editor,
   ) {
     this.ctx = canvas.getContext('2d')!
-    this.sheetCtx = this.sheet.getContext('2d')!
     new ResizeObserver(() => this.resize()).observe(canvas)
-    editor.subscribe(() => {
-      // Refit when the sprite or its size changes.
-      const bmp = editor.bmp
-      const key = editor.sprite && bmp ? `${editor.sprite.name}:${bmp.width}x${bmp.height}` : null
-      if (key !== this.fitted) {
-        this.fitted = key
-        this.fit()
-      }
-      this.requestRender()
-    })
+    editor.subscribe(() => this.requestRender())
   }
 
   get dpr() {
@@ -65,22 +74,55 @@ export class View {
     this.render()
   }
 
-  /** Centers the sprite, fitting it in 80% of the area. */
+  // --- Framing ----------------------------------------------------------------
+
+  /** Shows every sprite. */
   fit() {
-    const bmp = this.editor.bmp
-    if (!bmp) return
-    const { width: cw, height: ch } = this.canvas
-    this.zoomRaw = Math.max(MIN_ZOOM, Math.floor(Math.min(cw / bmp.width, ch / bmp.height) * 0.8))
-    this.center()
+    const b = this.editor.bounds()
+    if (b) this.fitRect(b, 0.85)
   }
 
-  center() {
-    const bmp = this.editor.bmp
-    if (!bmp) return
-    this.ox = Math.round((this.canvas.width - bmp.width * this.zoom) / 2)
-    this.oy = Math.round((this.canvas.height - bmp.height * this.zoom) / 2)
+  private fitRect(r: Rect, ratio: number) {
+    const { width: cw, height: ch } = this.canvas
+    const z = Math.min((cw * ratio) / r.w, (ch * ratio) / r.h)
+    this.zoomRaw = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.floor(z)))
+    this.centerOn(r)
+  }
+
+  private centerOn(r: Rect) {
+    const z = this.zoom
+    this.ox = Math.round(this.canvas.width / 2 - (r.x + r.w / 2) * z)
+    this.oy = Math.round(this.canvas.height / 2 - (r.y + r.h / 2) * z)
     this.requestRender()
   }
+
+  /** Brings a sprite into view; `zoomIn` frames it closely (double tap). */
+  focus(name: string, zoomIn = false) {
+    const r = this.editor.footprintOf(name)
+    if (!r) return
+    const z = this.zoom
+    const tooBig = r.w * z > this.canvas.width * 0.9 || r.h * z > this.canvas.height * 0.9
+    if (zoomIn || tooBig) this.fitRect(r, zoomIn ? 0.7 : 0.85)
+    else this.centerOn(r)
+  }
+
+  /** Centers a sprite only if it is entirely off screen. */
+  reveal(name: string) {
+    const r = this.editor.rectOf(name)
+    if (!r) return
+    const z = this.zoom
+    const x = this.ox + r.x * z
+    const y = this.oy + r.y * z
+    if (x + r.w * z < 0 || y + r.h * z < 0 || x > this.canvas.width || y > this.canvas.height) this.centerOn(r)
+  }
+
+  /** Board point at the middle of the screen. */
+  center() {
+    const z = this.zoom
+    return { x: (this.canvas.width / 2 - this.ox) / z, y: (this.canvas.height / 2 - this.oy) / z }
+  }
+
+  // --- Coordinates ------------------------------------------------------------
 
   /** Position of an event, in physical canvas pixels. */
   toDevice(clientX: number, clientY: number) {
@@ -88,10 +130,20 @@ export class View {
     return { x: (clientX - r.left) * this.dpr, y: (clientY - r.top) * this.dpr }
   }
 
-  /** Sprite pixel under a screen point. */
-  toSprite(clientX: number, clientY: number) {
+  /** Board pixel under a screen point. */
+  toBoard(clientX: number, clientY: number) {
     const d = this.toDevice(clientX, clientY)
     return { x: Math.floor((d.x - this.ox) / this.zoom), y: Math.floor((d.y - this.oy) / this.zoom) }
+  }
+
+  /** Sprite whose name is under a screen point. */
+  labelAt(clientX: number, clientY: number): string | null {
+    const d = this.toDevice(clientX, clientY)
+    for (let i = this.labels.length - 1; i >= 0; i--) {
+      const l = this.labels[i]
+      if (d.x >= l.x && d.x < l.x + l.w && d.y >= l.y && d.y < l.y + l.h) return l.name
+    }
+    return null
   }
 
   /** Changes the zoom while keeping canvas point (dx, dy) fixed. */
@@ -111,6 +163,12 @@ export class View {
     this.requestRender()
   }
 
+  /** Forgets cached sprite images (after changing pixels in place). */
+  invalidate() {
+    this.cache = new WeakMap()
+    this.requestRender()
+  }
+
   requestRender() {
     if (this.frame) return
     this.frame = requestAnimationFrame(() => {
@@ -119,78 +177,106 @@ export class View {
     })
   }
 
+  // --- Rendering --------------------------------------------------------------
+
   private render() {
     const { ctx, canvas, editor } = this
+    const dpr = this.dpr
     const style = getComputedStyle(canvas)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.fillStyle = style.getPropertyValue('--stage-bg') || '#202028'
+    const bg = style.getPropertyValue('--stage-bg').trim() || '#202028'
+    ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)
+    this.labels = []
 
-    const bmp = editor.bmp
-    if (!bmp) return canvas.classList.remove('hide-cursor')
     const z = this.zoom
-    const w = bmp.width * z
-    const h = bmp.height * z
-
-    // Transparency checkerboard
-    // Cells aligned to sprite pixels when they are large enough.
-    const cell = z >= 6 * this.dpr ? z : Math.max(4, Math.round(8 * this.dpr))
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(this.ox, this.oy, w, h)
-    ctx.clip()
-    ctx.fillStyle = '#3a3a44'
-    ctx.fillRect(this.ox, this.oy, w, h)
-    ctx.fillStyle = '#2e2e36'
-    for (let y = 0; y < h; y += cell) {
-      for (let x = (y / cell) % 2 ? cell : 0; x < w; x += cell * 2) {
-        ctx.fillRect(this.ox + x, this.oy + y, cell, cell)
-      }
-    }
-    ctx.restore()
-
-    // Image + floating selection + preview
-    // Pencil and eraser: the hovered pixel shows the result instead of a cursor.
+    const tool = editor.tool
     const hv = editor.hover
-    const onSprite = !!hv && bmp.inBounds(hv.x, hv.y)
-    const pixelPreview = onSprite && (editor.tool === 'pencil' || editor.tool === 'eraser')
-    canvas.classList.toggle('hide-cursor', pixelPreview)
-    let composite = bmp
-    if (editor.floating || editor.overlay || pixelPreview) {
-      composite = bmp.clone()
-      if (editor.floating) blit(composite, editor.floating.bmp, editor.floating.x, editor.floating.y)
-      if (editor.overlay) blit(composite, editor.overlay, 0, 0)
-      if (pixelPreview) composite.set(hv!.x, hv!.y, editor.tool === 'eraser' ? 0 : editor.color)
+    const under = hv ? editor.hitTest(hv) : null
+    // Pencil and eraser: the hovered pixel shows the result instead of a cursor.
+    // During a stroke, only on the sprite being drawn.
+    const previewOn =
+      hv && under && (tool === 'pencil' || tool === 'eraser') && (!editor.dragging || under === editor.active)
+        ? under
+        : null
+    canvas.classList.toggle('hide-cursor', previewOn !== null)
+    canvas.classList.toggle('tool-move', tool === 'move')
+
+    // Names live in the band kept free above each sprite.
+    const band = NAME_BAND * z
+    const fontSize = Math.min(Math.round(11 * dpr), Math.floor(band * 0.75))
+    const lw = Math.max(1, Math.round(dpr))
+    ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
+    ctx.textBaseline = 'bottom'
+
+    // Sprites on screen, with their rectangles in canvas pixels
+    const visible = editor.drawOrder().flatMap((name) => {
+      const pl = editor.sprites.get(name)!
+      const bmp = pl.sprite.frames[0][0]
+      const x = this.ox + pl.x * z
+      const y = this.oy + pl.y * z
+      const w = bmp.width * z
+      const h = bmp.height * z
+      if (x > canvas.width || y - band > canvas.height || x + w < 0 || y + h < 0) return []
+      return [{ name, pl, bmp, x, y, w, h }]
+    })
+
+    for (const name of this.live.keys()) if (!editor.sprites.has(name)) this.live.delete(name)
+    const blocked = editor.placeBlocked
+    for (const { name, pl, bmp, x, y, w, h } of visible) {
+      const isActive = name === editor.active
+
+      // Pixels, with the selection, shape and pixel previews. The board
+      // color goes under them so transparent pixels hide names underneath.
+      ctx.fillStyle = bg
+      ctx.fillRect(x, y, w, h)
+      let img = bmp
+      if ((isActive && (editor.floating || editor.overlay)) || name === previewOn) {
+        img = bmp.clone()
+        if (isActive && editor.floating) blit(img, editor.floating.bmp, editor.floating.x, editor.floating.y)
+        if (isActive && editor.overlay) blit(img, editor.overlay, 0, 0)
+        if (name === previewOn) img.set(hv!.x - pl.x, hv!.y - pl.y, tool === 'eraser' ? 0 : editor.color)
+      }
+      this.drawBitmap(img, x, y, z, isActive || img !== bmp ? name : null)
+      if (isActive) this.cache.delete(bmp)
+
+      // Grid
+      if (this.showGrid && z >= 6 * dpr) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.07)'
+        for (let i = 1; i < bmp.width; i++) ctx.fillRect(x + i * z, y, 1, h)
+        for (let i = 1; i < bmp.height; i++) ctx.fillRect(x, y + i * z, w, 1)
+      }
+
+      // Outline, just outside the pixels; red while dropped on another sprite
+      ctx.strokeStyle = isActive ? (blocked ? DANGER : ACCENT) : OUTLINE
+      ctx.lineWidth = lw
+      ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
-    this.drawBitmap(composite, this.ox, this.oy, z)
 
-    // Grid
-    if (this.showGrid && z >= 6 * this.dpr) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)'
-      for (let x = 1; x < bmp.width; x++) ctx.fillRect(this.ox + x * z, this.oy, 1, h)
-      for (let y = 1; y < bmp.height; y++) ctx.fillRect(this.ox, this.oy + y * z, w, 1)
+    // Names, in their band: shortened to the sprite's width, hidden when
+    // zoomed out too far to read them. The band stays a handle either way.
+    for (const { name, x, y, w } of visible) {
+      this.labels.push({ name, x, y: y - band, w, h: band })
+      if (fontSize < 7 * dpr) continue
+      ctx.fillStyle = name === editor.active ? ACCENT : LABEL
+      ctx.fillText(fitText(ctx, name, w), x, y - Math.max(2 * dpr, (band - fontSize) / 2))
     }
 
-    // Sprite border
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(this.ox - 0.5, this.oy - 0.5, w + 1, h + 1)
-
-    // Hovered pixel outline (other tools, and the eraser, whose preview is
-    // invisible on the checkerboard)
-    if (onSprite && editor.tool !== 'select' && editor.tool !== 'pencil') {
-      ctx.strokeStyle = editor.tool === 'eraser' ? '#ffffff' : colorToCss(editor.color)
-      ctx.lineWidth = Math.max(1, this.dpr)
-      ctx.strokeRect(this.ox + hv!.x * z + 0.5, this.oy + hv!.y * z + 0.5, z - 1, z - 1)
+    // Hovered pixel outline (other drawing tools; the eraser, whose preview
+    // is invisible on an empty pixel)
+    if (hv && under && tool !== 'select' && tool !== 'pencil' && tool !== 'move') {
+      ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : colorToCss(editor.color)
+      ctx.lineWidth = lw
+      ctx.strokeRect(this.ox + hv.x * z + 0.5, this.oy + hv.y * z + 0.5, z - 1, z - 1)
     }
 
     // Selection (marching ants)
     const sel = editor.selection
-    if (sel) {
-      const x = this.ox + sel.x * z + 0.5
-      const y = this.oy + sel.y * z + 0.5
-      const lw = Math.max(1, this.dpr)
-      const dash = 4 * this.dpr
+    const pl = editor.placed
+    if (sel && pl) {
+      const x = this.ox + (pl.x + sel.x) * z + 0.5
+      const y = this.oy + (pl.y + sel.y) * z + 0.5
+      const dash = 4 * dpr
       ctx.lineWidth = lw
       ctx.setLineDash([dash, dash])
       ctx.strokeStyle = '#000'
@@ -204,13 +290,37 @@ export class View {
     }
   }
 
-  private drawBitmap(bmp: Bitmap, x: number, y: number, z: number) {
-    if (this.sheet.width !== bmp.width || this.sheet.height !== bmp.height) {
-      this.sheet.width = bmp.width
-      this.sheet.height = bmp.height
+  /** Draws pixels; `live` names a sprite that changes every frame. */
+  private drawBitmap(bmp: Bitmap, x: number, y: number, z: number, live: string | null) {
+    let src: HTMLCanvasElement
+    if (live) {
+      src = this.live.get(live) ?? document.createElement('canvas')
+      this.live.set(live, src)
+      if (src.width !== bmp.width || src.height !== bmp.height) {
+        src.width = bmp.width
+        src.height = bmp.height
+      }
+      src.getContext('2d')!.putImageData(toImageData(bmp), 0, 0)
+    } else {
+      let cached = this.cache.get(bmp)
+      if (!cached) {
+        cached = document.createElement('canvas')
+        cached.width = bmp.width
+        cached.height = bmp.height
+        cached.getContext('2d')!.putImageData(toImageData(bmp), 0, 0)
+        this.cache.set(bmp, cached)
+      }
+      src = cached
     }
-    this.sheetCtx.putImageData(toImageData(bmp), 0, 0)
     this.ctx.imageSmoothingEnabled = false
-    this.ctx.drawImage(this.sheet, x, y, bmp.width * z, bmp.height * z)
+    this.ctx.drawImage(src, x, y, bmp.width * z, bmp.height * z)
   }
+}
+
+/** Text shortened with an ellipsis to fit `max` pixels. */
+function fitText(ctx: CanvasRenderingContext2D, text: string, max: number) {
+  if (ctx.measureText(text).width <= max) return text
+  let n = text.length
+  while (n > 1 && ctx.measureText(`${text.slice(0, n)}…`).width > max) n--
+  return `${text.slice(0, n)}…`
 }

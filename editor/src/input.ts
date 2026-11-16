@@ -4,12 +4,15 @@
 // - Two fingers: zoom and pan. Two-finger tap: undo. Three-finger tap: redo.
 // - Mouse: wheel or trackpad to pan, pinch or ⌥/⌘ + wheel to zoom,
 //   middle button or space + drag to pan.
+// - Dragging a sprite's name moves it, whatever the tool. Double tap on a
+//   name (or on a sprite with the Move tool) zooms in on that sprite.
 
 import type { Editor, PointerInput } from './editor'
 import type { View } from './view'
 
 const TAP_MAX_MS = 300
 const TAP_MAX_MOVE = 12
+const DOUBLE_TAP_MS = 350
 
 interface Gesture {
   startTime: number
@@ -32,8 +35,10 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
   let panning: { id: number; x: number; y: number } | null = null
   let spaceDown = false
 
+  let lastTap = { name: '', time: 0, x: 0, y: 0 }
+
   const toInput = (e: PointerEvent): PointerInput => ({
-    ...view.toSprite(e.clientX, e.clientY),
+    ...view.toBoard(e.clientX, e.clientY),
     shift: e.shiftKey,
     alt: e.altKey,
   })
@@ -98,6 +103,16 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     }
   }
 
+  function isDoubleTap(name: string, e: PointerEvent) {
+    const now = performance.now()
+    const double =
+      lastTap.name === name &&
+      now - lastTap.time < DOUBLE_TAP_MS &&
+      Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < TAP_MAX_MOVE
+    lastTap = double ? { name: '', time: 0, x: 0, y: 0 } : { name, time: now, x: e.clientX, y: e.clientY }
+    return double
+  }
+
   // --- Events ---------------------------------------------------------------
 
   const capture = (id: number) => {
@@ -121,6 +136,14 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
       return
     }
     if (e.button !== 0 || drawingId !== null) return
+    const p = toInput(e)
+    // A sprite's pixels win over a neighbour's name drawn beneath them.
+    const label = editor.hitTest(p) ? null : view.labelAt(e.clientX, e.clientY)
+    const target = label ?? (editor.tool === 'move' ? editor.hitTest(p) : null)
+    if (target && isDoubleTap(target, e)) {
+      view.focus(target, true)
+      return
+    }
     if (e.pointerType === 'pen') {
       penDown = true
       // A hand resting on the screen must not zoom while drawing.
@@ -129,7 +152,8 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     }
     drawingId = e.pointerId
     capture(e.pointerId)
-    editor.down(toInput(e))
+    if (label) editor.grab(label, p)
+    else editor.down(p)
   })
 
   canvas.addEventListener('pointermove', (e) => {
@@ -141,6 +165,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
       panning.y = d.y
       return
     }
+    canvas.classList.toggle('over-label', drawingId === null && !editor.hitTest(toInput(e)) && view.labelAt(e.clientX, e.clientY) !== null)
     if (drawingId === e.pointerId) {
       // Every intermediate point, for a continuous pen stroke.
       const events = e.getCoalescedEvents?.() ?? []
@@ -164,6 +189,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
   canvas.addEventListener('pointerup', end)
   canvas.addEventListener('pointercancel', end)
   canvas.addEventListener('pointerleave', (e) => {
+    canvas.classList.remove('over-label')
     if (e.pointerType !== 'touch' && drawingId === null) editor.leave()
   })
 
