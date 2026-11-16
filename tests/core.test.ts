@@ -279,15 +279,4 @@ describe('board', () => {
     expect(overlaps(ed.rectOf('a')!, ed.rectOf('b')!)).toBe(false)
     expect(ed.rectOf('a')).toEqual({ x: 0, y: 0, w: 8, h: 8 })
   })
-
-  it('never lets a sprite cover the name of the one below', () => {
-    const ed = board()
-    ed.setTool('move')
-    ed.down(at(21, 1))
-    ed.move(at(1, 9)) // slime at (0, 8): touching hero's bottom, on its own name band
-    expect(ed.placeBlocked).toBe(true)
-    ed.up(at(1, 9))
-    const slime = ed.rectOf('slime')!
-    expect(slime.x === 8 || slime.y >= 8 + 4).toBe(true)
-  })
 })

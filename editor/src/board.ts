@@ -27,15 +27,6 @@ export interface BoardFile {
 /** Space kept between sprites placed automatically, in sprite pixels. */
 export const BOARD_GAP = 8
 
-/** Rows kept free above each sprite for its name. No other sprite may enter
- * them, so a name is never hidden; side by side, sprites may touch. */
-export const NAME_BAND = 4
-
-/** The space a sprite claims on the board: itself plus its name band. */
-export function footprint(r: Rect): Rect {
-  return { x: r.x, y: r.y - NAME_BAND, w: r.w, h: r.h + NAME_BAND }
-}
-
 export function parseBoard(text: string): BoardFile {
   const raw = JSON.parse(text) as { background?: unknown; sprites?: Record<string, { x?: unknown; y?: unknown }> }
   const placements: Placements = new Map()

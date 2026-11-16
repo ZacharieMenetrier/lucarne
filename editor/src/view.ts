@@ -4,7 +4,6 @@
 // stays crisp. There is no checkerboard: transparent pixels show the board.
 
 import { Bitmap, blit, type Rect } from './bitmap'
-import { NAME_BAND } from './board'
 import { colorToCss } from './color'
 import type { Editor } from './editor'
 import { toImageData } from './png'
@@ -14,8 +13,8 @@ export const MAX_ZOOM = 128
 
 const ACCENT = '#41a6f6'
 /** Lines and text that stay visible on the board color. */
-const ON_DARK = { outline: 'rgba(255, 255, 255, 0.16)', label: '#8a8a99', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff' }
-const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.22)', label: '#5c5c6a', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000' }
+const ON_DARK = { outline: 'rgba(255, 255, 255, 0.16)', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff' }
+const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.22)', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000' }
 
 function isLight(css: string) {
   const m = /^#([0-9a-f]{6})/i.exec(css)
@@ -25,14 +24,6 @@ function isLight(css: string) {
   return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 140
 }
 const DANGER = '#e0566b'
-
-interface Label {
-  name: string
-  x: number
-  y: number
-  w: number
-  h: number
-}
 
 export class View {
   /** Continuous zoom (gestures), rounded for display. */
@@ -49,8 +40,6 @@ export class View {
   /** Pixels of sprites that are not being edited, ready to draw. */
   private cache = new WeakMap<Bitmap, HTMLCanvasElement>()
   private frame = 0
-  /** Sprite names as drawn last time, in canvas pixels, for hit testing. */
-  private labels: Label[] = []
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -107,7 +96,7 @@ export class View {
 
   /** Brings a sprite into view; `zoomIn` frames it closely (double tap). */
   focus(name: string, zoomIn = false) {
-    const r = this.editor.footprintOf(name)
+    const r = this.editor.rectOf(name)
     if (!r) return
     const z = this.zoom
     const tooBig = r.w * z > this.canvas.width * 0.9 || r.h * z > this.canvas.height * 0.9
@@ -143,16 +132,6 @@ export class View {
   toBoard(clientX: number, clientY: number) {
     const d = this.toDevice(clientX, clientY)
     return { x: Math.floor((d.x - this.ox) / this.zoom), y: Math.floor((d.y - this.oy) / this.zoom) }
-  }
-
-  /** Sprite whose name is under a screen point. */
-  labelAt(clientX: number, clientY: number): string | null {
-    const d = this.toDevice(clientX, clientY)
-    for (let i = this.labels.length - 1; i >= 0; i--) {
-      const l = this.labels[i]
-      if (d.x >= l.x && d.x < l.x + l.w && d.y >= l.y && d.y < l.y + l.h) return l.name
-    }
-    return null
   }
 
   /** Changes the zoom while keeping canvas point (dx, dy) fixed. */
@@ -197,7 +176,6 @@ export class View {
     const ink = isLight(bg) ? ON_LIGHT : ON_DARK
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    this.labels = []
 
     const z = this.zoom
     const tool = editor.tool
@@ -212,12 +190,7 @@ export class View {
     canvas.classList.toggle('hide-cursor', previewOn !== null)
     canvas.classList.toggle('tool-move', tool === 'move')
 
-    // Names live in the band kept free above each sprite.
-    const band = NAME_BAND * z
-    const fontSize = Math.min(Math.round(11 * dpr), Math.floor(band * 0.75))
     const lw = Math.max(1, Math.round(dpr))
-    ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
-    ctx.textBaseline = 'bottom'
 
     // Sprites on screen, with their rectangles in canvas pixels
     const visible = editor.drawOrder().flatMap((name) => {
@@ -227,7 +200,7 @@ export class View {
       const y = this.oy + pl.y * z
       const w = bmp.width * z
       const h = bmp.height * z
-      if (x > canvas.width || y - band > canvas.height || x + w < 0 || y + h < 0) return []
+      if (x > canvas.width || y > canvas.height || x + w < 0 || y + h < 0) return []
       return [{ name, pl, bmp, x, y, w, h }]
     })
 
@@ -261,15 +234,6 @@ export class View {
       ctx.strokeStyle = isActive ? (blocked ? DANGER : ACCENT) : ink.outline
       ctx.lineWidth = lw
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
-    }
-
-    // Names, in their band: shortened to the sprite's width, hidden when
-    // zoomed out too far to read them. The band stays a handle either way.
-    for (const { name, x, y, w } of visible) {
-      this.labels.push({ name, x, y: y - band, w, h: band })
-      if (fontSize < 7 * dpr) continue
-      ctx.fillStyle = name === editor.active ? ACCENT : ink.label
-      ctx.fillText(fitText(ctx, name, w), x, y - Math.max(2 * dpr, (band - fontSize) / 2))
     }
 
     // Hovered pixel outline (other drawing tools; the eraser, whose preview
@@ -325,12 +289,4 @@ export class View {
     this.ctx.imageSmoothingEnabled = false
     this.ctx.drawImage(src, x, y, bmp.width * z, bmp.height * z)
   }
-}
-
-/** Text shortened with an ellipsis to fit `max` pixels. */
-function fitText(ctx: CanvasRenderingContext2D, text: string, max: number) {
-  if (ctx.measureText(text).width <= max) return text
-  let n = text.length
-  while (n > 1 && ctx.measureText(`${text.slice(0, n)}…`).width > max) n--
-  return `${text.slice(0, n)}…`
 }

@@ -1,7 +1,7 @@
 // The interface: toolbars, palette, sprite list, shortcuts, autosave.
 
 import type { Bitmap } from './bitmap'
-import { BOARD_GAP, NAME_BAND, findFreeSpot, shelfLayout } from './board'
+import { BOARD_GAP, findFreeSpot, shelfLayout } from './board'
 import { colorToHex, hexToColor, isHex } from './color'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { Editor, type ToolId } from './editor'
@@ -295,9 +295,9 @@ export class App {
     }
     // In free space, near the middle of the screen.
     const c = this.view.center()
-    const taken = [...this.editor.sprites.keys()].map((n) => this.editor.footprintOf(n)!)
-    const spot = findFreeSpot(w, hh + NAME_BAND, { x: c.x - w / 2, y: c.y - hh / 2 - NAME_BAND }, taken)
-    this.editor.addSprite(sprite, spot.x, spot.y + NAME_BAND)
+    const taken = [...this.editor.sprites.keys()].map((n) => this.editor.rectOf(n)!)
+    const spot = findFreeSpot(w, hh, { x: c.x - w / 2, y: c.y - hh / 2 }, taken)
+    this.editor.addSprite(sprite, spot.x, spot.y)
     this.saver.boardMoved()
     this.refreshSprites()
     this.focusSprite(name)

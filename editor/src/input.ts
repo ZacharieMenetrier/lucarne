@@ -137,9 +137,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     }
     if (e.button !== 0 || drawingId !== null) return
     const p = toInput(e)
-    // A sprite's pixels win over a neighbour's name drawn beneath them.
-    const label = editor.hitTest(p) ? null : view.labelAt(e.clientX, e.clientY)
-    const target = label ?? (editor.tool === 'move' ? editor.hitTest(p) : null)
+    const target = editor.tool === 'move' ? editor.hitTest(p) : null
     if (target && isDoubleTap(target, e)) {
       view.focus(target, true)
       return
@@ -152,8 +150,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     }
     drawingId = e.pointerId
     capture(e.pointerId)
-    if (label) editor.grab(label, p)
-    else editor.down(p)
+    editor.down(p)
   })
 
   canvas.addEventListener('pointermove', (e) => {
@@ -165,7 +162,6 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
       panning.y = d.y
       return
     }
-    canvas.classList.toggle('over-label', drawingId === null && !editor.hitTest(toInput(e)) && view.labelAt(e.clientX, e.clientY) !== null)
     if (drawingId === e.pointerId) {
       // Every intermediate point, for a continuous pen stroke.
       const events = e.getCoalescedEvents?.() ?? []
@@ -189,7 +185,6 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
   canvas.addEventListener('pointerup', end)
   canvas.addEventListener('pointercancel', end)
   canvas.addEventListener('pointerleave', (e) => {
-    canvas.classList.remove('over-label')
     if (e.pointerType !== 'touch' && drawingId === null) editor.leave()
   })
 

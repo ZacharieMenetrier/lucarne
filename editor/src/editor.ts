@@ -23,7 +23,7 @@ import {
   type Point,
   type Rect,
 } from './bitmap'
-import { NAME_BAND, boundsOf, findFreeSpot, footprint, overlaps, resolveOverlaps, type BoardFile, type Placements } from './board'
+import { boundsOf, findFreeSpot, overlaps, resolveOverlaps, type BoardFile, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
 import type { Sprite } from './sprite'
@@ -144,7 +144,7 @@ export class Editor {
   }
 
   bounds(): Rect | null {
-    return boundsOf([...this.sprites.keys()].map((n) => this.footprintOf(n)!))
+    return boundsOf([...this.sprites.keys()].map((n) => this.rectOf(n)!))
   }
 
   /** Names in drawing order: alphabetical, active sprite last (on top). */
@@ -166,28 +166,16 @@ export class Editor {
     return null
   }
 
-  /** Space a sprite claims on the board, name band included. */
-  footprintOf(name: string): Rect | null {
-    const r = this.rectOf(name)
-    return r && footprint(r)
-  }
-
   /** Footprints of every sprite but one. */
   private othersThan(name: string): Rect[] {
-    return [...this.sprites.keys()].filter((n) => n !== name).map((n) => this.footprintOf(n)!)
-  }
-
-  /** Moves a sprite so its footprint's top-left is at `p`. */
-  private placeFootprint(pl: Placed, p: Point) {
-    pl.x = p.x
-    pl.y = p.y + NAME_BAND
+    return [...this.sprites.keys()].filter((n) => n !== name).map((n) => this.rectOf(n)!)
   }
 
   /** True while a sprite being moved sits on another one (it will be pushed aside). */
   get placeBlocked(): boolean {
     const d = this.drag
     if (d?.kind !== 'place') return false
-    const r = this.footprintOf(d.name)!
+    const r = this.rectOf(d.name)!
     return this.othersThan(d.name).some((o) => overlaps(r, o))
   }
 
@@ -195,8 +183,8 @@ export class Editor {
    * Not undoable. Returns true if anything moved. */
   untangle(): boolean {
     const names = [...this.sprites.keys()].sort()
-    const moved = resolveOverlaps([], names.map((name) => ({ name, rect: this.footprintOf(name)! })))
-    for (const [name, p] of moved) this.placeFootprint(this.sprites.get(name)!, p)
+    const moved = resolveOverlaps([], names.map((name) => ({ name, rect: this.rectOf(name)! })))
+    for (const [name, p] of moved) this.sprites.get(name)!.x = p.x, this.sprites.get(name)!.y = p.y
     if (moved.size) this.emit()
     return moved.size > 0
   }
@@ -421,10 +409,10 @@ export class Editor {
     if (d.kind === 'place') {
       const pl = this.sprites.get(d.name)
       const others = this.othersThan(d.name)
-      const mine = this.footprintOf(d.name)
+      const mine = this.rectOf(d.name)
       if (pl && mine && others.some((o) => overlaps(mine, o))) {
-        // Sprites never overlap, nor cover a name (they may touch): closest free spot.
-        this.placeFootprint(pl, findFreeSpot(mine.w, mine.h, mine, others, 0))
+        // Sprites never overlap (they may touch): closest free spot.
+        Object.assign(pl, findFreeSpot(mine.w, mine.h, mine, others, 0))
       }
       if (pl && (pl.x !== d.origin.x || pl.y !== d.origin.y)) {
         this.history.push({ kind: 'place', name: d.name, from: d.origin, to: { x: pl.x, y: pl.y } })
@@ -703,17 +691,17 @@ export class Editor {
       items.push({ kind: 'place', name, from, to: { x: pl.x, y: pl.y } })
     }
     // A bigger sprite pushes aside the neighbours it now covers.
-    const mine = this.footprintOf(name)!
+    const mine = this.rectOf(name)!
     const others = [...this.sprites.keys()].filter((n) => n !== name).sort()
-    const covered = others.filter((n) => overlaps(mine, this.footprintOf(n)!))
+    const covered = others.filter((n) => overlaps(mine, this.rectOf(n)!))
     const pushed = resolveOverlaps(
-      [mine, ...others.filter((n) => !covered.includes(n)).map((n) => this.footprintOf(n)!)],
-      covered.map((n) => ({ name: n, rect: this.footprintOf(n)! })),
+      [mine, ...others.filter((n) => !covered.includes(n)).map((n) => this.rectOf(n)!)],
+      covered.map((n) => ({ name: n, rect: this.rectOf(n)! })),
     )
     for (const [n, p] of pushed) {
       const other = this.sprites.get(n)!
       const from = { x: other.x, y: other.y }
-      this.placeFootprint(other, p)
+      Object.assign(other, p)
       items.push({ kind: 'place', name: n, from, to: { x: other.x, y: other.y } })
     }
     if (items.length > 1) this.onMoved()

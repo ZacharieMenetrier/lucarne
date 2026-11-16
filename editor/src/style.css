@@ -182,8 +182,7 @@ button.active {
 #canvas.hide-cursor {
   cursor: none;
 }
-#canvas.tool-move,
-#canvas.over-label {
+#canvas.tool-move {
   cursor: grab;
 }
 
