@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#16161c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lucarne" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-180.png" />
+    <title>Lucarne</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app" class="no-sprite">
+      <header id="topbar">
+        <span class="brand">Lucarne</span>
+        <span id="project-name" class="muted"></span>
+        <button id="sprite-info" title="Name, size, delete">
+          <span id="sprite-name">—</span>
+          <span id="sprite-size" class="muted"></span>
+        </button>
+        <span class="spacer"></span>
+        <span id="save-status" data-status="saved">Saved</span>
+        <button id="undo" class="icon" title="Undo (⌘Z, two-finger tap)" aria-label="Undo"></button>
+        <button id="redo" class="icon" title="Redo (⇧⌘Z, three-finger tap)" aria-label="Redo"></button>
+        <button id="grid" class="icon" title="Grid (#)" aria-label="Grid"></button>
+        <button id="fit" class="icon" title="Fit to view (0)" aria-label="Fit to view"></button>
+      </header>
+
+      <nav id="tools" aria-label="Tools"></nav>
+
+      <main id="stage">
+        <canvas id="canvas"></canvas>
+        <div id="selbar" hidden></div>
+        <div id="empty">
+          <p>No sprite open.</p>
+          <button id="empty-new" class="primary">New sprite</button>
+        </div>
+      </main>
+
+      <aside id="side">
+        <section id="palette-panel">
+          <div class="panel-head">
+            <h2>Palette <span id="palette-count" class="muted"></span></h2>
+            <button id="palette-edit" class="small">Edit</button>
+          </div>
+          <div id="palette-grid"></div>
+          <p id="palette-warning" class="warning" hidden></p>
+        </section>
+        <section id="sprites-panel">
+          <div class="panel-head">
+            <h2>Sprites</h2>
+            <button id="sprites-new" class="small" title="New sprite">+ New</button>
+          </div>
+          <div id="sprite-list"></div>
+        </section>
+      </aside>
+    </div>
+    <div id="toast" role="status"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

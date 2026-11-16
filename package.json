@@ -1,0 +1,31 @@
+{
+  "name": "lucarne",
+  "version": "0.1.0",
+  "description": "A pixel art game engine where you draw, compose, code and play in one place.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lucarne": "bin/lucarne.mjs"
+  },
+  "files": [
+    "bin",
+    "server",
+    "editor"
+  ],
+  "scripts": {
+    "dev": "node bin/lucarne.mjs dev examples/demo",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "vite": "^8.3.8"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

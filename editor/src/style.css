@@ -1,0 +1,440 @@
+:root {
+  --bg: #16161c;
+  --panel: #1e1e26;
+  --panel-2: #262630;
+  --line: #33333f;
+  --text: #e8e8ee;
+  --muted: #8a8a99;
+  --accent: #41a6f6;
+  --danger: #e0566b;
+  --stage-bg: #202028;
+  --radius: 8px;
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:hover:not(:disabled) {
+  border-color: #4a4a5a;
+}
+button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1b2a;
+  font-weight: 600;
+}
+button.danger {
+  color: var(--danger);
+}
+button.small {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+button.icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* --- Layout ---------------------------------------------------------------- */
+
+#app {
+  display: grid;
+  grid-template-columns: 60px 1fr 240px;
+  grid-template-rows: 52px 1fr;
+  grid-template-areas:
+    'top top top'
+    'tools stage side';
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+#sprite-info {
+  display: flex;
+  gap: 8px;
+  margin-left: 12px;
+}
+.spacer {
+  flex: 1;
+}
+#save-status {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 6px;
+}
+#save-status[data-status='pending'],
+#save-status[data-status='saving'] {
+  color: #ffcd75;
+}
+#save-status[data-status='error'] {
+  color: var(--danger);
+}
+
+#tools {
+  grid-area: tools;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.tool {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+.tool.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1b2a;
+}
+
+#stage {
+  grid-area: stage;
+  position: relative;
+  overflow: hidden;
+  background: var(--stage-bg);
+}
+#canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+#canvas.hide-cursor {
+  cursor: none;
+}
+
+#selbar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  width: max-content;
+  max-width: calc(100% - 20px);
+}
+#selbar[hidden] {
+  display: none;
+}
+#selbar button {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+#empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.no-sprite #empty {
+  display: flex;
+}
+
+#side {
+  grid-area: side;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  min-height: 0;
+}
+#side section {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+#sprites-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.panel-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* --- Palette --------------------------------------------------------------- */
+
+#palette-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.swatch {
+  aspect-ratio: 1;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 4px;
+  background: var(--c);
+  border: 2px solid transparent;
+}
+.swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #000 inset;
+}
+.swatch.add {
+  background: var(--panel-2);
+  border: 1px dashed var(--muted);
+  font-size: 18px;
+  color: var(--muted);
+}
+.editing .swatch:not(.add) {
+  border: 2px dashed rgba(255, 255, 255, 0.6);
+}
+.warning {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #ffcd75;
+}
+
+/* --- Sprites --------------------------------------------------------------- */
+
+#sprite-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sprite-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 6px;
+  background: transparent;
+  border-color: transparent;
+}
+.sprite-item.active {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.thumb {
+  flex: none;
+  image-rendering: pixelated;
+  background: repeating-conic-gradient(#3a3a44 0 25%, #2e2e36 0 50%) 0 0 / 8px 8px;
+}
+span.thumb {
+  width: 32px;
+  height: 32px;
+}
+.sprite-item .thumb {
+  margin: 0 auto;
+}
+.sprite-item > :first-child {
+  width: 32px;
+}
+.sprite-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Dialogs ----------------------------------------------------------------- */
+
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  width: min(380px, calc(100vw - 32px));
+  -webkit-user-select: text;
+  user-select: text;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+dialog h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+dialog p {
+  line-height: 1.45;
+}
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.fields label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+input,
+select {
+  font: inherit;
+  font-size: 16px; /* prevents Safari iOS from auto-zooming */
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+.size-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.presets {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.presets button {
+  flex: 1;
+  padding: 4px;
+  font-size: 12px;
+}
+.color-row {
+  display: flex;
+  gap: 8px;
+}
+.color-row input[type='color'] {
+  width: 56px;
+  height: 40px;
+  padding: 2px;
+}
+.color-row input[type='text'] {
+  flex: 1;
+}
+.dialog-error {
+  color: var(--danger);
+  font-size: 13px;
+  min-height: 1em;
+  margin: 10px 0 0;
+}
+.dialog-actions {
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 8px;
+  margin-top: 12px;
+}
+.dialog-actions .danger {
+  margin-right: auto;
+}
+
+/* --- Toasts ---------------------------------------------------------------- */
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 20px);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+#toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.fatal {
+  padding: 24px;
+  max-width: 560px;
+  line-height: 1.5;
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Lucarne",
+  "short_name": "Lucarne",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16161c",
+  "theme_color": "#16161c",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
