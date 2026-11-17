@@ -33,6 +33,7 @@ export function openDialog(
   body: HTMLElement,
   buttons: DialogButton[],
   validate?: (value: string) => string | null,
+  className = '',
 ): Promise<string | null> {
   return new Promise((resolve) => {
     const error = h('p', { className: 'dialog-error' })
@@ -45,7 +46,7 @@ export function openDialog(
       actions.append(h('button', { type: 'submit', value: b.value, className: b.kind ?? '' }, b.label))
     }
     form.append(actions)
-    const dialog = h('dialog', {}, form)
+    const dialog = h('dialog', { className }, form)
     document.body.append(dialog)
 
     form.addEventListener('submit', (e) => {

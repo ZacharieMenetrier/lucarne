@@ -65,7 +65,7 @@ export class Project {
 
   /** Sprite positions and board color (empty if the file is missing or unreadable). */
   async loadBoard(): Promise<BoardFile> {
-    const empty: BoardFile = { placements: new Map(), background: null }
+    const empty: BoardFile = { placements: new Map(), background: null, paletteRows: null }
     const text = await readText(this.storage, BOARD_FILE)
     if (text === null) return empty
     try {

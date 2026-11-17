@@ -4,6 +4,7 @@
 //   {
 //     "version": 1,
 //     "background": "#2a2a33",
+//     "paletteRows": 3,
 //     "sprites": {
 //       "hero": { "x": 0, "y": 0 },
 //       "slime": { "x": 24, "y": 0 }
@@ -11,7 +12,8 @@
 //   }
 //
 // Coordinates are in sprite pixels. "background" is the board color chosen
-// for this game (absent: the editor's default). Only the editor reads this file.
+// for this game (absent: the editor's default). "paletteRows" is how many rows
+// the palette is laid out in (absent: 3). Only the editor reads this file.
 
 import type { Point, Rect } from './bitmap'
 import { isHex } from './color'
@@ -22,13 +24,15 @@ export interface BoardFile {
   placements: Placements
   /** Board color, "#rrggbb", or null for the editor's default. */
   background: string | null
+  /** Rows the palette is laid out in, or null for the default. */
+  paletteRows: number | null
 }
 
 /** Space kept between sprites placed automatically, in sprite pixels. */
 export const BOARD_GAP = 8
 
 export function parseBoard(text: string): BoardFile {
-  const raw = JSON.parse(text) as { background?: unknown; sprites?: Record<string, { x?: unknown; y?: unknown }> }
+  const raw = JSON.parse(text) as { background?: unknown; paletteRows?: unknown; sprites?: Record<string, { x?: unknown; y?: unknown }> }
   const placements: Placements = new Map()
   const sprites = raw?.sprites
   if (sprites && typeof sprites === 'object') {
@@ -38,10 +42,12 @@ export function parseBoard(text: string): BoardFile {
   }
   const bg = raw?.background
   const background = typeof bg === 'string' && isHex(bg) ? `#${bg.trim().replace('#', '').slice(0, 6).toLowerCase()}` : null
-  return { placements, background }
+  const rows = raw?.paletteRows
+  const paletteRows = Number.isInteger(rows) && (rows as number) >= 1 ? (rows as number) : null
+  return { placements, background, paletteRows }
 }
 
-export function serializeBoard({ placements, background }: BoardFile): string {
+export function serializeBoard({ placements, background, paletteRows }: BoardFile): string {
   const lines = [...placements.keys()]
     .sort()
     .map((name) => {
@@ -50,7 +56,8 @@ export function serializeBoard({ placements, background }: BoardFile): string {
     })
   const body = lines.length ? `\n${lines.join(',\n')}\n  ` : ''
   const bg = background ? `\n  "background": ${JSON.stringify(background)},` : ''
-  return `{\n  "version": 1,${bg}\n  "sprites": {${body}}\n}\n`
+  const rows = paletteRows ? `\n  "paletteRows": ${paletteRows},` : ''
+  return `{\n  "version": 1,${bg}${rows}\n  "sprites": {${body}}\n}\n`
 }
 
 export function overlaps(a: Rect, b: Rect, gap = 0) {

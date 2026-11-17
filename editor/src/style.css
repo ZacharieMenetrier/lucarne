@@ -101,10 +101,6 @@ button.active {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.brand {
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
 #sprite-info {
   display: flex;
   gap: 8px;
@@ -274,8 +270,12 @@ button.active {
 
 #palette-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 4px;
+}
+#palette-grid .swatch {
+  min-width: 0;
+  min-height: 0;
 }
 .swatch {
   aspect-ratio: 1;
@@ -295,8 +295,139 @@ button.active {
   font-size: 18px;
   color: var(--muted);
 }
-.editing .swatch:not(.add) {
-  border: 2px dashed rgba(255, 255, 255, 0.6);
+.swatch.empty {
+  background: transparent;
+  border: 1px dashed var(--line);
+}
+.palette-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 22px 24px 18px;
+}
+.palette-dialog form {
+  position: relative;
+}
+.palette-dialog h2 {
+  margin-bottom: 18px;
+}
+.rows-control {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rows-control button {
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.rows-control button:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: transparent;
+}
+.rows-control svg {
+  width: 16px;
+  height: 16px;
+}
+.rows-count {
+  min-width: 4.5em;
+  text-align: center;
+}
+.palette-library {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.library-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+}
+.library-item:hover {
+  background: var(--panel-2);
+}
+.library-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.library-name small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip {
+  display: flex;
+  flex: none;
+}
+.strip i {
+  width: 8px;
+  height: 22px;
+}
+.palette-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+.palette-edit-grid .swatch {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  transition: transform 0.1s;
+}
+button.swatch:hover:not(.add) {
+  transform: scale(1.08);
+}
+.palette-edit-grid .swatch.add {
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+}
+.palette-edit-grid .swatch.add:hover {
+  border-color: var(--muted);
+  color: var(--text);
+}
+.palette-edit-grid .swatch.add svg {
+  width: 16px;
+  height: 16px;
+}
+.dialog-actions button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.dialog-actions button.ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: transparent;
+}
+.dialog-error:empty {
+  display: none;
 }
 .warning {
   margin: 8px 0 0;
@@ -358,6 +489,9 @@ dialog {
   width: min(380px, calc(100vw - 32px));
   -webkit-user-select: text;
   user-select: text;
+}
+dialog:focus {
+  outline: none;
 }
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
@@ -660,4 +794,32 @@ button.icon-btn svg {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
   border-color: var(--accent);
   cursor: grabbing;
+}
+
+/* Eyedropper loupe, above the finger during a long press. */
+.loupe {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 50;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: linear-gradient(var(--picked) 50%, var(--before) 50%);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.loupe[hidden] {
+  display: none;
+}
+
+/* Not in the palette: crossed out, the color is not taken. */
+.loupe.off-palette::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(to top right, transparent calc(50% - 2px), var(--danger) calc(50% - 2px), var(--danger) calc(50% + 2px), transparent calc(50% + 2px));
 }

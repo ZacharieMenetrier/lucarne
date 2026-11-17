@@ -96,6 +96,8 @@ export class Editor {
   hover: Point | null = null
   /** Board color for this game, "#rrggbb", or null for the default. */
   background: string | null = null
+  /** Rows the palette is laid out in (saved in board.json), null: default. */
+  paletteRows: number | null = null
   /** The active sprite is playing its animation on the board. */
   playing = false
   playIndex = 0
@@ -238,7 +240,7 @@ export class Editor {
 
   /** What board.json should contain. */
   boardFile(): BoardFile {
-    return { placements: this.placements(), background: this.background }
+    return { placements: this.placements(), background: this.background, paletteRows: this.paletteRows }
   }
 
   placements(): Placements {
@@ -591,6 +593,25 @@ export class Editor {
     const bmp = this.bmp!
     const c = this.tool === 'eraser' ? TRANSPARENT : this.color
     for (const q of from ? linePoints(from.x, from.y, p.x, p.y) : [p]) bmp.set(q.x, q.y, c)
+  }
+
+  /** Long press: takes the color shown at a board point, from any sprite,
+   * or the board color where no pixel is drawn. `boardHex` is the board
+   * color as shown (the game's or the editor's default). Returns the color
+   * found and whether it could be taken (only palette colors can). */
+  pickAt(p: Point, boardHex: string): { color: Color; ok: boolean } {
+    const hit = this.hitTest(p)
+    let c: Color = TRANSPARENT
+    if (hit) {
+      const pl = this.sprites.get(hit)!
+      c = this.shownFrame(hit).get(p.x - pl.x, p.y - pl.y)
+    }
+    if (c === TRANSPARENT) c = hexToColor(boardHex)
+    const ok = this.inPalette(c)
+    if (c === this.color) return { color: c, ok }
+    if (ok) this.setColor(c)
+    else this.onMessage(`${colorToHex(c)} is not in the palette`)
+    return { color: c, ok }
   }
 
   private pick(p: Point) {

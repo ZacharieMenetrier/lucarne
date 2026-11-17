@@ -4,6 +4,7 @@ import { colorToHex, hexToColor } from '../editor/src/color'
 import { Editor } from '../editor/src/editor'
 import { findFreeSpot, overlaps, parseBoard, resolveOverlaps, serializeBoard, shelfLayout } from '../editor/src/board'
 import { parsePalette } from '../editor/src/project'
+import { lospecSlug } from '../editor/src/lospec'
 import { composeSheet, newSprite, parseMeta, splitSheet } from '../editor/src/sprite'
 
 const RED = hexToColor('#ff0000')
@@ -142,12 +143,14 @@ describe('editor', () => {
 describe('board', () => {
   it('saves and reads positions and the board color', () => {
     const placements = new Map([['slime', { x: 24, y: -8 }], ['hero', { x: 0, y: 0 }]])
-    const text = serializeBoard({ placements, background: null })
+    const text = serializeBoard({ placements, background: null, paletteRows: null })
     expect(text).toContain('"hero": { "x": 0, "y": 0 },\n    "slime"')
     expect(text).not.toContain('background')
-    expect(parseBoard(text)).toEqual({ placements: new Map([['hero', { x: 0, y: 0 }], ['slime', { x: 24, y: -8 }]]), background: null })
+    expect(parseBoard(text)).toEqual({ placements: new Map([['hero', { x: 0, y: 0 }], ['slime', { x: 24, y: -8 }]]), background: null, paletteRows: null })
     expect(parseBoard('{"sprites": {"bad": {"x": 1.5, "y": 0}}}').placements.size).toBe(0)
-    expect(parseBoard(serializeBoard({ placements, background: '#2a2a33' })).background).toBe('#2a2a33')
+    const parsed = parseBoard(serializeBoard({ placements, background: '#2a2a33', paletteRows: 4 }))
+    expect(parsed.background).toBe('#2a2a33')
+    expect(parsed.paletteRows).toBe(4)
     expect(parseBoard('{"background": "nope"}').background).toBeNull()
   })
 
@@ -171,6 +174,21 @@ describe('board', () => {
     ed.down(at(x, y))
     ed.up(at(x, y))
   }
+
+  it('long press picks from any sprite, or the board color', () => {
+    const ed = board()
+    const blue = hexToColor('#0000ff')
+    const red = hexToColor('#ff0000')
+    ed.sprites.get('slime')!.sprite.frames[0][0].set(1, 1, blue)
+    ed.pickAt({ x: 21, y: 1 }, '#ff0000')
+    expect(ed.color).toBe(blue)
+    expect(ed.active).not.toBe('slime') // picking does not focus
+    ed.pickAt({ x: 21, y: 2 }, '#ff0000') // transparent pixel: board color
+    expect(ed.color).toBe(red)
+    ed.pickAt({ x: 21, y: 1 }, '#ff0000')
+    ed.pickAt({ x: 50, y: 50 }, '#123456') // off-palette board color
+    expect(ed.color).toBe(blue)
+  })
 
   it('focuses another sprite on the first press, draws on the next', () => {
     const ed = board()
@@ -364,5 +382,17 @@ describe('animation frames', () => {
     ed.down({ x: 0, y: 0, shift: false, alt: false })
     ed.up({ x: 0, y: 0, shift: false, alt: false })
     expect(ed.playing).toBe(false)
+  })
+})
+
+describe('lospec', () => {
+  it('finds the palette name in a link or a slug', () => {
+    expect(lospecSlug('https://lospec.com/palette-list/sweetie-16')).toBe('sweetie-16')
+    expect(lospecSlug('lospec.com/palette-list/Sweetie-16.json')).toBe('sweetie-16')
+    expect(lospecSlug(' endesga-32 ')).toBe('endesga-32')
+    expect(lospecSlug('https://evil.example/palette-list/sweetie-16')).toBeNull()
+    expect(lospecSlug('https://lospec.com/other/x')).toBeNull()
+    expect(lospecSlug('not a name!')).toBeNull()
+    expect(lospecSlug('')).toBeNull()
   })
 })

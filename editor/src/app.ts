@@ -6,6 +6,8 @@ import { colorToHex, hexToColor, isHex } from './color'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { Editor, MAX_FPS, MIN_FPS, type ToolId } from './editor'
 import { icon } from './icons'
+import { fetchLospecPalette, lospecSlug, type LospecPalette } from './lospec'
+import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
 import { MAX_SIZE, NAME_RE, newSprite, type Sprite } from './sprite'
@@ -23,6 +25,9 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: 'select', label: 'Select', key: 'M' },
   { id: 'move', label: 'Move sprite', key: 'V' },
 ]
+
+/** Tiles per palette row. A palette always holds whole rows. */
+const PALETTE_COLS = 8
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -117,7 +122,6 @@ export class App {
   private readonly saver: Saver
   private spriteNames: string[] = []
   private thumbs = new Map<string, HTMLCanvasElement>()
-  private editingPalette = false
   private thumbTimer = 0
   private staleThumbs = new Set<string>()
   private rememberedSprite: string | null = null
@@ -146,10 +150,7 @@ export class App {
     this.bindKeys()
     $('empty-new').addEventListener('click', () => void this.newSprite())
     $('sprites-new').addEventListener('click', () => void this.newSprite())
-    $('palette-edit').addEventListener('click', () => {
-      this.editingPalette = !this.editingPalette
-      this.renderPalette()
-    })
+    $('palette-edit').addEventListener('click', () => void this.editPalette())
     this.editor.subscribe(() => this.render())
 
     window.addEventListener('beforeunload', (e) => {
@@ -170,8 +171,10 @@ export class App {
 
   /** Loads every sprite and places it on the board. */
   private async loadBoard() {
-    const [names, { placements, background }] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
+    const [names, { placements, background, paletteRows }] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
     this.editor.background = background
+    this.editor.paletteRows = paletteRows
+    this.renderPalette()
     const sprites = await Promise.all(
       names.map((name) =>
         this.project.loadSprite(name).catch((err: Error) => {
@@ -403,6 +406,140 @@ export class App {
 
   // --- Palette --------------------------------------------------------------
 
+  /** The palette dialog: pick a color to edit, fill a free slot, add or remove rows of 8. */
+  private async editPalette() {
+    const grid = h('div', { className: 'palette-edit-grid' })
+    const count = h('span', { className: 'rows-count' })
+    const less = h('button', { type: 'button', className: 'small icon-btn', title: 'Remove the last row', 'aria-label': 'Remove a row', html: icon('remove') })
+    const more = h('button', { type: 'button', className: 'small icon-btn', title: 'Add a row', 'aria-label': 'Add a row', html: icon('add') })
+    const fill = () => {
+      const palette = this.project.palette
+      const rows = this.paletteRows
+      count.textContent = rows === 1 ? '1 row' : `${rows} rows`
+      less.disabled = rows <= 1
+      grid.replaceChildren()
+      palette.forEach((hex, i) => {
+        grid.append(h('button', { type: 'button', className: 'swatch', title: hex, style: `--c: ${hex}`, onclick: () => void this.editColor(i).then(fill) }))
+      })
+      for (let k = palette.length; k < rows * PALETTE_COLS; k++) {
+        grid.append(h('button', { type: 'button', className: 'swatch add', title: 'Add a color', html: icon('add'), onclick: () => void this.editColor(null).then(fill) }))
+      }
+    }
+    const setRows = (rows: number) => {
+      this.editor.paletteRows = rows
+      this.saver.boardMoved()
+      this.renderPalette()
+      fill()
+    }
+    more.addEventListener('click', () => setRows(this.paletteRows + 1))
+    less.addEventListener('click', async () => {
+      const rows = this.paletteRows
+      const kept = (rows - 1) * PALETTE_COLS
+      const lost = this.project.palette.length - kept
+      if (lost > 0) {
+        if (!(await confirmDialog('Remove the last row?', `Its ${lost} color${lost > 1 ? 's' : ''} will be removed from the palette.`, 'Remove', true))) return
+        const palette = this.project.palette.slice(0, kept)
+        this.project.palette = palette
+        this.editor.setPalette(palette)
+        try {
+          await this.project.savePalette()
+        } catch (err) {
+          toast(`Palette not saved: ${(err as Error).message}`)
+        }
+      }
+      setRows(rows - 1)
+    })
+    fill()
+    const lospec = h('button', { type: 'button', className: 'ghost left', title: 'Import a palette: popular ones or any from lospec.com', onclick: () => void this.importLospec().then(fill) }, 'Import…')
+    const body = h('div', { className: 'fields' },
+      h('div', { className: 'rows-control' }, less, count, more),
+      grid,
+    )
+    const done = openDialog('Palette', body, [{ label: 'Done', value: 'ok', kind: 'primary' }], undefined, 'palette-dialog')
+    // The import button sits in the footer, on the left, opposite Done.
+    document.querySelector('dialog.palette-dialog .dialog-actions')?.append(lospec)
+    // No button should look selected when it opens.
+    const dialog = document.querySelector<HTMLElement>('dialog.palette-dialog')
+    if (dialog) {
+      dialog.tabIndex = -1
+      dialog.focus()
+    }
+    await done
+  }
+
+  /** Replaces the palette with a bundled popular one, or any palette fetched from Lospec, after showing what it is. */
+  private async importLospec() {
+    const input = h('input', { type: 'text', placeholder: 'https://lospec.com/palette-list/sweetie-16', autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const list = h('div', { className: 'palette-library' })
+    let picked: string | null = null
+    for (const p of BUNDLED_PALETTES) {
+      const strip = h('span', { className: 'strip' })
+      for (const hex of bundledColors(p).slice(0, 12)) strip.append(h('i', { style: `background: ${hex}` }))
+      list.append(
+        h('button', {
+          type: 'button',
+          className: 'library-item',
+          onclick: (e: Event) => {
+            picked = p.slug
+            ;(e.currentTarget as HTMLElement).closest('form')!.querySelector<HTMLButtonElement>('button.primary')!.click()
+          },
+        },
+          h('span', { className: 'library-name' }, p.name, h('small', {}, `${bundledColors(p).length} colors${p.author ? ` · ${p.author}` : ''}`)),
+          strip,
+        ),
+      )
+    }
+    const body = h('div', { className: 'fields' },
+      h('label', {}, 'Most popular on Lospec (offline)', list),
+      h('label', {}, 'Or any palette from lospec.com: link or name', input),
+    )
+    const res = await openDialog('Import a palette', body, [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Find', value: 'ok', kind: 'primary' },
+    ], () => (picked || lospecSlug(input.value) ? null : 'Pick a palette, or paste a link like lospec.com/palette-list/sweetie-16.'))
+    if (!res) return
+
+    let found: LospecPalette
+    const bundled = picked ? BUNDLED_PALETTES.find((p) => p.slug === picked) : undefined
+    if (bundled) {
+      found = { name: bundled.name, author: bundled.author, colors: bundledColors(bundled) }
+    } else {
+      const slug = lospecSlug(input.value)
+      if (!slug) return
+      try {
+        found = await fetchLospecPalette(slug)
+      } catch (err) {
+        toast(err instanceof TypeError ? 'Could not reach Lospec.' : (err as Error).message)
+        return
+      }
+    }
+    const preview = h('div', { className: 'palette-edit-grid' })
+    for (const hex of found.colors) preview.append(h('span', { className: 'swatch', title: hex, style: `--c: ${hex}` }))
+    const by = found.author ? ` by ${found.author}` : ''
+    const ok = await openDialog(
+      'Replace the palette?',
+      h('div', { className: 'fields' },
+        h('p', {}, `${found.name}${by}: ${found.colors.length} colors, from lospec.com.`),
+        preview,
+        h('p', { className: 'muted' }, 'Sprites keep their pixels, even those not in the new palette.'),
+      ),
+      [{ label: 'Cancel', value: 'cancel' }, { label: 'Replace', value: 'ok', kind: 'primary' }],
+    )
+    if (!ok) return
+
+    this.project.palette = found.colors
+    this.editor.setPalette(found.colors)
+    this.editor.paletteRows = null
+    this.saver.boardMoved()
+    try {
+      await this.project.savePalette()
+    } catch (err) {
+      toast(`Palette not saved: ${(err as Error).message}`)
+    }
+    this.renderPalette()
+    toast(`Palette "${found.name}" imported`)
+  }
+
   private async editColor(index: number | null) {
     const old = index === null ? null : this.project.palette[index]
     const initial = old ?? colorToHex(this.editor.color).slice(0, 7)
@@ -462,6 +599,8 @@ export class App {
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
+    $('sprites-new').innerHTML = icon('add')
+    $('palette-edit').innerHTML = icon('pencil')
     $('undo').innerHTML = icon('undo')
     $('redo').innerHTML = icon('redo')
     $('grid').innerHTML = icon('grid')
@@ -830,6 +969,11 @@ export class App {
     el.textContent = { saved: 'Saved', pending: 'Edited', saving: 'Saving…', error: 'Error' }[s]
   }
 
+  /** Rows in the palette: enough for every color, at least what the user asked for. */
+  private get paletteRows() {
+    return Math.max(1, Math.ceil(this.project.palette.length / PALETTE_COLS), this.editor.paletteRows ?? 0)
+  }
+
   private renderPalette() {
     const grid = $('palette-grid')
     grid.replaceChildren()
@@ -840,17 +984,13 @@ export class App {
           title: i < 9 ? `${hex} (${i + 1})` : hex,
           'data-hex': hex,
           style: `--c: ${hex}`,
-          onclick: () => (this.editingPalette ? void this.editColor(i) : this.editor.setColor(hexToColor(hex))),
+          onclick: () => this.editor.setColor(hexToColor(hex)),
         }),
       )
     })
-    if (this.editingPalette) {
-      grid.append(h('button', { className: 'swatch add', title: 'Add a color', onclick: () => void this.editColor(null) }, '+'))
-    }
-    $('palette-panel').classList.toggle('editing', this.editingPalette)
-    $('palette-edit').textContent = this.editingPalette ? 'Done' : 'Edit'
+    // Free slots of the last rows, so the palette always shows whole rows.
+    for (let k = this.project.palette.length; k < this.paletteRows * PALETTE_COLS; k++) grid.append(h('span', { className: 'swatch empty' }))
     const n = this.project.palette.length
-    $('palette-count').textContent = String(n)
     const warn = $('palette-warning')
     warn.hidden = n <= PALETTE_WARNING
     warn.textContent = `${n} colors: beyond ${PALETTE_WARNING}, a palette gets hard to keep consistent.`

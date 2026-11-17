@@ -202,14 +202,18 @@ export class View {
     return best
   }
 
+  /** Board color as shown: the game's, else the editor's default. */
+  get boardColor(): string {
+    return this.editor.background ?? (getComputedStyle(this.canvas).getPropertyValue('--stage-bg').trim() || '#202028')
+  }
+
   // --- Rendering --------------------------------------------------------------
 
   private render() {
     const { ctx, canvas, editor } = this
     const dpr = this.dpr
-    const style = getComputedStyle(canvas)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    const bg = editor.background ?? (style.getPropertyValue('--stage-bg').trim() || '#202028')
+    const bg = this.boardColor
     const ink = isLight(bg) ? ON_LIGHT : ON_DARK
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)

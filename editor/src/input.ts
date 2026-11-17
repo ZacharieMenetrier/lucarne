@@ -1,18 +1,22 @@
 // Pointer, pen and gestures.
 //
 // - Mouse and pen draw. Fingers never draw (the palm is ignored).
+// - One finger held still: eyedropper (sprite pixel, or the board color);
+//   keep it down and slide to pick other colors.
 // - Two fingers: zoom and pan. Two-finger tap: undo. Three-finger tap: redo.
 // - Mouse: wheel or trackpad to pan, pinch or ⌥/⌘ + wheel to zoom,
 //   middle button or space + drag to pan.
 // - Dragging a sprite's name moves it, whatever the tool. Double tap on a
 //   name (or on a sprite with the Move tool) zooms in on that sprite.
 
+import { colorToCss } from './color'
 import type { Editor, PointerInput } from './editor'
 import type { View } from './view'
 
 const TAP_MAX_MS = 300
 const TAP_MAX_MOVE = 12
 const DOUBLE_TAP_MS = 350
+const LONG_PRESS_MS = 400
 
 interface Gesture {
   startTime: number
@@ -36,6 +40,40 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
   let spaceDown = false
 
   let lastTap = { name: '', time: 0, x: 0, y: 0 }
+
+  // One finger held still: eyedropper. Once it fires, sliding keeps picking.
+  let press: { id: number; x0: number; y0: number; x: number; y: number; timer: ReturnType<typeof setTimeout>; active: boolean; last: string } | null = null
+
+  // Loupe above the finger while picking: top half, the color under the
+  // finger; bottom half, the color before the long press.
+  const loupe = document.createElement('div')
+  loupe.className = 'loupe'
+  loupe.hidden = true
+  document.body.append(loupe)
+
+  function moveLoupe(clientX: number, clientY: number) {
+    // Above the finger, or below it near the top of the screen.
+    const y = clientY - 90 < 40 ? clientY + 90 : clientY - 90
+    loupe.style.transform = `translate(${clientX}px, ${y}px) translate(-50%, -50%)`
+  }
+
+  function cancelPress() {
+    if (press) clearTimeout(press.timer)
+    press = null
+    loupe.hidden = true
+  }
+
+  function pickUnder(clientX: number, clientY: number) {
+    if (!press) return
+    moveLoupe(clientX, clientY)
+    const p = view.toBoard(clientX, clientY)
+    const key = `${p.x},${p.y}`
+    if (key === press.last) return
+    press.last = key
+    const { color, ok } = editor.pickAt(p, view.boardColor)
+    loupe.style.setProperty('--picked', colorToCss(color))
+    loupe.classList.toggle('off-palette', !ok)
+  }
 
   const toInput = (e: PointerEvent): PointerInput => ({
     ...view.toBoard(e.clientX, e.clientY),
@@ -62,6 +100,25 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
 
   function touchDown(e: PointerEvent) {
     touches.set(e.pointerId, view.toDevice(e.clientX, e.clientY))
+    if (touches.size === 1 && !gesture) {
+      const { clientX, clientY, pointerId } = e
+      press = {
+        id: pointerId,
+        x0: clientX,
+        y0: clientY,
+        x: clientX,
+        y: clientY,
+        active: false,
+        last: '',
+        timer: setTimeout(() => {
+          if (!press) return
+          press.active = true
+          loupe.style.setProperty('--before', colorToCss(editor.color))
+          loupe.hidden = false
+          pickUnder(press.x, press.y)
+        }, LONG_PRESS_MS),
+      }
+    } else cancelPress()
     if (touches.size >= 2) {
       if (!gesture) {
         gesture = { startTime: performance.now(), maxTouches: 0, moved: false, dist0: 0, midX0: 0, midY0: 0, zoom0: 0, ox0: 0, oy0: 0 }
@@ -74,6 +131,14 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
   function touchMove(e: PointerEvent) {
     if (!touches.has(e.pointerId)) return
     touches.set(e.pointerId, view.toDevice(e.clientX, e.clientY))
+    if (press?.id === e.pointerId) {
+      if (press.active) return pickUnder(e.clientX, e.clientY)
+      if (Math.hypot(e.clientX - press.x0, e.clientY - press.y0) > TAP_MAX_MOVE) cancelPress()
+      else {
+        press.x = e.clientX
+        press.y = e.clientY
+      }
+    }
     if (!gesture || touches.size < 2) return
     const { dist, midX, midY } = twoFingers()
     if (Math.abs(dist - gesture.dist0) > TAP_MAX_MOVE * view.dpr || Math.hypot(midX - gesture.midX0, midY - gesture.midY0) > TAP_MAX_MOVE * view.dpr) {
@@ -92,6 +157,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
 
   function touchUp(e: PointerEvent) {
     if (!touches.delete(e.pointerId)) return
+    if (press?.id === e.pointerId) cancelPress()
     if (touches.size >= 2) return rebase()
     if (touches.size === 0 && gesture) {
       const g = gesture
@@ -145,8 +211,9 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     }
     if (e.pointerType === 'pen') {
       penDown = true
-      // A hand resting on the screen must not zoom while drawing.
+      // A hand resting on the screen must not zoom or pick while drawing.
       touches.clear()
+      cancelPress()
       gesture = null
     }
     drawingId = e.pointerId
