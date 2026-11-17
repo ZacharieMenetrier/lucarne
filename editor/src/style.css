@@ -101,11 +101,6 @@ button.active {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-#sprite-info {
-  display: flex;
-  gap: 8px;
-  margin-left: 12px;
-}
 .spacer {
   flex: 1;
 }
@@ -531,6 +526,17 @@ select {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 7px 9px;
+}
+#sprite-name {
+  width: 140px;
+  padding: 4px 8px;
+  font-size: 13px;
+  background: transparent;
+  border-color: transparent;
+}
+#sprite-name:hover:not(:disabled),
+#sprite-name:focus {
+  border-color: var(--line);
 }
 input[type='checkbox'] {
   width: 18px;

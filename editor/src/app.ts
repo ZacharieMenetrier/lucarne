@@ -346,6 +346,19 @@ export class App {
     if (name !== sprite.name) await this.renameSprite(sprite.name, name)
   }
 
+  private async commitName(field: HTMLInputElement) {
+    const sprite = this.editor.sprite
+    if (!sprite) return
+    const name = field.value.trim()
+    if (name === sprite.name) return void (field.value = name)
+    const err = this.nameError(name, sprite.name)
+    if (err) {
+      field.value = sprite.name
+      return toast(err)
+    }
+    await this.renameSprite(sprite.name, name)
+  }
+
   private async renameSprite(from: string, to: string) {
     await this.saver.flush()
     const snapshot = this.editor.snapshot()!
@@ -601,16 +614,22 @@ export class App {
   private buildTopbar() {
     $('sprites-new').innerHTML = icon('add')
     $('palette-edit').innerHTML = icon('pencil')
-    $('undo').innerHTML = icon('undo')
-    $('redo').innerHTML = icon('redo')
+    $('sprite-delete').innerHTML = icon('trash')
+    $('sprite-delete').addEventListener('click', () => void this.deleteSprite())
     $('grid').innerHTML = icon('grid')
     $('fit').innerHTML = icon('fit')
-    $('undo').addEventListener('click', () => this.editor.undo())
-    $('redo').addEventListener('click', () => this.editor.redo())
+    const nameField = $<HTMLInputElement>('sprite-name')
+    nameField.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') nameField.blur()
+      else if (e.key === 'Escape') {
+        nameField.value = this.editor.sprite?.name ?? ''
+        nameField.blur()
+      }
+    })
+    nameField.addEventListener('change', () => void this.commitName(nameField))
     $('grid').addEventListener('click', () => this.toggleGrid())
     $('background').addEventListener('click', () => void this.editBackground())
     $('fit').addEventListener('click', () => this.view.fit())
-    $('sprite-info').addEventListener('click', () => void this.editSprite())
   }
 
   /** The editor's own board color, used when the game sets none. */
@@ -757,18 +776,16 @@ export class App {
   private render() {
     const ed = this.editor
     const sprite = ed.sprite
-    const bmp = ed.bmp
 
     $('app').classList.toggle('no-sprite', ed.sprites.size === 0)
     if (sprite && sprite.name !== this.rememberedSprite) {
       this.rememberedSprite = sprite.name
       this.lastSprite = sprite.name
     }
-    $('sprite-name').textContent = sprite?.name ?? '—'
-    $('sprite-size').textContent = bmp ? `${bmp.width}×${bmp.height}` : ''
-    $<HTMLButtonElement>('sprite-info').disabled = !sprite
-    $<HTMLButtonElement>('undo').disabled = !ed.canUndo
-    $<HTMLButtonElement>('redo').disabled = !ed.canRedo
+    const nameField = $<HTMLInputElement>('sprite-name')
+    nameField.disabled = !sprite
+    $<HTMLButtonElement>('sprite-delete').disabled = !sprite
+    if (document.activeElement !== nameField) nameField.value = sprite?.name ?? ''
     $('grid').classList.toggle('active', this.view.showGrid)
     $('anim-toggle').classList.toggle('active', !$('frames').hidden)
     $('background-swatch').style.background = ed.background ?? ''

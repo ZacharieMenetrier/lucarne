@@ -18,14 +18,10 @@
     <div id="app" class="no-sprite">
       <header id="topbar">
         <span id="project-name" class="muted"></span>
-        <button id="sprite-info" title="Name, size, delete">
-          <span id="sprite-name">—</span>
-          <span id="sprite-size" class="muted"></span>
-        </button>
+        <input id="sprite-name" type="text" aria-label="Sprite name" autocapitalize="off" autocomplete="off" spellcheck="false" />
+        <button id="sprite-delete" class="icon" title="Delete sprite" aria-label="Delete sprite"></button>
         <span class="spacer"></span>
         <span id="save-status" data-status="saved">Saved</span>
-        <button id="undo" class="icon" title="Undo (⌘Z, two-finger tap)" aria-label="Undo"></button>
-        <button id="redo" class="icon" title="Redo (⇧⌘Z, three-finger tap)" aria-label="Redo"></button>
         <button id="background" class="icon" title="Board color" aria-label="Board color"><span id="background-swatch"></span></button>
         <button id="grid" class="icon" title="Grid (#)" aria-label="Grid"></button>
         <button id="fit" class="icon" title="Show every sprite (0)" aria-label="Show every sprite"></button>
