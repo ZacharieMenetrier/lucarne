@@ -18,6 +18,28 @@
   box-sizing: border-box;
 }
 
+#ios-edge {
+  display: none;
+}
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    #ios-edge {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 12px;
+      z-index: 2147483647;
+      pointer-events: none;
+      /* WebKit samples this colour; background-clip: text keeps it from painting. */
+      background: var(--panel);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+  }
+}
+
 html,
 body {
   margin: 0;
