@@ -121,6 +121,9 @@ export class App {
   private thumbTimer = 0
   private staleThumbs = new Set<string>()
   private rememberedSprite: string | null = null
+  private framesKey = ''
+  /** A frame was just dragged: the click that follows must not select. */
+  private frameDragged = false
 
   constructor(private readonly project: Project) {
     this.editor = new Editor(project.palette)
@@ -139,6 +142,7 @@ export class App {
     this.buildTopbar()
     this.buildTools()
     this.buildSelectionBar()
+    this.buildFrames()
     this.bindKeys()
     $('empty-new').addEventListener('click', () => void this.newSprite())
     $('sprites-new').addEventListener('click', () => void this.newSprite())
@@ -393,6 +397,7 @@ export class App {
         old?.replaceWith(thumb)
       }
       this.staleThumbs.clear()
+      this.refreshFrameThumbs()
     }, 250)
   }
 
@@ -581,6 +586,10 @@ export class App {
       else if (k === 'v' && e.shiftKey) ed.flip('v')
       else if (!e.shiftKey && toolKeys[k]) ed.setTool(toolKeys[k])
       else if (e.key === 'Delete' || e.key === 'Backspace') ed.deleteSelection()
+      else if (k === 'a' && !e.shiftKey) this.toggleFrames()
+      else if (e.key === 'Enter' && !ed.selection && !ed.floating) ed.playing ? ed.stop() : ed.play()
+      else if (k === ',' || k === '<') e.shiftKey ? ed.moveFrame(-1) : ed.setFrameIndex(ed.frame - 1)
+      else if (k === '.' || k === '>') e.shiftKey ? ed.moveFrame(1) : ed.setFrameIndex(ed.frame + 1)
       else if (e.key === 'Escape' || e.key === 'Enter') ed.deselect()
       else if (e.key === '#') this.toggleGrid()
       else if (e.key === '0') this.view.fit()
@@ -622,6 +631,7 @@ export class App {
     $<HTMLButtonElement>('undo').disabled = !ed.canUndo
     $<HTMLButtonElement>('redo').disabled = !ed.canRedo
     $('grid').classList.toggle('active', this.view.showGrid)
+    $('anim-toggle').classList.toggle('active', !$('frames').hidden)
     $('background-swatch').style.background = ed.background ?? ''
 
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
@@ -641,6 +651,172 @@ export class App {
     for (const el of document.querySelectorAll<HTMLElement>('.sprite-item')) {
       el.classList.toggle('active', el.dataset.name === sprite?.name)
     }
+    this.renderFrames()
+  }
+
+  // --- Animation panel ------------------------------------------------------
+
+  private buildFrames() {
+    $('anim-toggle').innerHTML = icon('frames')
+    $('frame-add').innerHTML = icon('add')
+    $('frame-dup').innerHTML = icon('copy')
+    $('frame-del').innerHTML = icon('trash')
+    $('anim-toggle').addEventListener('click', () => this.toggleFrames())
+    $('play').addEventListener('click', () => (this.editor.playing ? this.editor.stop() : this.editor.play()))
+    const fps = $<HTMLInputElement>('fps')
+    fps.addEventListener('change', () => {
+      this.editor.setFps(Number(fps.value))
+      fps.value = String(this.editor.fps)
+    })
+    fps.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') fps.blur()
+    })
+    $('frame-add').addEventListener('click', () => this.editor.addFrame())
+    $('frame-dup').addEventListener('click', () => this.editor.duplicateFrame())
+    $('frame-del').addEventListener('click', () => this.editor.deleteFrame())
+  }
+
+  private toggleFrames() {
+    const panel = $('frames')
+    panel.hidden = !panel.hidden
+    this.framesKey = ''
+    this.render()
+    // The stage changed size: the canvas follows by itself (ResizeObserver).
+  }
+
+  /** Redraws the strip when the frames changed; otherwise only the highlights. */
+  private renderFrames() {
+    const panel = $('frames')
+    if (panel.hidden) return
+    const ed = this.editor
+    const sprite = ed.sprite
+    const n = sprite?.meta.frames.length ?? 0
+    const key = sprite ? `${sprite.name}|${n}|${sprite.meta.frameWidth}x${sprite.meta.frameHeight}` : ''
+    const strip = $('frame-strip')
+    if (key !== this.framesKey) {
+      this.framesKey = key
+      strip.replaceChildren()
+      sprite?.meta.frames.forEach((_, i) => {
+        strip.append(
+          h('div', {
+            className: 'frame',
+            'data-frame': i,
+            title: 'Drag to reorder',
+            onclick: () => {
+              if (!this.frameDragged) this.editor.setFrameIndex(i)
+            },
+            onpointerdown: (e: PointerEvent) => this.startFrameDrag(e, i),
+          },
+            h('div', { className: 'frame-view' }),
+            h('div', { className: 'frame-meta' }, String(i + 1))),
+        )
+      })
+      this.refreshFrameThumbs()
+    }
+    const shown = ed.playing ? ed.playIndex : ed.frame
+    for (const el of strip.querySelectorAll<HTMLElement>('.frame')) {
+      const i = Number(el.dataset.frame)
+      el.classList.toggle('active', i === ed.frame)
+      el.classList.toggle('playing', ed.playing && i === shown)
+    }
+    const fpsInput = $<HTMLInputElement>('fps')
+    fpsInput.disabled = !sprite
+    if (document.activeElement !== fpsInput) fpsInput.value = sprite ? String(ed.fps) : ''
+    // Only touch the button when its state changes: replacing its icon on every
+    // animation tick would swallow clicks (press and release on different nodes).
+    const playState = ed.playing ? 'pause' : 'play'
+    if ($('play').dataset.state !== playState) {
+      $('play').dataset.state = playState
+      $('play').innerHTML = icon(playState)
+      $('play').setAttribute('aria-label', ed.playing ? 'Pause' : 'Play')
+    }
+    $<HTMLButtonElement>('play').disabled = n < 2
+    $<HTMLButtonElement>('frame-add').disabled = !sprite
+    $<HTMLButtonElement>('frame-dup').disabled = !sprite
+    $<HTMLButtonElement>('frame-del').disabled = n < 2
+  }
+
+  /** Drag and drop to reorder frames (pointer events, so it works with touch and stylus).
+   * A ghost of the frame follows the pointer, the others slide aside to open a gap. */
+  private startFrameDrag(e: PointerEvent, from: number) {
+    if (e.button !== 0) return
+    const strip = $('frame-strip')
+    const cells = [...strip.querySelectorAll<HTMLElement>('.frame')]
+    const cell = cells[from]
+    const rects = cells.map((c) => c.getBoundingClientRect())
+    const step = cells.length > 1 ? rects[1].left - rects[0].left : rects[0].width
+    const grab = e.clientX - rects[from].left
+    let ghost: HTMLElement | null = null
+    let to = from
+
+    const place = (x: number) => {
+      // The slot whose middle is closest to the pointer.
+      let best = 0
+      rects.forEach((r, i) => {
+        if (Math.abs(x - (r.left + r.width / 2)) < Math.abs(x - (rects[best].left + rects[best].width / 2))) best = i
+      })
+      to = best
+      cells.forEach((c, i) => {
+        let dx = 0
+        if (i === from) dx = (to - from) * step
+        else if (from < to && i > from && i <= to) dx = -step
+        else if (from > to && i >= to && i < from) dx = step
+        c.style.transform = dx ? `translateX(${dx}px)` : ''
+      })
+    }
+    const start = () => {
+      ghost = cell.cloneNode(true) as HTMLElement
+      // A cloned canvas is blank: copy its pixels.
+      const src = cell.querySelector('canvas')
+      const dst = ghost.querySelector('canvas')
+      if (src && dst) dst.getContext('2d')!.drawImage(src, 0, 0)
+      ghost.classList.add('frame-ghost')
+      ghost.style.width = `${rects[from].width}px`
+      ghost.style.top = `${rects[from].top}px`
+      document.body.append(ghost)
+      cell.classList.add('dragging')
+      strip.classList.add('reordering')
+    }
+    const move = (ev: PointerEvent) => {
+      if (!ghost) {
+        if (Math.abs(ev.clientX - e.clientX) < 6) return
+        start()
+      }
+      ghost!.style.left = `${ev.clientX - grab}px`
+      place(ev.clientX)
+    }
+    const end = () => {
+      cell.removeEventListener('pointermove', move)
+      cell.removeEventListener('pointerup', end)
+      cell.removeEventListener('pointercancel', end)
+      if (!ghost) return
+      ghost.remove()
+      // Back to the normal layout without animating, then apply the change.
+      strip.classList.remove('reordering')
+      cell.classList.remove('dragging')
+      for (const c of cells) c.style.transform = ''
+      this.frameDragged = true
+      setTimeout(() => (this.frameDragged = false), 0)
+      this.editor.moveFrameTo(from, to)
+      this.refreshFrameThumbs()
+    }
+    // Capture from the start so a fast drag outside the cell is still followed.
+    cell.setPointerCapture(e.pointerId)
+    cell.addEventListener('pointermove', move)
+    cell.addEventListener('pointerup', end)
+    cell.addEventListener('pointercancel', end)
+  }
+
+  private refreshFrameThumbs() {
+    const panel = $('frames')
+    const snap = panel.hidden ? null : this.editor.snapshot()
+    if (!snap) return
+    const views = $('frame-strip').querySelectorAll<HTMLElement>('.frame-view')
+    views.forEach((view, i) => {
+      const bmp = snap.frames[0][i]
+      if (bmp) view.replaceChildren(makeThumb(bmp, 56))
+    })
   }
 
   private renderStatus(s: SaveStatus) {
@@ -695,10 +871,10 @@ export class App {
 }
 
 /** Image thumbnail (the canvas is scaled up in CSS, without smoothing). */
-function makeThumb(bmp: Bitmap): HTMLCanvasElement {
+function makeThumb(bmp: Bitmap, size = 32): HTMLCanvasElement {
   const c = h('canvas', { className: 'thumb', width: bmp.width, height: bmp.height })
   c.getContext('2d')!.putImageData(toImageData(bmp), 0, 0)
-  const scale = 32 / Math.max(bmp.width, bmp.height)
+  const scale = size / Math.max(bmp.width, bmp.height)
   c.style.width = `${Math.max(1, Math.round(bmp.width * scale))}px`
   c.style.height = `${Math.max(1, Math.round(bmp.height * scale))}px`
   return c

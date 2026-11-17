@@ -28,6 +28,9 @@ import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
 import type { Sprite } from './sprite'
 
+export const MIN_FPS = 1
+export const MAX_FPS = 60
+
 export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move'
 
 export interface PointerInput extends Point {
@@ -40,6 +43,15 @@ export interface Placed {
   sprite: Sprite
   x: number
   y: number
+  /** Animation frame being edited. */
+  frame: number
+}
+
+/** Frame list of a sprite, for undoing changes to its structure. */
+interface FrameState {
+  frames: Bitmap[][]
+  durations: number[]
+  frame: number
 }
 
 interface Floating {
@@ -54,6 +66,7 @@ interface Floating {
 type Change =
   | { kind: 'pixels'; name: string; d: number; f: number; before: Bitmap; after: Bitmap }
   | { kind: 'place'; name: string; from: Point; to: Point }
+  | { kind: 'frames'; name: string; before: FrameState; after: FrameState }
   | { kind: 'group'; items: Change[] }
 
 // Drag points are local to the active sprite, except 'place' (board).
@@ -79,6 +92,9 @@ export class Editor {
   hover: Point | null = null
   /** Board color for this game, "#rrggbb", or null for the default. */
   background: string | null = null
+  /** The active sprite is playing its animation on the board. */
+  playing = false
+  playIndex = 0
 
   /** A sprite's pixels changed (to save it). */
   onEdit: (name: string) => void = () => {}
@@ -89,6 +105,7 @@ export class Editor {
   onMessage: (text: string) => void = () => {}
 
   private drag: Drag | null = null
+  private playTimer: ReturnType<typeof setTimeout> | undefined
   private history = new History<Change>()
   private listeners = new Set<() => void>()
 
@@ -119,9 +136,22 @@ export class Editor {
     return this.placed?.sprite ?? null
   }
 
-  /** Image being edited: first frame of the active sprite. */
+  /** Image being edited: the current frame of the active sprite. */
   get bmp(): Bitmap | null {
-    return this.sprite?.frames[0][0] ?? null
+    const pl = this.placed
+    return pl?.sprite.frames[0][pl.frame] ?? null
+  }
+
+  /** Index of the frame being edited. */
+  get frame(): number {
+    return this.placed?.frame ?? 0
+  }
+
+  /** Image to show for a sprite: the playing frame, else the one being edited. */
+  shownFrame(name: string): Bitmap {
+    const pl = this.sprites.get(name)!
+    const f = this.playing && name === this.active ? this.playIndex : pl.frame
+    return pl.sprite.frames[0][f] ?? pl.sprite.frames[0][0]
   }
 
   get dragging() {
@@ -207,12 +237,13 @@ export class Editor {
   }
 
   addSprite(sprite: Sprite, x: number, y: number) {
-    this.sprites.set(sprite.name, { sprite, x, y })
+    this.sprites.set(sprite.name, { sprite, x, y, frame: 0 })
     this.emit()
   }
 
   removeSprite(name: string) {
     if (this.active === name) {
+      this.stop()
       this.drag = null
       this.overlay = null
       this.selection = null
@@ -238,6 +269,7 @@ export class Editor {
   /** Makes a sprite the one being edited (drops any floating selection first). */
   activate(name: string | null) {
     if (name === this.active) return
+    this.stop()
     this.commitFloating()
     this.drag = null
     this.overlay = null
@@ -251,7 +283,7 @@ export class Editor {
     const sprite = name ? this.sprites.get(name)?.sprite : null
     if (!sprite) return null
     const frames = sprite.frames.map((row) => row.map((b) => b.clone()))
-    if (name === this.active && this.floating) blit(frames[0][0], this.floating.bmp, this.floating.x, this.floating.y)
+    if (name === this.active && this.floating) blit(frames[0][sprite === this.placed?.sprite ? this.placed.frame : 0], this.floating.bmp, this.floating.x, this.floating.y)
     return { name: sprite.name, meta: structuredClone(sprite.meta), frames }
   }
 
@@ -305,6 +337,7 @@ export class Editor {
       if (name) this.grab(name, p)
       return
     }
+    this.stop()
     if (!this.target(p)) {
       if (this.tool === 'select') this.deselect()
       return
@@ -490,7 +523,7 @@ export class Editor {
     const bmp = this.bmp
     const name = this.active
     if (!bmp || !name || before.equals(bmp)) return
-    this.history.push({ kind: 'pixels', name, d: 0, f: 0, before, after: bmp.clone() })
+    this.history.push({ kind: 'pixels', name, d: 0, f: this.frame, before, after: bmp.clone() })
     this.onEdit(name)
     this.emit()
   }
@@ -576,7 +609,7 @@ export class Editor {
     if (!this.selection) {
       // No selection: the whole image.
       const before = bmp.clone()
-      this.setFrame(pl, 0, 0, axis === 'h' ? flipH(bmp) : flipV(bmp))
+      this.setFrame(pl, 0, pl.frame, axis === 'h' ? flipH(bmp) : flipV(bmp))
       return this.commit(before)
     }
     this.lift(true)
@@ -630,10 +663,149 @@ export class Editor {
   }
 
   // -------------------------------------------------------------------------
+  // Animation frames (every direction row gets the same frames)
+
+  setFrameIndex(i: number) {
+    const pl = this.placed
+    if (!pl) return
+    const f = Math.min(Math.max(0, i), pl.sprite.frames[0].length - 1)
+    this.stop()
+    if (f === pl.frame) return
+    this.commitFloating()
+    this.drag = null
+    this.overlay = null
+    this.selection = null
+    pl.frame = f
+    this.emit()
+  }
+
+  addFrame() {
+    this.editFrames((s) => {
+      const { width, height } = s.frames[0][s.frame]
+      s.frames.forEach((row) => row.splice(s.frame + 1, 0, new Bitmap(width, height)))
+      s.durations.splice(s.frame + 1, 0, s.durations[s.frame])
+      s.frame++
+    })
+  }
+
+  duplicateFrame() {
+    this.editFrames((s) => {
+      s.frames.forEach((row) => row.splice(s.frame + 1, 0, row[s.frame].clone()))
+      s.durations.splice(s.frame + 1, 0, s.durations[s.frame])
+      s.frame++
+    })
+  }
+
+  deleteFrame() {
+    if ((this.sprite?.frames[0].length ?? 0) < 2) return
+    this.editFrames((s) => {
+      s.frames.forEach((row) => row.splice(s.frame, 1))
+      s.durations.splice(s.frame, 1)
+      s.frame = Math.min(s.frame, s.durations.length - 1)
+    })
+  }
+
+  /** Moves the current frame one place earlier (-1) or later (+1). */
+  moveFrame(delta: -1 | 1) {
+    this.moveFrameTo(this.frame, this.frame + delta)
+  }
+
+  /** Moves a frame to another place in the list; it becomes the current frame. */
+  moveFrameTo(from: number, to: number) {
+    const n = this.sprite?.frames[0].length ?? 0
+    if (from === to || from < 0 || to < 0 || from >= n || to >= n) return
+    this.editFrames((s) => {
+      for (const row of s.frames) row.splice(to, 0, ...row.splice(from, 1))
+      s.durations.splice(to, 0, ...s.durations.splice(from, 1))
+      s.frame = to
+    })
+  }
+
+  /** Frames per second of the whole animation (every frame gets the same duration). */
+  get fps(): number {
+    return Math.round(1000 / (this.sprite?.meta.frames[0]?.duration ?? 100))
+  }
+
+  setFps(fps: number) {
+    const pl = this.placed
+    if (!pl || !Number.isFinite(fps)) return
+    const duration = Math.round(1000 / Math.min(MAX_FPS, Math.max(MIN_FPS, Math.round(fps))))
+    if (pl.sprite.meta.frames.every((f) => f.duration === duration)) return
+    this.editFrames((s) => s.durations.fill(duration))
+  }
+
+  private frameState(pl: Placed): FrameState {
+    return {
+      frames: pl.sprite.frames.map((row) => row.map((b) => b.clone())),
+      durations: pl.sprite.meta.frames.map((f) => f.duration),
+      frame: pl.frame,
+    }
+  }
+
+  private restore(pl: Placed, s: FrameState) {
+    const { sprite } = pl
+    sprite.frames = s.frames.map((row) => row.map((b) => b.clone()))
+    sprite.meta.frames = s.durations.map((duration) => ({ duration }))
+    sprite.meta.frameWidth = sprite.frames[0][0].width
+    sprite.meta.frameHeight = sprite.frames[0][0].height
+    pl.frame = Math.min(s.frame, s.durations.length - 1)
+  }
+
+  /** Changes the frame list of the active sprite, as one undo step. */
+  private editFrames(change: (state: FrameState) => void) {
+    const pl = this.placed
+    const name = this.active
+    if (!pl || !name) return
+    this.stop()
+    this.commitFloating()
+    this.drag = null
+    this.overlay = null
+    this.selection = null
+    const before = this.frameState(pl)
+    const after = this.frameState(pl)
+    change(after)
+    this.restore(pl, after)
+    this.history.push({ kind: 'frames', name, before, after: this.frameState(pl) })
+    this.onEdit(name)
+    this.emit()
+  }
+
+  // --- Playback (the active sprite, on the board) ---
+
+  play() {
+    const pl = this.placed
+    if (!pl || this.playing || pl.sprite.frames[0].length < 2) return
+    this.commitFloating()
+    this.selection = null
+    this.playing = true
+    this.playIndex = pl.frame
+    this.tick()
+    this.emit()
+  }
+
+  stop() {
+    if (!this.playing) return
+    clearTimeout(this.playTimer)
+    this.playing = false
+    this.emit()
+  }
+
+  private tick() {
+    const pl = this.placed
+    if (!pl) return this.stop()
+    this.playTimer = setTimeout(() => {
+      this.playIndex = (this.playIndex + 1) % pl.sprite.frames[0].length
+      this.tick()
+      this.emit()
+    }, pl.sprite.meta.frames[this.playIndex]?.duration ?? 100)
+  }
+
+  // -------------------------------------------------------------------------
   // History and transforms
 
   undo() {
     if (this.drag) return
+    this.stop()
     this.commitFloating()
     const c = this.history.undo()
     if (c) this.apply(c, true)
@@ -641,6 +813,7 @@ export class Editor {
 
   redo() {
     if (this.drag) return
+    this.stop()
     this.commitFloating()
     const c = this.history.redo()
     if (c) this.apply(c, false)
@@ -657,6 +830,9 @@ export class Editor {
     if (c.kind === 'pixels') {
       this.setFrame(pl, c.d, c.f, (undo ? c.before : c.after).clone())
       this.onEdit(c.name)
+    } else if (c.kind === 'frames') {
+      this.restore(pl, undo ? c.before : c.after)
+      this.onEdit(c.name)
     } else {
       const to = undo ? c.from : c.to
       pl.x = to.x
@@ -666,6 +842,7 @@ export class Editor {
     if (single) {
       // Show what was undone: make that sprite active, and visible.
       this.activate(c.name)
+      if (c.kind === 'pixels') pl.frame = Math.min(c.f, pl.sprite.frames[0].length - 1)
       this.selection = null
       this.onReveal(c.name)
       this.emit()
@@ -681,9 +858,15 @@ export class Editor {
     if (!bmp || !pl || !name) return
     this.commitFloating()
     this.selection = null
-    const before = bmp.clone()
-    this.setFrame(pl, 0, 0, resized(bmp, w, h, ox, oy))
-    const items: Change[] = [{ kind: 'pixels', name, d: 0, f: 0, before, after: this.bmp!.clone() }]
+    // Every frame gets the new size.
+    const items: Change[] = []
+    pl.sprite.frames.forEach((row, d) =>
+      row.forEach((b, f) => {
+        const before = b.clone()
+        this.setFrame(pl, d, f, resized(b, w, h, ox, oy))
+        items.push({ kind: 'pixels', name, d, f, before, after: pl.sprite.frames[d][f].clone() })
+      }),
+    )
     if (ox || oy) {
       const from = { x: pl.x, y: pl.y }
       pl.x -= ox

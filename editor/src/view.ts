@@ -195,7 +195,7 @@ export class View {
     // Sprites on screen, with their rectangles in canvas pixels
     const visible = editor.drawOrder().flatMap((name) => {
       const pl = editor.sprites.get(name)!
-      const bmp = pl.sprite.frames[0][0]
+      const bmp = editor.shownFrame(name)
       const x = this.ox + pl.x * z
       const y = this.oy + pl.y * z
       const w = bmp.width * z

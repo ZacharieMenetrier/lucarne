@@ -37,11 +37,27 @@
       <main id="stage">
         <canvas id="canvas"></canvas>
         <div id="selbar" hidden></div>
+        <button id="anim-toggle" class="icon" title="Animation panel (A)" aria-label="Animation panel"></button>
         <div id="empty">
           <p>No sprites yet.</p>
           <button id="empty-new" class="primary">New sprite</button>
         </div>
       </main>
+
+      <section id="frames" hidden>
+        <div class="frames-bar">
+          <div class="bar-side">
+            <label class="fps" title="Frames per second, for the whole animation">FPS <input id="fps" type="number" min="1" max="60" step="1" inputmode="numeric" /></label>
+          </div>
+          <button id="play" class="small icon-btn" title="Play / pause (Enter)" aria-label="Play"></button>
+          <div class="bar-side end">
+            <button id="frame-add" class="small icon-btn" title="New blank frame after this one" aria-label="New frame"></button>
+            <button id="frame-dup" class="small icon-btn" title="Duplicate frame" aria-label="Duplicate frame"></button>
+            <button id="frame-del" class="small icon-btn danger" title="Delete frame" aria-label="Delete frame"></button>
+          </div>
+        </div>
+        <div id="frame-strip"></div>
+      </section>
 
       <aside id="side">
         <section id="palette-panel">

@@ -280,3 +280,79 @@ describe('board', () => {
     expect(ed.rectOf('a')).toEqual({ x: 0, y: 0, w: 8, h: 8 })
   })
 })
+
+describe('animation frames', () => {
+  const RED = hexToColor('#ff0000')
+  const setup = () => {
+    const ed = new Editor(['#ff0000'])
+    ed.addSprite(newSprite('hero', 4, 4), 0, 0)
+    ed.activate('hero')
+    return ed
+  }
+
+  it('adds, edits and removes frames, undoing each step', () => {
+    const ed = setup()
+    ed.addFrame()
+    expect(ed.sprite!.meta.frames).toHaveLength(2)
+    expect(ed.frame).toBe(1)
+    ed.down({ x: 1, y: 1, shift: false, alt: false })
+    ed.up({ x: 1, y: 1, shift: false, alt: false })
+    expect(ed.sprite!.frames[0][1].get(1, 1)).toBe(RED)
+    expect(ed.sprite!.frames[0][0].get(1, 1)).not.toBe(RED)
+    ed.duplicateFrame()
+    expect(ed.sprite!.frames[0][2].get(1, 1)).toBe(RED)
+    ed.deleteFrame()
+    expect(ed.sprite!.meta.frames).toHaveLength(2)
+    ed.undo() // delete
+    ed.undo() // duplicate
+    expect(ed.sprite!.meta.frames).toHaveLength(2)
+    ed.undo() // pixel
+    expect(ed.sprite!.frames[0][1].get(1, 1)).not.toBe(RED)
+    ed.undo() // add
+    expect(ed.sprite!.meta.frames).toHaveLength(1)
+  })
+
+  it('reorders frames and keeps one frame at least', () => {
+    const ed = setup()
+    ed.down({ x: 0, y: 0, shift: false, alt: false })
+    ed.up({ x: 0, y: 0, shift: false, alt: false })
+    ed.addFrame()
+    ed.moveFrame(-1)
+    expect(ed.frame).toBe(0)
+    expect(ed.sprite!.frames[0][1].get(0, 0)).toBe(RED)
+    ed.deleteFrame()
+    ed.deleteFrame()
+    expect(ed.sprite!.meta.frames).toHaveLength(1)
+  })
+
+  it('sets one fps for the whole animation, undoably', () => {
+    const ed = setup()
+    ed.addFrame()
+    ed.setFps(20)
+    expect(ed.sprite!.meta.frames.map((f) => f.duration)).toEqual([50, 50])
+    expect(ed.fps).toBe(20)
+    ed.undo()
+    expect(ed.fps).toBe(10)
+  })
+
+  it('resizes every frame', () => {
+    const ed = setup()
+    ed.addFrame()
+    ed.resize(6, 6, 0, 0)
+    expect(ed.sprite!.frames[0].map((b) => b.width)).toEqual([6, 6])
+    ed.undo()
+    expect(ed.sprite!.frames[0].map((b) => b.width)).toEqual([4, 4])
+  })
+
+  it('plays from the current frame and stops when drawing', () => {
+    const ed = setup()
+    ed.addFrame()
+    ed.setFrameIndex(0)
+    ed.play()
+    expect(ed.playing).toBe(true)
+    expect(ed.playIndex).toBe(0)
+    ed.down({ x: 0, y: 0, shift: false, alt: false })
+    ed.up({ x: 0, y: 0, shift: false, alt: false })
+    expect(ed.playing).toBe(false)
+  })
+})
