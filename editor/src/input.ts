@@ -191,6 +191,8 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
 
 
   canvas.addEventListener('pointerdown', (e) => {
+    // Drawing takes focus away from any text field (e.g. the sprite name).
+    if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur()
     if (e.pointerType === 'touch') {
       if (!penDown) touchDown(e)
       return
