@@ -32,6 +32,11 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const gameDir = path.resolve(dir)
+const engineRoot = path.resolve(here, '..')
+if (gameDir === engineRoot || gameDir.startsWith(engineRoot + path.sep)) {
+  console.error('The game folder must be outside the Lucarne repo, e.g. `npm run dev -- ../my-game`.')
+  process.exit(1)
+}
 await fs.mkdir(gameDir, { recursive: true })
 
 const server = await createServer({

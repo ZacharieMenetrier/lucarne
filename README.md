@@ -12,9 +12,10 @@ that they look consistent and draw on any of them directly.
 
 ```bash
 npm install
-npm run dev          # opens the editor on examples/demo
+npm run dev -- ../my-game   # opens the editor on a game folder (created if missing)
 ```
 
+Games live in their own folders (and their own repos), never inside this one.
 In a game folder: `npx lucarne dev` (or `node path/to/lucarne/bin/lucarne.mjs dev .`).
 `--host` makes the editor reachable on the local network.
 

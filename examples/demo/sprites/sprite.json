@@ -1,7 +1,0 @@
-{
-  "version": 1,
-  "frameWidth": 16,
-  "frameHeight": 16,
-  "directions": [{ "name": "default" }],
-  "frames": [{ "duration": 100 }]
-}
