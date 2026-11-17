@@ -1,12 +1,15 @@
 import { App } from './app'
 import { Project } from './project'
+import { buildSettingsPage } from './settings'
 import { openStorage } from './storage'
 
 async function main() {
   const storage = await openStorage()
   const project = new Project(storage)
   await project.load()
-  await new App(project).start()
+  const app = new App(project)
+  buildSettingsPage(storage, () => app.refreshSync())
+  await app.start()
 }
 
 main().catch((err: Error) => {

@@ -24,6 +24,19 @@ private file system (OPFS). On Mac, add `?storage=opfs` to the URL to force that
 OPFS requires HTTPS or localhost: on iPad, use the built version (`npm run build`,
 `dist/` folder) served over HTTPS.
 
+## Syncing with GitHub (iPad)
+
+In the menu (top left), **Settings** takes a GitHub token, the game's repository
+(`owner/name`), a branch and, if the game is not at the root, its folder in the repository.
+Use a fine-grained token limited to that repository, with **Contents: Read and write**.
+The token stays in the browser, on that device only.
+
+When the editor works from the browser's storage, a sync button shows in the top bar.
+It compares `palette.json`, `board.json` and `sprites/*` on the device, on GitHub, and
+as they were at the last sync: changes on one side follow that side, changes sent to
+GitHub go out as one commit. A file (or sprite) changed on both sides is a conflict: the
+editor asks which version to keep. On Mac with `lucarne dev`, use git in the game folder.
+
 ## Game files
 
 ```
@@ -74,6 +87,8 @@ Editor code lives in `editor/src/`:
 - `editor.ts`: the board, tools, selection, history — no DOM, tested in `tests/`
 - `view.ts`, `input.ts`: rendering, zoom, mouse, pen and gestures
 - `app.ts`: interface, shortcuts, autosave
+- `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page
+- `github.ts`: GitHub sync (REST API, three-way comparison), tested in `tests/sync.test.ts`
 
 The local server (`server/fs-plugin.mjs`) only accepts paths inside the game folder,
 excluding hidden files (`.git`…), and rejects requests coming from another site.

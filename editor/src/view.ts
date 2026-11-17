@@ -12,8 +12,8 @@ export const MIN_ZOOM = 1
 export const MAX_ZOOM = 128
 
 /** Lines and text that stay visible on the board color. */
-const ON_DARK = { outline: 'rgba(255, 255, 255, 0.08)', active: 'rgba(255, 255, 255, 0.24)', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)' }
-const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.1)', active: 'rgba(0, 0, 0, 0.3)', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)' }
+const ON_DARK = { outline: 'rgba(255, 255, 255, 0.08)', active: 'rgba(255, 255, 255, 0.24)', grid: 'rgba(255, 255, 255, 0.07)', check: 'rgba(255, 255, 255, 0.05)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)' }
+const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.1)', active: 'rgba(0, 0, 0, 0.3)', grid: 'rgba(0, 0, 0, 0.09)', check: 'rgba(0, 0, 0, 0.06)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)' }
 
 /** Resize handles of the Move tool: side of the square, and how far from
  * its center a press still grabs it (CSS pixels). */
@@ -37,6 +37,8 @@ export class View {
   ox = 0
   oy = 0
   showGrid = false
+  showChecker = false
+  private checkerPattern: { tint: string; size: number; pattern: CanvasPattern } | null = null
   /** Resize handle under the pointer (Move tool). */
   hoverHandle: { name: string; corner: Corner } | null = null
 
@@ -207,6 +209,25 @@ export class View {
     return this.editor.background ?? (getComputedStyle(this.canvas).getPropertyValue('--stage-bg').trim() || '#202028')
   }
 
+  /** Fills a rectangle with the checkerboard (fixed-size squares anchored to the board origin). */
+  private fillChecker(x: number, y: number, w: number, h: number, tint: string) {
+    const { ctx } = this
+    const size = Math.round(8 * this.dpr)
+    if (this.checkerPattern?.tint !== tint || this.checkerPattern.size !== size) {
+      const tile = document.createElement('canvas')
+      tile.width = tile.height = size * 2
+      const t = tile.getContext('2d')!
+      t.fillStyle = tint
+      t.fillRect(size, 0, size, size)
+      t.fillRect(0, size, size, size)
+      this.checkerPattern = { tint, size, pattern: ctx.createPattern(tile, 'repeat')! }
+    }
+    const { pattern } = this.checkerPattern
+    pattern.setTransform(new DOMMatrix().translate(this.ox, this.oy))
+    ctx.fillStyle = pattern
+    ctx.fillRect(x, y, w, h)
+  }
+
   // --- Rendering --------------------------------------------------------------
 
   private render() {
@@ -217,6 +238,7 @@ export class View {
     const ink = isLight(bg) ? ON_LIGHT : ON_DARK
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)
+    if (this.showChecker) this.fillChecker(0, 0, canvas.width, canvas.height, ink.check)
 
     const z = this.zoom
     const tool = editor.tool
@@ -254,6 +276,7 @@ export class View {
       // color goes under them so transparent pixels hide names underneath.
       ctx.fillStyle = bg
       ctx.fillRect(x, y, w, h)
+      if (this.showChecker) this.fillChecker(x, y, w, h, ink.check)
       let img = bmp
       if ((isActive && (editor.floating || editor.overlay)) || name === previewOn) {
         img = bmp.clone()

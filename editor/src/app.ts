@@ -6,7 +6,9 @@ import { colorToHex, hexToColor, isHex } from './color'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { Editor, MAX_FPS, MIN_FPS, type ToolId } from './editor'
 import { icon } from './icons'
+import { isConfigured, loadSettings, syncWithGitHub, type Conflict, type Side } from './github'
 import { fetchLospecPalette, lospecSlug, type LospecPalette } from './lospec'
+import { createMenu, currentPage } from './menu'
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
@@ -132,6 +134,9 @@ export class App {
   constructor(private readonly project: Project) {
     this.editor = new Editor(project.palette)
     this.view = new View($<HTMLCanvasElement>('canvas'), this.editor)
+    try {
+      this.view.showChecker = localStorage.getItem('lucarne.checker') === '1'
+    } catch {}
     this.saver = new Saver(project, this.editor, (s) => this.renderStatus(s))
     this.editor.onEdit = (name) => {
       this.saver.sprite(name)
@@ -160,7 +165,15 @@ export class App {
       if (document.visibilityState === 'hidden') void this.saver.flush()
     })
 
-    $('project-name').textContent = this.project.name
+    // Message left by a sync that reloaded the page.
+    try {
+      const note = sessionStorage.getItem(SYNC_NOTE)
+      if (note) {
+        sessionStorage.removeItem(SYNC_NOTE)
+        setTimeout(() => toast(note), 300)
+      }
+    } catch {}
+
     this.renderPalette()
     await this.loadBoard()
     const last = this.lastSprite
@@ -609,14 +622,79 @@ export class App {
     if (count) toast(`Color replaced in ${count} sprite${count > 1 ? 's' : ''}`)
   }
 
+  // --- GitHub sync ----------------------------------------------------------
+
+  /** The sync button shows when sync is set up and the editor saves to the browser (iPad). */
+  refreshSync() {
+    $('sync').hidden = this.project.storage.kind !== 'opfs' || !isConfigured(loadSettings())
+  }
+
+  private syncing = false
+
+  async sync() {
+    const settings = loadSettings()
+    if (this.syncing || !isConfigured(settings)) return
+    this.syncing = true
+    const message = h('p', {}, 'Saving…')
+    const progress = h('dialog', { className: 'progress-dialog' }, h('h2', {}, 'Syncing with GitHub'), message)
+    // Not dismissable: the files must not change while syncing.
+    progress.addEventListener('cancel', (e) => e.preventDefault())
+    document.body.append(progress)
+    progress.showModal()
+    let result: Awaited<ReturnType<typeof syncWithGitHub>> = null
+    try {
+      await this.saver.flush()
+      if (this.saver.status === 'error') throw new Error('Some changes could not be saved on this device.')
+      result = await syncWithGitHub(
+        this.project.storage,
+        settings,
+        async (conflicts) => {
+          progress.close()
+          const choices = await resolveConflicts(conflicts)
+          if (choices) progress.showModal()
+          return choices
+        },
+        (m) => (message.textContent = m),
+      )
+    } catch (err) {
+      progress.close()
+      progress.remove()
+      this.syncing = false
+      await openDialog('Sync failed', h('p', {}, (err as Error).message), [{ label: 'OK', value: 'ok', kind: 'primary' }])
+      return
+    }
+    progress.close()
+    progress.remove()
+    this.syncing = false
+    if (!result) return toast('Sync canceled')
+
+    const parts = [
+      result.pulled ? `${result.pulled} file${result.pulled > 1 ? 's' : ''} received` : '',
+      result.pushed ? `${result.pushed} file${result.pushed > 1 ? 's' : ''} sent` : '',
+    ].filter(Boolean)
+    const note = parts.length ? `Synced: ${parts.join(', ')}` : 'Already up to date'
+    if (result.pulled) {
+      // Files changed under the editor: start again from them.
+      try {
+        sessionStorage.setItem(SYNC_NOTE, note)
+      } catch {}
+      location.reload()
+    } else toast(note)
+  }
+
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
+    $('topbar').prepend(createMenu())
+    $('sync').innerHTML = icon('sync')
+    $('sync').addEventListener('click', () => void this.sync())
+    this.refreshSync()
     $('sprites-new').innerHTML = icon('add')
     $('palette-edit').innerHTML = icon('pencil')
     $('sprite-delete').innerHTML = icon('trash')
     $('sprite-delete').addEventListener('click', () => void this.deleteSprite())
     $('grid').innerHTML = icon('grid')
+    $('checker').innerHTML = icon('checker')
     $('fit').innerHTML = icon('fit')
     const nameField = $<HTMLInputElement>('sprite-name')
     nameField.addEventListener('keydown', (e) => {
@@ -628,6 +706,7 @@ export class App {
     })
     nameField.addEventListener('change', () => void this.commitName(nameField))
     $('grid').addEventListener('click', () => this.toggleGrid())
+    $('checker').addEventListener('click', () => this.toggleChecker())
     $('background').addEventListener('click', () => void this.editBackground())
     $('fit').addEventListener('click', () => this.view.fit())
   }
@@ -668,6 +747,15 @@ export class App {
       const value = normalizeHex(hex.value)
       this.editor.setBackground(value === this.defaultBackground ? null : value)
     }
+  }
+
+  private toggleChecker() {
+    this.view.showChecker = !this.view.showChecker
+    try {
+      localStorage.setItem('lucarne.checker', this.view.showChecker ? '1' : '')
+    } catch {}
+    this.view.requestRender()
+    this.render()
   }
 
   private toggleGrid() {
@@ -715,7 +803,7 @@ export class App {
 
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement
-      if (target.closest('input, select, textarea, dialog')) return
+      if (currentPage() !== 'editor' || target.closest('input, select, textarea, dialog')) return
       const mod = e.metaKey || e.ctrlKey
       const k = e.key.toLowerCase()
       const ed = this.editor
@@ -787,6 +875,7 @@ export class App {
     $<HTMLButtonElement>('sprite-delete').disabled = !sprite
     if (document.activeElement !== nameField) nameField.value = sprite?.name ?? ''
     $('grid').classList.toggle('active', this.view.showGrid)
+    $('checker').classList.toggle('active', this.view.showChecker)
     $('anim-toggle').classList.toggle('active', !$('frames').hidden)
     $('background-swatch').style.background = ed.background ?? ''
 
@@ -1030,6 +1119,49 @@ export class App {
     }
     this.render()
   }
+}
+
+const SYNC_NOTE = 'lucarne.sync-note'
+
+/** Asks which side wins for each file (or sprite) changed both here and on GitHub. */
+async function resolveConflicts(conflicts: Conflict[]): Promise<Map<string, Side> | null> {
+  const choices = new Map<string, Side>()
+  const list = h('div', { className: 'conflicts' })
+  for (const c of conflicts) {
+    const fresh = c.files.every((f) => !f.base)
+    const what = fresh
+      ? 'Added here and on GitHub'
+      : c.files.some((f) => !f.local)
+        ? 'Deleted here, changed on GitHub'
+        : c.files.some((f) => !f.remote)
+          ? 'Changed here, deleted on GitHub'
+          : 'Changed here and on GitHub'
+    // Never synced: GitHub's copy is most likely the real one.
+    choices.set(c.group, fresh ? 'remote' : 'local')
+    const option = (side: Side, label: string) =>
+      h('label', {},
+        h('input', {
+          type: 'radio',
+          name: `conflict-${c.group}`,
+          checked: choices.get(c.group) === side,
+          onchange: () => choices.set(c.group, side),
+        }),
+        label)
+    list.append(
+      h('div', { className: 'conflict' },
+        h('div', { className: 'conflict-name' }, c.group.replace(/^sprites\//, ''), h('small', {}, `${c.group.startsWith('sprites/') ? 'Sprite · ' : ''}${what}`)),
+        h('div', { className: 'segmented' }, option('local', 'This device'), option('remote', 'GitHub'))),
+    )
+  }
+  const body = h('div', { className: 'fields' },
+    h('p', { className: 'muted' }, 'These changed on this device and on GitHub since the last sync. Pick the version to keep; the other one is replaced (GitHub keeps every committed version in its history).'),
+    list,
+  )
+  const res = await openDialog('Sync conflicts', body, [
+    { label: 'Cancel', value: 'cancel' },
+    { label: 'Sync', value: 'ok', kind: 'primary' },
+  ], undefined, 'conflict-dialog')
+  return res === 'ok' ? choices : null
 }
 
 /** Image thumbnail (the canvas is scaled up in CSS, without smoothing). */

@@ -17,12 +17,13 @@
   <body>
     <div id="app" class="no-sprite">
       <header id="topbar">
-        <span id="project-name" class="muted"></span>
         <input id="sprite-name" type="text" aria-label="Sprite name" autocapitalize="off" autocomplete="off" spellcheck="false" />
         <button id="sprite-delete" class="icon" title="Delete sprite" aria-label="Delete sprite"></button>
         <span class="spacer"></span>
         <span id="save-status" data-status="saved">Saved</span>
+        <button id="sync" class="icon" title="Sync with GitHub" aria-label="Sync with GitHub" hidden></button>
         <button id="background" class="icon" title="Board color" aria-label="Board color"><span id="background-swatch"></span></button>
+        <button id="checker" class="icon" title="Checkerboard" aria-label="Checkerboard"></button>
         <button id="grid" class="icon" title="Grid (#)" aria-label="Grid"></button>
         <button id="fit" class="icon" title="Show every sprite (0)" aria-label="Show every sprite"></button>
       </header>
