@@ -5,7 +5,7 @@ import { Editor } from '../editor/src/editor'
 import { findFreeSpot, overlaps, parseBoard, resolveOverlaps, serializeBoard, shelfLayout } from '../editor/src/board'
 import { parsePalette } from '../editor/src/project'
 import { lospecSlug } from '../editor/src/lospec'
-import { composeSheet, newSprite, parseMeta, splitSheet } from '../editor/src/sprite'
+import { composeSheet, newSprite, parseMeta, serializeMeta, splitSheet } from '../editor/src/sprite'
 
 const RED = hexToColor('#ff0000')
 const BLUE = hexToColor('#0000ff')
@@ -394,5 +394,14 @@ describe('lospec', () => {
     expect(lospecSlug('https://lospec.com/other/x')).toBeNull()
     expect(lospecSlug('not a name!')).toBeNull()
     expect(lospecSlug('')).toBeNull()
+  })
+})
+
+describe('sprite origin', () => {
+  it('round-trips through the JSON, and is optional', () => {
+    const meta = newSprite('a', 4, 4).meta
+    expect(parseMeta(serializeMeta(meta)).origin).toBeUndefined()
+    meta.origin = { x: 2, y: 3 }
+    expect(parseMeta(serializeMeta(meta)).origin).toEqual({ x: 2, y: 3 })
   })
 })

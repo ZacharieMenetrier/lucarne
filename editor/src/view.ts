@@ -300,6 +300,29 @@ export class View {
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
 
+    // Origin (Origin tool only): crosshair across the sprite through the origin
+    // pixel, and the pixel outlined. White over black so it shows on any color.
+    if (tool === 'origin') {
+      for (const { pl, bmp, x, y, w, h } of visible) {
+        const o = pl.sprite.meta.origin
+        if (!o || o.x >= bmp.width || o.y >= bmp.height) continue
+        const px = x + o.x * z
+        const py = y + o.y * z
+        const cx = Math.round(px + z / 2 - lw / 2)
+        const cy = Math.round(py + z / 2 - lw / 2)
+        for (const [color, g] of [['#000', lw], ['#fff', 0]] as const) {
+          ctx.fillStyle = color
+          ctx.fillRect(cx - g, y, lw + 2 * g, h)
+          ctx.fillRect(x, cy - g, w, lw + 2 * g)
+        }
+        ctx.lineWidth = lw
+        ctx.strokeStyle = '#000'
+        ctx.strokeRect(px + lw / 2, py + lw / 2, z - lw, z - lw)
+        ctx.strokeStyle = '#fff'
+        ctx.strokeRect(px + lw * 1.5, py + lw * 1.5, z - lw * 3, z - lw * 3)
+      }
+    }
+
     // Resize handles at the corners of every sprite (Move tool)
     if (tool === 'move') {
       const s = Math.round(HANDLE_SIZE * dpr)

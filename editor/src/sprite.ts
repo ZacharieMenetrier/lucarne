@@ -18,6 +18,8 @@ export interface SpriteMeta {
   directions: { name: string }[]
   /** One entry per sheet column; duration in milliseconds. */
   frames: { duration: number }[]
+  /** Origin pixel of the sprite (where it is anchored in the game), if set. */
+  origin?: { x: number; y: number }
 }
 
 export interface Sprite {
@@ -57,12 +59,15 @@ export function parseMeta(text: string): SpriteMeta {
   const frames = Array.isArray(raw.frames) && raw.frames.length
     ? raw.frames.map((f) => ({ duration: positiveInt(f?.duration, 100) }))
     : [{ duration: 100 }]
+  const o = raw.origin
+  const origin = o && Number.isInteger(o.x) && Number.isInteger(o.y) ? { x: o.x, y: o.y } : undefined
   return {
     version: 1,
     frameWidth: positiveInt(raw.frameWidth, 16),
     frameHeight: positiveInt(raw.frameHeight, 16),
     directions,
     frames,
+    ...(origin && { origin }),
   }
 }
 
@@ -78,7 +83,8 @@ export function serializeMeta(meta: SpriteMeta): string {
     `  "frameWidth": ${meta.frameWidth},`,
     `  "frameHeight": ${meta.frameHeight},`,
     `  "directions": ${list(meta.directions)},`,
-    `  "frames": ${list(meta.frames)}`,
+    `  "frames": ${list(meta.frames)}${meta.origin ? ',' : ''}`,
+    ...(meta.origin ? [`  "origin": ${obj(meta.origin)}`] : []),
     '}',
     '',
   ].join('\n')

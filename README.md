@@ -48,7 +48,8 @@ my-game/
   board.json         where each sprite sits on the editor's board, and its color
   sprites/hero.png   sheet: one row per direction, one column per frame
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
-                       "directions": [{ "name": "default" }], "frames": [{ "duration": 100 }] }
+                       "directions": [{ "name": "default" }], "frames": [{ "duration": 100 }],
+                       "origin": { "x": 8, "y": 15 } }   // optional, a pixel
   code/main.ts       the game's code (TypeScript), starting point
   game.js            built from code/ by `lucarne dev`: commit it, never edit it
 ```
@@ -88,6 +89,7 @@ changed on either.
 | --- | --- | --- |
 | Pencil, eraser, fill, eyedropper | B, E, G, I | toolbar |
 | Line, rectangle, filled rectangle | L, R, ⇧R (⇧: snap angle or square) | toolbar |
+| Origin: click a pixel (click it again to clear) | O | toolbar |
 | Select | M; drag inside to move, ⌥ + drag to copy | selection bar |
 | Move a sprite on the board | V, or drag its name with any tool | same |
 | Zoom in on a sprite | double-click its name (or the sprite, with V) | double tap |

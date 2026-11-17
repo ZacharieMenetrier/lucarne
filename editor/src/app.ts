@@ -26,6 +26,7 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: 'rect', label: 'Rectangle', key: 'R' },
   { id: 'rectFill', label: 'Filled rectangle', key: '⇧R' },
   { id: 'select', label: 'Select', key: 'M' },
+  { id: 'origin', label: 'Origin', key: 'O' },
   { id: 'move', label: 'Move sprite', key: 'V' },
 ]
 
@@ -803,7 +804,7 @@ export class App {
 
   private bindKeys() {
     const input = attachInput(this.view.canvas, this.view, this.editor)
-    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select', v: 'move' }
+    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select', o: 'origin', v: 'move' }
 
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement

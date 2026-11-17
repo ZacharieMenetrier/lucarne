@@ -31,7 +31,7 @@ import { MAX_SIZE, type Sprite } from './sprite'
 export const MIN_FPS = 2
 export const MAX_FPS = 12
 
-export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move'
+export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move' | 'origin'
 
 /** Corner of a sprite, for the resize handles of the Move tool. */
 export type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -70,6 +70,7 @@ type Change =
   | { kind: 'pixels'; name: string; d: number; f: number; before: Bitmap; after: Bitmap }
   | { kind: 'place'; name: string; from: Point; to: Point }
   | { kind: 'frames'; name: string; before: FrameState; after: FrameState }
+  | { kind: 'origin'; name: string; before: Point | null; after: Point | null }
   | { kind: 'group'; items: Change[] }
 
 // Drag points are local to the active sprite, except 'place' (board).
@@ -79,6 +80,7 @@ type Drag =
   | { kind: 'select'; start: Point; moved: boolean }
   | { kind: 'float'; start: Point; origin: Point }
   | { kind: 'pick' }
+  | { kind: 'origin'; before: Point | null }
   | { kind: 'place'; name: string; start: Point; origin: Point }
   | { kind: 'resize'; name: string; corner: Corner; start: Point; origin: Rect; frames: Bitmap[][]; rect: Rect }
 
@@ -372,6 +374,16 @@ export class Editor {
         if (floodFill(bmp, q.x, q.y, this.color)) this.commit(before)
         break
       }
+      case 'origin': {
+        const before = this.origin
+        if (before && before.x === q.x && before.y === q.y) {
+          this.setOrigin(null, before)
+        } else {
+          this.drag = { kind: 'origin', before }
+          this.setOriginRaw(q)
+        }
+        break
+      }
       case 'picker':
         this.drag = { kind: 'pick' }
         this.pick(q)
@@ -514,6 +526,9 @@ export class Editor {
       case 'pick':
         this.pick(q)
         break
+      case 'origin':
+        this.setOriginRaw(q)
+        break
       case 'shape':
         this.updateShape(q)
         break
@@ -573,6 +588,11 @@ export class Editor {
           this.commit(before)
         }
         break
+      case 'origin': {
+        const after = this.origin
+        if (after && (!d.before || d.before.x !== after.x || d.before.y !== after.y)) this.setOrigin(after, d.before)
+        break
+      }
       case 'select':
         if (!d.moved) this.selection = null
         break
@@ -612,6 +632,30 @@ export class Editor {
     if (ok) this.setColor(c)
     else this.onMessage(`${colorToHex(c)} is not in the palette`)
     return { color: c, ok }
+  }
+
+  /** Origin of the active sprite (local pixel), or null. */
+  get origin(): Point | null {
+    return this.sprite?.meta.origin ?? null
+  }
+
+  /** Moves the origin to a pixel of the active image, with no history. */
+  private setOriginRaw(p: Point | null) {
+    const sprite = this.sprite
+    if (!sprite) return
+    if (p) {
+      const bmp = this.bmp!
+      sprite.meta.origin = { x: Math.max(0, Math.min(bmp.width - 1, p.x)), y: Math.max(0, Math.min(bmp.height - 1, p.y)) }
+    } else delete sprite.meta.origin
+  }
+
+  /** Sets (or clears, with null) the origin as one undo step. */
+  private setOrigin(after: Point | null, before: Point | null) {
+    const name = this.active
+    if (!name) return
+    this.setOriginRaw(after)
+    this.history.push({ kind: 'origin', name, before, after: this.origin })
+    this.onEdit(name)
   }
 
   private pick(p: Point) {
@@ -953,6 +997,11 @@ export class Editor {
     if (c.kind === 'pixels') {
       this.setFrame(pl, c.d, c.f, (undo ? c.before : c.after).clone())
       this.onEdit(c.name)
+    } else if (c.kind === 'origin') {
+      const o = undo ? c.before : c.after
+      if (o) pl.sprite.meta.origin = { ...o }
+      else delete pl.sprite.meta.origin
+      this.onEdit(c.name)
     } else if (c.kind === 'frames') {
       this.restore(pl, undo ? c.before : c.after)
       this.onEdit(c.name)
@@ -990,6 +1039,11 @@ export class Editor {
         items.push({ kind: 'pixels', name, d, f, before, after: pl.sprite.frames[d][f].clone() })
       }),
     )
+    const o = pl.sprite.meta.origin
+    if (o && (ox || oy)) {
+      pl.sprite.meta.origin = { x: o.x + ox, y: o.y + oy }
+      items.push({ kind: 'origin', name, before: o, after: { ...pl.sprite.meta.origin } })
+    }
     if (ox || oy) {
       const from = { x: pl.x, y: pl.y }
       pl.x -= ox
