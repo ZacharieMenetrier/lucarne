@@ -3,18 +3,23 @@
 // Zoom is a whole number of screen pixels per sprite pixel, so every pixel
 // stays crisp. There is no checkerboard: transparent pixels show the board.
 
-import { Bitmap, blit, type Rect } from './bitmap'
 import { colorToCss } from './color'
-import type { Editor } from './editor'
+import { Bitmap, blit, type Rect } from './bitmap'
+import type { Corner, Editor } from './editor'
 import { toImageData } from './png'
 
 export const MIN_ZOOM = 1
 export const MAX_ZOOM = 128
 
-const ACCENT = '#41a6f6'
 /** Lines and text that stay visible on the board color. */
-const ON_DARK = { outline: 'rgba(255, 255, 255, 0.16)', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff' }
-const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.22)', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000' }
+const ON_DARK = { outline: 'rgba(255, 255, 255, 0.08)', active: 'rgba(255, 255, 255, 0.24)', grid: 'rgba(255, 255, 255, 0.07)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)' }
+const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.1)', active: 'rgba(0, 0, 0, 0.3)', grid: 'rgba(0, 0, 0, 0.09)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)' }
+
+/** Resize handles of the Move tool: side of the square, and how far from
+ * its center a press still grabs it (CSS pixels). */
+const HANDLE_SIZE = 6
+const HANDLE_REACH = 9
+const CORNERS: Corner[] = ['nw', 'ne', 'sw', 'se']
 
 function isLight(css: string) {
   const m = /^#([0-9a-f]{6})/i.exec(css)
@@ -32,6 +37,8 @@ export class View {
   ox = 0
   oy = 0
   showGrid = false
+  /** Resize handle under the pointer (Move tool). */
+  hoverHandle: { name: string; corner: Corner } | null = null
 
   private ctx: CanvasRenderingContext2D
   /** One canvas per sprite redrawn every frame. Never shared: Safari may
@@ -165,6 +172,36 @@ export class View {
     })
   }
 
+  /** Canvas position of a sprite's corner, in physical pixels. */
+  private cornerAt(name: string, corner: Corner) {
+    const r = this.editor.rectOf(name)!
+    const z = this.zoom
+    return {
+      x: this.ox + (r.x + (corner[1] === 'e' ? r.w : 0)) * z,
+      y: this.oy + (r.y + (corner[0] === 's' ? r.h : 0)) * z,
+    }
+  }
+
+  /** Resize handle under a screen point (the closest one), for the Move tool. */
+  handleAt(clientX: number, clientY: number): { name: string; corner: Corner } | null {
+    const d = this.toDevice(clientX, clientY)
+    const reach = HANDLE_REACH * this.dpr
+    let best: { name: string; corner: Corner } | null = null
+    let bestDist = Infinity
+    for (const name of this.editor.drawOrder()) {
+      for (const corner of CORNERS) {
+        const c = this.cornerAt(name, corner)
+        const dist = Math.max(Math.abs(c.x - d.x), Math.abs(c.y - d.y))
+        // Ties go to the sprite drawn on top (later in the order).
+        if (dist <= reach && dist <= bestDist) {
+          best = { name, corner }
+          bestDist = dist
+        }
+      }
+    }
+    return best
+  }
+
   // --- Rendering --------------------------------------------------------------
 
   private render() {
@@ -181,14 +218,14 @@ export class View {
     const tool = editor.tool
     const hv = editor.hover
     const under = hv ? editor.hitTest(hv) : null
-    // Pencil and eraser: the hovered pixel shows the result instead of a cursor.
-    // During a stroke, only on the sprite being drawn.
-    const previewOn =
-      hv && under && (tool === 'pencil' || tool === 'eraser') && (!editor.dragging || under === editor.active)
-        ? under
-        : null
-    canvas.classList.toggle('hide-cursor', previewOn !== null)
+    // Pencil and eraser: the hovered pixel previews the result, on the sprite being edited only.
+    const previewOn = hv && under && under === editor.active && (tool === 'pencil' || tool === 'eraser') ? under : null
     canvas.classList.toggle('tool-move', tool === 'move')
+    canvas.classList.toggle('tool-draw', tool !== 'move')
+    canvas.classList.toggle('on-active', under !== null && under === editor.active)
+    const corner = tool === 'move' ? (editor.resizeCorner ?? this.hoverHandle?.corner ?? null) : null
+    canvas.classList.toggle('resize-nwse', corner === 'nw' || corner === 'se')
+    canvas.classList.toggle('resize-nesw', corner === 'ne' || corner === 'sw')
 
     const lw = Math.max(1, Math.round(dpr))
 
@@ -231,15 +268,29 @@ export class View {
       }
 
       // Outline, just outside the pixels; red while dropped on another sprite
-      ctx.strokeStyle = isActive ? (blocked ? DANGER : ACCENT) : ink.outline
+      ctx.strokeStyle = isActive ? (blocked ? DANGER : ink.active) : ink.outline
       ctx.lineWidth = lw
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
 
-    // Hovered pixel outline (other drawing tools; the eraser, whose preview
-    // is invisible on an empty pixel)
-    if (hv && under && tool !== 'select' && tool !== 'pencil' && tool !== 'move') {
-      ctx.strokeStyle = tool === 'eraser' ? ink.cursor : colorToCss(editor.color)
+    // Resize handles at the corners of every sprite (Move tool)
+    if (tool === 'move') {
+      const s = Math.round(HANDLE_SIZE * dpr)
+      const hot = editor.resizeCorner ? { name: editor.active, corner: editor.resizeCorner } : this.hoverHandle
+      for (const { name } of visible) {
+        for (const c of CORNERS) {
+          const p = this.cornerAt(name, c)
+          const isHot = hot?.name === name && hot.corner === c
+          ctx.fillStyle = isHot || name === editor.active ? ink.cursor : ink.handle
+          const k = isHot ? s + 2 * lw : s
+          ctx.fillRect(Math.round(p.x - k / 2), Math.round(p.y - k / 2), k, k)
+        }
+      }
+    }
+
+    // Hovered pixel outline for the other tools, on the sprite being edited only.
+    if (hv && under && under === editor.active && tool !== 'select' && tool !== 'move' && tool !== 'pencil' && tool !== 'eraser') {
+      ctx.strokeStyle = colorToCss(editor.color)
       ctx.lineWidth = lw
       ctx.strokeRect(this.ox + hv.x * z + 0.5, this.oy + hv.y * z + 0.5, z - 1, z - 1)
     }

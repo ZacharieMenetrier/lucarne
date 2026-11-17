@@ -178,13 +178,26 @@ button.active {
   height: 100%;
   display: block;
   touch-action: none;
-  cursor: crosshair;
+  /* Small thin crosshair with an open center */
+  --crosshair: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='17' height='17'><path d='M8.5 1v4M8.5 12v4M1 8.5h4M12 8.5h4' stroke='black' stroke-opacity='.45' stroke-width='3'/><path d='M8.5 1v4M8.5 12v4M1 8.5h4M12 8.5h4' stroke='white' stroke-width='1'/></svg>") 8 8;
+  cursor: default;
 }
-#canvas.hide-cursor {
-  cursor: none;
+#canvas.tool-draw {
+  cursor: default;
+}
+/* All tools but move: crosshair only over the sprite being drawn */
+#canvas.tool-draw.on-active {
+  cursor: var(--crosshair), default;
 }
 #canvas.tool-move {
   cursor: grab;
+}
+/* Move tool, over a corner handle or dragging it */
+#canvas.tool-move.resize-nwse {
+  cursor: nwse-resize;
+}
+#canvas.tool-move.resize-nesw {
+  cursor: nesw-resize;
 }
 
 #selbar {
@@ -578,15 +591,54 @@ button.icon-btn svg {
   color: var(--muted);
 }
 .fps input {
-  width: 52px;
-  padding: 3px 6px;
-  font: inherit;
+  width: 108px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+/* Hairline track with one tick per step; ticks are inset by half the 10px thumb. */
+.fps input::-webkit-slider-runnable-track {
+  height: 14px;
+  background:
+    linear-gradient(to right, var(--muted) 1px, transparent 1px) 4.5px 50% / calc((100% - 10px) / 10) 6px repeat-x,
+    linear-gradient(var(--line), var(--line)) 0 50% / 100% 1px no-repeat;
+}
+.fps input::-moz-range-track {
+  height: 14px;
+  background:
+    linear-gradient(to right, var(--muted) 1px, transparent 1px) 4.5px 50% / calc((100% - 10px) / 10) 6px repeat-x,
+    linear-gradient(var(--line), var(--line)) 0 50% / 100% 1px no-repeat;
+}
+.fps input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+}
+.fps input::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+}
+.fps input:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fps output {
+  min-width: 2ch;
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  -webkit-user-select: text;
-  user-select: text;
+  font-variant-numeric: tabular-nums;
 }
 
 .frame {

@@ -4,7 +4,7 @@ import type { Bitmap } from './bitmap'
 import { BOARD_GAP, findFreeSpot, shelfLayout } from './board'
 import { colorToHex, hexToColor, isHex } from './color'
 import { confirmDialog, h, openDialog, toast } from './dialog'
-import { Editor, type ToolId } from './editor'
+import { Editor, MAX_FPS, MIN_FPS, type ToolId } from './editor'
 import { icon } from './icons'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
@@ -664,9 +664,11 @@ export class App {
     $('anim-toggle').addEventListener('click', () => this.toggleFrames())
     $('play').addEventListener('click', () => (this.editor.playing ? this.editor.stop() : this.editor.play()))
     const fps = $<HTMLInputElement>('fps')
+    fps.addEventListener('input', () => ($('fps-value').textContent = fps.value))
     fps.addEventListener('change', () => {
       this.editor.setFps(Number(fps.value))
       fps.value = String(this.editor.fps)
+      $('fps-value').textContent = fps.value
     })
     fps.addEventListener('keydown', (e) => {
       e.stopPropagation()
@@ -722,7 +724,10 @@ export class App {
     }
     const fpsInput = $<HTMLInputElement>('fps')
     fpsInput.disabled = !sprite
-    if (document.activeElement !== fpsInput) fpsInput.value = sprite ? String(ed.fps) : ''
+    if (document.activeElement !== fpsInput) {
+      fpsInput.value = sprite ? String(Math.min(MAX_FPS, Math.max(MIN_FPS, ed.fps))) : ''
+      $('fps-value').textContent = sprite ? fpsInput.value : ''
+    }
     // Only touch the button when its state changes: replacing its icon on every
     // animation tick would swallow clicks (press and release on different nodes).
     const playState = ed.playing ? 'pause' : 'play'

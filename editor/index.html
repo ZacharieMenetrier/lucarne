@@ -47,7 +47,7 @@
       <section id="frames" hidden>
         <div class="frames-bar">
           <div class="bar-side">
-            <label class="fps" title="Frames per second, for the whole animation">FPS <input id="fps" type="number" min="1" max="60" step="1" inputmode="numeric" /></label>
+            <label class="fps" title="Frames per second, for the whole animation">FPS <input id="fps" type="range" min="2" max="12" step="1" list="fps-ticks" /><output id="fps-value"></output><datalist id="fps-ticks"><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option><option value="6"></option><option value="7"></option><option value="8"></option><option value="9"></option><option value="10"></option><option value="11"></option><option value="12"></option></datalist></label>
           </div>
           <button id="play" class="small icon-btn" title="Play / pause (Enter)" aria-label="Play"></button>
           <div class="bar-side end">

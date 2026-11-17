@@ -167,25 +167,31 @@ describe('board', () => {
     return ed
   }
 
-  it('draws on the sprite under the pointer and makes it active', () => {
+  function click(ed: Editor, x: number, y: number) {
+    ed.down(at(x, y))
+    ed.up(at(x, y))
+  }
+
+  it('focuses another sprite on the first press, draws on the next', () => {
     const ed = board()
-    ed.down(at(21, 2))
-    ed.up(at(21, 2))
+    click(ed, 21, 2)
     expect(ed.active).toBe('slime')
+    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 2)).toBe(0)
+    click(ed, 21, 2)
     expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 2)).toBe(RED)
-    ed.down(at(12, 2)) // between the two: nothing
-    ed.up(at(12, 2))
+    click(ed, 12, 2) // between the two: nothing
     expect(ed.active).toBe('slime')
+    expect(ed.canUndo).toBe(true)
   })
 
   it('undoes across sprites, in order', () => {
     const ed = board()
     const edits: string[] = []
     ed.onEdit = (n) => edits.push(n)
-    ed.down(at(1, 1))
-    ed.up(at(1, 1))
-    ed.down(at(21, 1))
-    ed.up(at(21, 1))
+    click(ed, 1, 1) // focus hero
+    click(ed, 1, 1)
+    click(ed, 21, 1) // focus slime
+    click(ed, 21, 1)
     ed.undo()
     expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 1)).toBe(0)
     expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(1, 1)).toBe(RED)
@@ -211,8 +217,8 @@ describe('board', () => {
 
   it('pastes into another sprite', () => {
     const ed = board()
-    ed.down(at(0, 0))
-    ed.up(at(0, 0))
+    click(ed, 0, 0) // focus hero
+    click(ed, 0, 0)
     ed.copy()
     ed.activate('slime')
     ed.paste()
@@ -222,10 +228,10 @@ describe('board', () => {
 
   it('replaces a color in every sprite as one undo step', () => {
     const ed = board()
-    ed.down(at(0, 0))
-    ed.up(at(0, 0))
-    ed.down(at(20, 0))
-    ed.up(at(20, 0))
+    click(ed, 0, 0) // focus hero
+    click(ed, 0, 0)
+    click(ed, 20, 0) // focus slime
+    click(ed, 20, 0)
     expect(ed.replaceColorEverywhere(RED, BLUE).sort()).toEqual(['hero', 'slime'])
     ed.undo()
     expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
@@ -328,11 +334,15 @@ describe('animation frames', () => {
   it('sets one fps for the whole animation, undoably', () => {
     const ed = setup()
     ed.addFrame()
-    ed.setFps(20)
-    expect(ed.sprite!.meta.frames.map((f) => f.duration)).toEqual([50, 50])
-    expect(ed.fps).toBe(20)
+    ed.setFps(4)
+    expect(ed.sprite!.meta.frames.map((f) => f.duration)).toEqual([250, 250])
+    expect(ed.fps).toBe(4)
     ed.undo()
     expect(ed.fps).toBe(10)
+    ed.setFps(60) // capped to MAX_FPS
+    expect(ed.fps).toBe(12)
+    ed.setFps(0) // raised to MIN_FPS
+    expect(ed.fps).toBe(2)
   })
 
   it('resizes every frame', () => {

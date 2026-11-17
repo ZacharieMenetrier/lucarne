@@ -26,12 +26,15 @@ import {
 import { boundsOf, findFreeSpot, overlaps, resolveOverlaps, type BoardFile, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
-import type { Sprite } from './sprite'
+import { MAX_SIZE, type Sprite } from './sprite'
 
-export const MIN_FPS = 1
-export const MAX_FPS = 60
+export const MIN_FPS = 2
+export const MAX_FPS = 12
 
 export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move'
+
+/** Corner of a sprite, for the resize handles of the Move tool. */
+export type Corner = 'nw' | 'ne' | 'sw' | 'se'
 
 export interface PointerInput extends Point {
   shift: boolean
@@ -77,6 +80,7 @@ type Drag =
   | { kind: 'float'; start: Point; origin: Point }
   | { kind: 'pick' }
   | { kind: 'place'; name: string; start: Point; origin: Point }
+  | { kind: 'resize'; name: string; corner: Corner; start: Point; origin: Rect; frames: Bitmap[][]; rect: Rect }
 
 export class Editor {
   readonly sprites = new Map<string, Placed>()
@@ -199,6 +203,11 @@ export class Editor {
   /** Footprints of every sprite but one. */
   private othersThan(name: string): Rect[] {
     return [...this.sprites.keys()].filter((n) => n !== name).map((n) => this.rectOf(n)!)
+  }
+
+  /** Corner being dragged to resize a sprite, if any. */
+  get resizeCorner(): Corner | null {
+    return this.drag?.kind === 'resize' ? this.drag.corner : null
   }
 
   /** True while a sprite being moved sits on another one (it will be pushed aside). */
@@ -338,6 +347,12 @@ export class Editor {
       return
     }
     this.stop()
+    // The first press on another sprite only focuses it; it does not draw.
+    const hit = this.hitTest(p)
+    if (hit && hit !== this.active && !this.insideSelection(p)) {
+      this.activate(hit)
+      return
+    }
     if (!this.target(p)) {
       if (this.tool === 'select') this.deselect()
       return
@@ -381,6 +396,81 @@ export class Editor {
     this.emit()
   }
 
+  /** Starts resizing a sprite by one of its corners (Move tool). The
+   * opposite corner stays in place; drawn pixels stay where they are. */
+  startResize(name: string, corner: Corner, p: Point) {
+    if (this.drag || !this.sprites.has(name)) return
+    this.activate(name)
+    const pl = this.sprites.get(name)!
+    const origin = this.rectOf(name)!
+    this.drag = {
+      kind: 'resize',
+      name,
+      corner,
+      start: { x: p.x, y: p.y },
+      origin,
+      frames: pl.sprite.frames.map((row) => row.slice()),
+      rect: origin,
+    }
+    this.emit()
+  }
+
+  /** New footprint while dragging a corner: at least 1×1, at most MAX_SIZE,
+   * and stopped by the other sprites (they may touch). */
+  private resizeRect(d: Extract<Drag, { kind: 'resize' }>, p: Point): Rect {
+    const o = d.origin
+    const west = d.corner[1] === 'w'
+    const north = d.corner[0] === 'n'
+    const dx = p.x - d.start.x
+    const dy = p.y - d.start.y
+    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+    let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h
+    if (west) x0 = clamp(x0 + dx, x1 - MAX_SIZE, x1 - 1)
+    else x1 = clamp(x1 + dx, x0 + 1, x0 + MAX_SIZE)
+    if (north) y0 = clamp(y0 + dy, y1 - MAX_SIZE, y1 - 1)
+    else y1 = clamp(y1 + dy, y0 + 1, y0 + MAX_SIZE)
+    // Shrinking never hits anything; growing stops at the first neighbor.
+    // Only the moving edges can run into a sprite the original did not touch.
+    const others = this.othersThan(d.name)
+    for (let guard = 0; guard <= others.length; guard++) {
+      const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+      const hit = others.find((n) => overlaps(r, n))
+      if (!hit) break
+      const apartX = hit.x >= o.x + o.w || hit.x + hit.w <= o.x
+      const apartY = hit.y >= o.y + o.h || hit.y + hit.h <= o.y
+      if (!apartX && !apartY) break // already overlapping: leave it
+      const inX = west ? hit.x + hit.w - x0 : x1 - hit.x
+      const inY = north ? hit.y + hit.h - y0 : y1 - hit.y
+      // Diagonal neighbor: give up the axis that goes in the least.
+      if (apartX && (!apartY || inX <= inY)) {
+        if (west) x0 = hit.x + hit.w
+        else x1 = hit.x
+      } else if (north) y0 = hit.y + hit.h
+      else y1 = hit.y
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+  }
+
+  /** Shows a sprite at a new footprint (preview while dragging a corner). */
+  private previewResize(d: Extract<Drag, { kind: 'resize' }>, r: Rect) {
+    const pl = this.sprites.get(d.name)
+    if (!pl) return
+    d.rect = r
+    const ox = d.origin.x - r.x
+    const oy = d.origin.y - r.y
+    d.frames.forEach((row, i) => row.forEach((b, f) => this.setFrame(pl, i, f, r.w === b.width && r.h === b.height && !ox && !oy ? b : resized(b, r.w, r.h, ox, oy))))
+    pl.x = r.x
+    pl.y = r.y
+  }
+
+  private insideSelection(p: PointerInput): boolean {
+    if (this.tool !== 'select' || !this.placed) return false
+    const q = this.toLocal(p)
+    const f = this.floating
+    if (f) return rectContains({ x: f.x, y: f.y, w: f.bmp.width, h: f.bmp.height }, q)
+    return !!this.selection && rectContains(this.selection, q)
+  }
+
   /** Chooses the sprite a press acts on and activates it. */
   private target(p: PointerInput): boolean {
     if (this.tool === 'select' && this.placed) {
@@ -406,6 +496,11 @@ export class Editor {
         pl.x = d.origin.x + p.x - d.start.x
         pl.y = d.origin.y + p.y - d.start.y
       }
+      return this.emit()
+    }
+    if (d.kind === 'resize') {
+      const r = this.resizeRect(d, p)
+      if (r.x !== d.rect.x || r.y !== d.rect.y || r.w !== d.rect.w || r.h !== d.rect.h) this.previewResize(d, r)
       return this.emit()
     }
     const q = this.toLocal(p)
@@ -451,6 +546,13 @@ export class Editor {
         this.history.push({ kind: 'place', name: d.name, from: d.origin, to: { x: pl.x, y: pl.y } })
         this.onMoved()
       }
+      return this.emit()
+    }
+    if (d.kind === 'resize') {
+      // Back to the original, then resize for real (one undo step).
+      const r = d.rect
+      this.previewResize(d, d.origin)
+      if (r.w !== d.origin.w || r.h !== d.origin.h) this.resize(r.w, r.h, d.origin.x - r.x, d.origin.y - r.y)
       return this.emit()
     }
     const bmp = this.bmp
