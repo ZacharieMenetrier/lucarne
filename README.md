@@ -19,10 +19,9 @@ Games live in their own folders (and their own repos), never inside this one.
 In a game folder: `npx lucarne dev` (or `node path/to/lucarne/bin/lucarne.mjs dev .`).
 `--host` makes the editor reachable on the local network.
 
-On macOS the editor opens by itself in Safari. Use Safari > File > Add to Dock on
-`localhost:5173` to install it as the Lucarne app: from then on `lucarne dev` opens that
-app instead, and Ctrl+C quits it with the server. Untick "Keep in Dock" if you want
-its icon only while it runs. `--no-open` skips opening anything.
+On macOS, Safari > File > Add to Dock on `localhost:5173` installs the editor as an app:
+start `lucarne dev`, then open that app. The port stays 5173 (it never drifts to
+another one), so the app always finds the server.
 
 Without the local server (iPad, installed version), the editor saves to the browser's
 private file system (OPFS). On Mac, add `?storage=opfs` to the URL to force that mode.
