@@ -16,9 +16,10 @@ const editorRoot = path.resolve(here, '../editor')
 const args = process.argv.slice(2)
 const command = args[0] && !args[0].startsWith('-') ? args.shift() : 'dev'
 
-if (command !== 'dev') {
-  console.log('Usage: lucarne dev [game-folder] [--port 5173] [--host]')
-  process.exit(command === 'help' || command === '--help' ? 0 : 1)
+const USAGE = 'Usage: lucarne dev [game-folder] [--port 5173] [--host]'
+if (command !== 'dev' || args.includes('--help') || args.includes('-h')) {
+  console.log(USAGE)
+  process.exit(command === 'dev' || command === 'help' || command === '--help' ? 0 : 1)
 }
 
 let dir = '.'
@@ -28,7 +29,10 @@ for (let i = 0; i < args.length; i++) {
   const a = args[i]
   if (a === '--host') host = true
   else if (a === '--port') port = Number(args[++i])
-  else dir = a
+  else if (a.startsWith('-')) {
+    console.error(`Unknown option: ${a}\n${USAGE}`)
+    process.exit(1)
+  } else dir = a
 }
 
 const gameDir = path.resolve(dir)

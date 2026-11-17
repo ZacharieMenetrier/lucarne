@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["editor/src", "tests"]
+  "include": ["editor/src", "runtime", "tests"]
 }

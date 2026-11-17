@@ -1,7 +1,6 @@
 # Lucarne
 
 A pixel art game engine where you draw, compose, code and play in one place.
-See [the specification](./Lucarne%20—%20Cahier%20des%20charges.md).
 
 For now: the **pixel art editor** (step 1, first delivery: drawing).
 
@@ -50,9 +49,38 @@ my-game/
   sprites/hero.png   sheet: one row per direction, one column per frame
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
                        "directions": [{ "name": "default" }], "frames": [{ "duration": 100 }] }
+  code/main.ts       the game's code (TypeScript), starting point
+  game.js            built from code/ by `lucarne dev`: commit it, never edit it
 ```
 
 Every change is saved automatically, about 0.4 s after the last stroke.
+
+## Playing
+
+▶ in the top bar (⌘↵) plays the game in the editor. Esc pauses and resumes, ■ goes back
+to the editor. Arrows or WASD (ZQSD on AZERTY) move, Space or Enter is the action;
+a gamepad works too.
+
+```ts
+// code/main.ts
+import { game, input, screen } from 'lucarne'
+
+let x = 156
+export default game({
+  width: 320, height: 180,                // the game's screen, in pixels
+  update() { x += input.x * 2 },          // 60 times per second
+  draw() { screen.clear('#1a1c2c'); screen.rect(x, 86, 8, 8, '#ffcd75') },
+})
+```
+
+If the game has no code yet, ▶ shows a little night scene instead (the arrows and the
+action key do something there too).
+
+The browser cannot run TypeScript, so `lucarne dev` builds `code/` into `game.js` whenever
+a file in it changes, and again just before playing. Build errors show in the editor and
+in the terminal. The iPad has no server: it plays the `game.js` it gets from GitHub,
+with the sprites as they are on the iPad. Code is written on the Mac; sprites can be
+changed on either.
 
 ## Controls
 
@@ -82,6 +110,10 @@ npm run typecheck
 npm run build        # installable static version, in dist/
 ```
 
+The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
+(`runner.ts`), `screen.ts` and `input.ts`. `game.js` holds only the game's code: the editor
+provides the engine when it plays it (`server/build.mjs` explains how).
+
 Editor code lives in `editor/src/`:
 
 - `bitmap.ts`, `color.ts`: pixels and operations (line, fill, flip…)
@@ -92,6 +124,7 @@ Editor code lives in `editor/src/`:
 - `view.ts`, `input.ts`: rendering, zoom, mouse, pen and gestures
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page
+- `play.ts`: play mode (loads `game.js`, runs it, pause and stop)
 - `github.ts`: GitHub sync (REST API, three-way comparison), tested in `tests/sync.test.ts`
 
 The local server (`server/fs-plugin.mjs`) only accepts paths inside the game folder,

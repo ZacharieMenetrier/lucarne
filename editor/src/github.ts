@@ -47,9 +47,14 @@ export function normalizeFolder(folder: string) {
   return parts.length ? parts.join('/') + '/' : ''
 }
 
-/** The files the editor reads and writes: the only ones that sync. */
+/** The files the editor reads and writes, plus game.js (the code it plays): the only ones that sync. */
 export function isEditorFile(path: string) {
-  return path === 'palette.json' || path === 'board.json' || /^sprites\/[^/]+\.(png|json)$/.test(path)
+  return (
+    path === 'palette.json' ||
+    path === 'board.json' ||
+    path === 'game.js' ||
+    /^sprites\/[^/]+\.(png|json)$/.test(path)
+  )
 }
 
 /** Files that belong together: a sprite's PNG and JSON are one choice in a conflict. */

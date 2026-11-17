@@ -12,6 +12,7 @@ import { createMenu, currentPage } from './menu'
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
+import { Player, isPlaying } from './play'
 import { MAX_SIZE, NAME_RE, newSprite, type Sprite } from './sprite'
 import { toImageData } from './png'
 import { View } from './view'
@@ -686,6 +687,9 @@ export class App {
 
   private buildTopbar() {
     $('topbar').prepend(createMenu())
+    const player = new Player(this.project.storage)
+    $('run-game').innerHTML = icon('play')
+    $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')
     $('sync').addEventListener('click', () => void this.sync())
     this.refreshSync()
@@ -803,7 +807,7 @@ export class App {
 
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement
-      if (currentPage() !== 'editor' || target.closest('input, select, textarea, dialog')) return
+      if (currentPage() !== 'editor' || isPlaying() || target.closest('input, select, textarea, dialog')) return
       const mod = e.metaKey || e.ctrlKey
       const k = e.key.toLowerCase()
       const ed = this.editor

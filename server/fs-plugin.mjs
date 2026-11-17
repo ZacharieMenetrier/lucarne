@@ -5,17 +5,20 @@
 //   GET    /__lucarne/fs?path=…         → raw content (404 if missing)
 //   PUT    /__lucarne/fs?path=…         → writes the request body
 //   DELETE /__lucarne/fs?path=…         → deletes the file
+//   POST   /__lucarne/build             → rebuilds game.js from code/ → { ok, error?, missing? }
 //
 // Paths are relative to the game folder. Paths that leave it, and paths that
 // go through a hidden entry (.git, .env…), are rejected.
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { gameBuilder } from './build.mjs'
 
 const MAX_BODY = 32 * 1024 * 1024
 
 export function lucarneFs(gameDir) {
   const root = path.resolve(gameDir)
+  let builder = null
 
   function resolveSafe(rel) {
     if (typeof rel !== 'string' || rel === '') throw httpError(400, 'Missing path')
@@ -58,6 +61,10 @@ export function lucarneFs(gameDir) {
       }
     }
 
+    if (route === '/build' && req.method === 'POST') {
+      return sendJson(res, await builder.build())
+    }
+
     if (route === '/fs') {
       const abs = resolveSafe(url.searchParams.get('path'))
       if (req.method === 'GET') {
@@ -94,6 +101,10 @@ export function lucarneFs(gameDir) {
   return {
     name: 'lucarne-fs',
     configureServer(server) {
+      builder = gameBuilder(root, server.config.logger)
+      void builder.build()
+      const unwatch = builder.watch()
+      server.httpServer?.on('close', unwatch)
       server.middlewares.use('/__lucarne', (req, res) => {
         handle(req, res).catch((err) => {
           res.statusCode = err.status ?? 500

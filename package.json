@@ -4,13 +4,17 @@
   "description": "A pixel art game engine where you draw, compose, code and play in one place.",
   "license": "MIT",
   "type": "module",
+  "exports": {
+    ".": "./runtime/index.ts"
+  },
   "bin": {
     "lucarne": "bin/lucarne.mjs"
   },
   "files": [
     "bin",
     "server",
-    "editor"
+    "editor",
+    "runtime"
   ],
   "scripts": {
     "dev": "node bin/lucarne.mjs dev",
@@ -22,6 +26,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "rolldown": "~1.2.18",
     "vite": "^8.3.8"
   },
   "devDependencies": {
