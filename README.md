@@ -74,6 +74,25 @@ export default game({
 })
 ```
 
+Sprites are drawn by name. Their origin pixel lands on the position given, and their
+animation plays by itself on the game's clock (`time.ms`, which stops while paused):
+
+```ts
+import { game, screen, sprite } from 'lucarne'
+
+export default game({
+  draw() {
+    screen.clear('#1a1c2c')
+    screen.sprite(sprite('hero'), 160, 90)                       // animated, first direction
+    screen.sprite(sprite('hero'), 200, 90, { flipX: true })      // mirrored
+    screen.sprite(sprite('hero'), 240, 90, { direction: 'north', frame: 0 })
+  },
+})
+```
+
+Before the game's code runs, the editor saves what is not saved yet and loads every sprite
+of the game folder, so `sprite()` works anywhere, even at the top of a file.
+
 If the game has no code yet, ▶ shows a little night scene instead (the arrows and the
 action key do something there too).
 
@@ -113,7 +132,7 @@ npm run build        # installable static version, in dist/
 ```
 
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
-(`runner.ts`), `screen.ts` and `input.ts`. `game.js` holds only the game's code: the editor
+(`runner.ts`), `screen.ts`, `input.ts`, `sprites.ts` and the clock (`time.ts`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
 Editor code lives in `editor/src/`:

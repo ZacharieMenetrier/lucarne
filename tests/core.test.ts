@@ -358,7 +358,7 @@ describe('animation frames', () => {
     ed.undo()
     expect(ed.fps).toBe(10)
     ed.setFps(60) // capped to MAX_FPS
-    expect(ed.fps).toBe(12)
+    expect(ed.fps).toBe(24)
     ed.setFps(0) // raised to MIN_FPS
     expect(ed.fps).toBe(2)
   })

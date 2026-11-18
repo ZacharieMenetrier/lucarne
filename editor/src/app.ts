@@ -706,7 +706,7 @@ export class App {
 
   private buildTopbar() {
     $('topbar').prepend(createMenu())
-    const player = new Player(this.project.storage)
+    const player = new Player(this.project, () => this.saver.flush())
     $('run-game').innerHTML = icon('play')
     $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')

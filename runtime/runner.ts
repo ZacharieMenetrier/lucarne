@@ -4,6 +4,7 @@
 import { DEFAULT_HEIGHT, DEFAULT_WIDTH, TICK_RATE, type GameConfig } from './game'
 import { listenInput, sampleInput } from './input'
 import { attachScreen } from './screen'
+import { resetTime, tickTime } from './time'
 
 const STEP = 1000 / TICK_RATE
 /** After a long stall (hidden tab, breakpoint), catch up at most this many updates. */
@@ -37,6 +38,7 @@ export class Runner {
   start() {
     attachScreen(this.canvas)
     listenInput(true)
+    resetTime()
     if (!this.guard(() => this.config.start?.())) return
     // A first frame right away, so the screen is never blank (even if paused at once).
     if (!this.guard(() => this.config.draw?.())) return
@@ -75,6 +77,7 @@ export class Runner {
       this.lag -= STEP
       sampleInput()
       if (!this.guard(() => this.config.update?.())) return
+      tickTime()
     }
     if (!this.guard(() => this.config.draw?.())) return
     this.frame = requestAnimationFrame(this.loop)

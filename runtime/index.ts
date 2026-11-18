@@ -1,6 +1,6 @@
 // Lucarne's runtime: what a game's code imports.
 //
-//   import { game, screen, input } from 'lucarne'
+//   import { game, screen, input, sprite, time } from 'lucarne'
 //
 //   let x = 160
 //   export default game({
@@ -12,4 +12,6 @@
 
 export { game, type GameConfig } from './game'
 export { input, type Button } from './input'
-export { screen } from './screen'
+export { screen, type SpriteOptions } from './screen'
+export { sprite, type Sprite } from './sprites'
+export { time } from './time'

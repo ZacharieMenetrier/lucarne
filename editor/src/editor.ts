@@ -29,7 +29,7 @@ import { History } from './history'
 import { MAX_SIZE, type Sprite } from './sprite'
 
 export const MIN_FPS = 2
-export const MAX_FPS = 12
+export const MAX_FPS = 24
 
 export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move' | 'origin'
 

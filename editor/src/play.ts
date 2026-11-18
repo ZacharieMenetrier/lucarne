@@ -7,11 +7,15 @@
 import * as engine from '../../runtime/index'
 import type { GameConfig } from '../../runtime/game'
 import { Runner } from '../../runtime/runner'
+import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { h } from './dialog'
 import { icon } from './icons'
 import { currentPage } from './menu'
 import { noGame } from './nogame'
-import { readText, type Storage } from './storage'
+import { toImageData } from './png'
+import type { Project } from './project'
+import { composeSheet, type Sprite } from './sprite'
+import { readText } from './storage'
 
 const GAME_FILE = 'game.js'
 const ENTRY = 'code/main.ts'
@@ -34,7 +38,11 @@ export class Player {
   private readonly resize = new ResizeObserver(() => this.fit())
   private loading = false
 
-  constructor(private readonly storage: Storage) {
+  constructor(
+    private readonly project: Project,
+    /** Saves what the editor has not saved yet, so the game plays the sprites as drawn. */
+    private readonly saveFirst: () => Promise<void>,
+  ) {
     this.pauseButton = h('button', {
       type: 'button',
       className: 'icon',
@@ -79,8 +87,10 @@ export class Player {
     this.show(true)
     this.say('Loading…')
     try {
+      await this.saveFirst()
       const code = await this.loadCode()
       if (code === null) return
+      setSprites(await this.loadSprites())
       this.run(await importGame(code))
     } catch (err) {
       this.say(`The game could not start:\n\n${describe(err)}`, true)
@@ -124,6 +134,24 @@ export class Player {
     this.runner?.stop()
     this.runner = null
     this.show(false)
+  }
+
+  private get storage() {
+    return this.project.storage
+  }
+
+  /** Every sprite of the game, as saved, for the engine's `sprite()`. */
+  private async loadSprites(): Promise<SpriteData[]> {
+    const names = await this.project.listSprites()
+    return Promise.all(
+      names.map(async (name) => {
+        try {
+          return toSpriteData(await this.project.loadSprite(name))
+        } catch (err) {
+          throw new Error(`The sprite "${name}" could not be read: ${describe(err)}`)
+        }
+      }),
+    )
   }
 
   /** Returns game.js, or null after explaining why there is none. */
@@ -201,6 +229,22 @@ export class Player {
     const scale = Math.max(1, Math.floor(Math.min((box.width * dpr) / r.width, (height * dpr) / r.height)))
     this.canvas.style.width = `${(r.width * scale) / dpr}px`
     this.canvas.style.height = `${(r.height * scale) / dpr}px`
+  }
+}
+
+function toSpriteData(sprite: Sprite): SpriteData {
+  const sheet = composeSheet(sprite)
+  const canvas = new OffscreenCanvas(sheet.width, sheet.height)
+  canvas.getContext('2d')!.putImageData(toImageData(sheet), 0, 0)
+  const { meta } = sprite
+  return {
+    name: sprite.name,
+    frameWidth: meta.frameWidth,
+    frameHeight: meta.frameHeight,
+    directions: meta.directions.map((d) => d.name),
+    durations: meta.frames.map((f) => f.duration),
+    origin: meta.origin,
+    sheet: canvas,
   }
 }
 
