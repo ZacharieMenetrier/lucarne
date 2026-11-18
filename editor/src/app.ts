@@ -8,7 +8,7 @@ import { Editor, MAX_FPS, MIN_FPS, type ToolId } from './editor'
 import { icon } from './icons'
 import { isConfigured, loadSettings, syncWithGitHub, type Conflict, type Side } from './github'
 import { fetchLospecPalette, lospecSlug, type LospecPalette } from './lospec'
-import { createMenu, currentPage } from './menu'
+import { createActionsMenu, createMenu, currentPage } from './menu'
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
@@ -347,7 +347,7 @@ export class App {
       { label: 'Save', value: 'ok', kind: 'primary' },
     ], (v) => (v === 'delete' ? null : this.nameError(nameInput.value.trim(), sprite.name) ?? size.check()))
 
-    if (res === 'delete') return this.deleteSprite()
+    if (res === 'delete') return this.deleteSprite(sprite.name)
     if (res !== 'ok') return
 
     const { w, h: hh } = size.read()
@@ -361,22 +361,43 @@ export class App {
     if (name !== sprite.name) await this.renameSprite(sprite.name, name)
   }
 
-  private async commitName(field: HTMLInputElement) {
-    const sprite = this.editor.sprite
-    if (!sprite) return
-    const name = field.value.trim()
-    if (name === sprite.name) return void (field.value = name)
-    const err = this.nameError(name, sprite.name)
-    if (err) {
-      field.value = sprite.name
-      return toast(err)
+  private async askRename(from: string) {
+    const nameInput = h('input', { type: 'text', value: from, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput))
+    queueMicrotask(() => nameInput.select())
+    const res = await openDialog('Rename sprite', body, [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Rename', value: 'ok', kind: 'primary' },
+    ], () => this.nameError(nameInput.value.trim(), from))
+    const name = nameInput.value.trim()
+    if (res !== 'ok' || name === from || !this.editor.sprites.has(from)) return
+    await this.renameSprite(from, name)
+  }
+
+  /** Copies a sprite under a new name, next to it on the board. */
+  private async duplicateSprite(from: string) {
+    await this.saver.flush()
+    const copy = this.editor.snapshot(from)
+    if (!copy) return
+    copy.name = this.uniqueName(`${from}-copy`)
+    try {
+      await this.project.saveSprite(copy)
+    } catch (err) {
+      return toast(`Could not duplicate: ${(err as Error).message}`)
     }
-    await this.renameSprite(sprite.name, name)
+    const r = this.editor.rectOf(from)!
+    const taken = [...this.editor.sprites.keys()].map((n) => this.editor.rectOf(n)!)
+    const spot = findFreeSpot(r.w, r.h, { x: r.x + r.w + BOARD_GAP, y: r.y }, taken)
+    this.editor.addSprite(copy, spot.x, spot.y)
+    this.saver.boardMoved()
+    this.refreshSprites()
+    this.focusSprite(copy.name)
   }
 
   private async renameSprite(from: string, to: string) {
     await this.saver.flush()
-    const snapshot = this.editor.snapshot()!
+    const snapshot = this.editor.snapshot(from)
+    if (!snapshot) return
     snapshot.name = to
     try {
       await this.project.saveSprite(snapshot)
@@ -392,17 +413,14 @@ export class App {
     this.refreshSprites()
   }
 
-  private async deleteSprite() {
-    const sprite = this.editor.sprite
-    if (!sprite) return
+  private async deleteSprite(name: string) {
     const ok = await confirmDialog(
       'Delete sprite',
-      `“${sprite.name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
+      `“${name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
       'Delete',
       true,
     )
-    if (!ok) return
-    const name = sprite.name
+    if (!ok || !this.editor.sprites.has(name)) return
     this.saver.discard(name)
     try {
       await this.project.deleteSprite(name)
@@ -696,20 +714,9 @@ export class App {
     this.refreshSync()
     $('sprites-new').innerHTML = icon('add')
     $('palette-edit').innerHTML = icon('pencil')
-    $('sprite-delete').innerHTML = icon('trash')
-    $('sprite-delete').addEventListener('click', () => void this.deleteSprite())
     $('grid').innerHTML = icon('grid')
     $('checker').innerHTML = icon('checker')
     $('fit').innerHTML = icon('fit')
-    const nameField = $<HTMLInputElement>('sprite-name')
-    nameField.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') nameField.blur()
-      else if (e.key === 'Escape') {
-        nameField.value = this.editor.sprite?.name ?? ''
-        nameField.blur()
-      }
-    })
-    nameField.addEventListener('change', () => void this.commitName(nameField))
     $('grid').addEventListener('click', () => this.toggleGrid())
     $('checker').addEventListener('click', () => this.toggleChecker())
     $('background').addEventListener('click', () => void this.editBackground())
@@ -875,10 +882,6 @@ export class App {
       this.rememberedSprite = sprite.name
       this.lastSprite = sprite.name
     }
-    const nameField = $<HTMLInputElement>('sprite-name')
-    nameField.disabled = !sprite
-    $<HTMLButtonElement>('sprite-delete').disabled = !sprite
-    if (document.activeElement !== nameField) nameField.value = sprite?.name ?? ''
     $('grid').classList.toggle('active', this.view.showGrid)
     $('checker').classList.toggle('active', this.view.showChecker)
     $('anim-toggle').classList.toggle('active', !$('frames').hidden)
@@ -1112,14 +1115,21 @@ export class App {
     const list = $('sprite-list')
     list.replaceChildren()
     for (const name of this.spriteNames) {
+      const menu = createActionsMenu(`Options for ${name}`, [
+        { label: 'Rename', run: () => void this.askRename(name) },
+        { label: 'Duplicate', run: () => void this.duplicateSprite(name) },
+        { label: 'Delete', run: () => void this.deleteSprite(name), danger: true },
+      ])
       list.append(
-        h('button', {
-          className: 'sprite-item',
-          'data-name': name,
-          onclick: () => this.focusSprite(name),
-        },
-        this.thumbs.get(name) ?? h('span', { className: 'thumb' }),
-        h('span', { className: 'sprite-label' }, name)),
+        h('div', { className: 'sprite-row' },
+          h('button', {
+            className: 'sprite-item',
+            'data-name': name,
+            onclick: () => this.focusSprite(name),
+          },
+          this.thumbs.get(name) ?? h('span', { className: 'thumb' }),
+          h('span', { className: 'sprite-label' }, name)),
+          menu.el),
       )
     }
     this.render()

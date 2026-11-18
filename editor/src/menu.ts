@@ -53,7 +53,7 @@ export function createMenu(): HTMLElement {
   })
   const wrap = h('div', { className: 'menu' }, button, items)
 
-  const item = (page: Page, label: string) =>
+  const item = (page: Page, label: string): HTMLElement =>
     h('button', {
       type: 'button',
       role: 'menuitemradio',
@@ -72,6 +72,60 @@ export function createMenu(): HTMLElement {
     item('settings', 'Settings'),
   )
 
+  const close = dropdown(wrap, button, items, () => {
+    const page = currentPage()
+    for (const el of items.querySelectorAll<HTMLElement>('[data-page]')) {
+      const on = el.dataset.page === page
+      el.classList.toggle('current', on)
+      el.setAttribute('aria-checked', String(on))
+    }
+  })
+  return wrap
+}
+
+export interface MenuAction {
+  label: string
+  run: () => void
+  danger?: boolean
+}
+
+/** A ⋮ button with a drop-down list of actions, opening below it towards the left. */
+export function createActionsMenu(title: string, actions: MenuAction[]): { el: HTMLElement; button: HTMLButtonElement } {
+  const items = h('div', { className: 'menu-list end', role: 'menu', hidden: true })
+  const button = h('button', {
+    type: 'button',
+    className: 'small icon-btn',
+    title,
+    'aria-label': title,
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    html: icon('more'),
+  })
+  const wrap = h('div', { className: 'menu' }, button, items)
+  // Fixed, so a scrolling list around the button does not clip it.
+  const close = dropdown(wrap, button, items, () => {
+    const r = button.getBoundingClientRect()
+    items.style.top = `${r.bottom + 4}px`
+    items.style.right = `${window.innerWidth - r.right}px`
+  })
+  items.append(
+    ...actions.map((a) =>
+      h('button', {
+        type: 'button',
+        role: 'menuitem',
+        className: a.danger ? 'menu-item danger' : 'menu-item',
+        onclick: () => {
+          close()
+          a.run()
+        },
+      }, a.label),
+    ),
+  )
+  return { el: wrap, button }
+}
+
+/** Opens and closes `items` under `button` (outside click and Escape close it). Returns `close`. */
+function dropdown(wrap: HTMLElement, button: HTMLButtonElement, items: HTMLElement, onOpen?: () => void) {
   const onOutside = (e: PointerEvent) => {
     if (!wrap.contains(e.target as Node)) close()
   }
@@ -82,12 +136,7 @@ export function createMenu(): HTMLElement {
     }
   }
   function open() {
-    const page = currentPage()
-    for (const el of items.querySelectorAll<HTMLElement>('[data-page]')) {
-      const on = el.dataset.page === page
-      el.classList.toggle('current', on)
-      el.setAttribute('aria-checked', String(on))
-    }
+    onOpen?.()
     items.hidden = false
     button.setAttribute('aria-expanded', 'true')
     button.classList.add('active')
@@ -102,5 +151,5 @@ export function createMenu(): HTMLElement {
     document.removeEventListener('keydown', onKey, true)
   }
   button.addEventListener('click', () => (items.hidden ? open() : close()))
-  return wrap
+  return close
 }

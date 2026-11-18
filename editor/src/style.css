@@ -482,6 +482,48 @@ button.swatch:hover:not(.add) {
   flex-direction: column;
   gap: 4px;
 }
+.sprite-row {
+  position: relative;
+}
+.sprite-row .sprite-item {
+  width: 100%;
+  padding-right: 40px;
+}
+.sprite-row > .menu {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 6px;
+  display: flex;
+  align-items: center;
+}
+.sprite-row > .menu > button {
+  background: transparent;
+  border-color: transparent;
+}
+.sprite-row > .menu > button:hover:not(:disabled),
+.sprite-row > .menu > button.active {
+  background: var(--panel);
+}
+/* The ⋮ button shows on the hovered row with a mouse, on the selected row on a
+   touch screen, and always while its menu is open or it has keyboard focus. */
+.sprite-row > .menu > button {
+  visibility: hidden;
+}
+.sprite-row:focus-within > .menu > button,
+.sprite-row > .menu > button.active {
+  visibility: visible;
+}
+@media (hover: hover) {
+  .sprite-row:hover > .menu > button {
+    visibility: visible;
+  }
+}
+@media (hover: none) {
+  .sprite-item.active + .menu > button {
+    visibility: visible;
+  }
+}
 .sprite-item {
   display: flex;
   align-items: center;
@@ -570,11 +612,6 @@ select {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 7px 9px;
-}
-#sprite-name {
-  width: 140px;
-  padding: 4px 8px;
-  font-size: 13px;
 }
 input[type='checkbox'] {
   width: 18px;
@@ -899,6 +936,14 @@ button.icon-btn svg {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.menu-list.end {
+  position: fixed;
+  left: auto;
+  min-width: 160px;
+}
+.menu-item.danger {
+  color: var(--danger);
 }
 .menu-list[hidden] {
   display: none;
