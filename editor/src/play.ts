@@ -5,23 +5,24 @@
 // the engine through globalThis.__lucarne (see server/build.mjs).
 
 import * as engine from '../../runtime/index'
-import type { GameConfig } from '../../runtime/game'
+import type { GameConfig, GameSettings } from '../../runtime/game'
+import { setMaps, type TilesetData } from '../../runtime/maps'
 import { setFonts, type FontData } from '../../runtime/fonts'
 import type { Button } from '../../runtime/input'
 import { Runner } from '../../runtime/runner'
 import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { time } from '../../runtime/time'
-import { camera, drawWorld, modalThing, resetWorld, worldThings } from '../../runtime/world'
+import { camera, cameraMapName, drawWorld, modalThing, resetWorld, worldThings } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
 import type { FontMeta } from './font'
 import { h } from './dialog'
 import { icon } from './icons'
 import { currentPage } from './menu'
-import { noGame } from './nogame'
+import { NO_GAME_SIZE, noGame } from './nogame'
 import { toImageData } from './png'
 import type { Project } from './project'
-import { composeSheet, type Sprite } from './sprite'
+import { composeSheet, isTileset, tilesetName, type Sprite } from './sprite'
 import { readText } from './storage'
 
 const GAME_FILE = 'game.js'
@@ -103,11 +104,13 @@ export class Player {
       await this.saveFirst()
       const code = await this.loadCode()
       if (code === null) return
+      const settings = await this.project.loadSettings()
       setSprites(await this.loadSprites())
       setFonts(await this.loadFonts())
+      setMaps(settings.tileSize, await this.loadTilesets(), await this.loadMaps())
       // The game's code creates its things as it runs: in an empty world.
       resetWorld()
-      this.run(await importGame(code))
+      this.run(await importGame(code), settings)
     } catch (err) {
       this.say(`The game could not start:\n\n${describe(err)}`, true)
     } finally {
@@ -116,12 +119,12 @@ export class Player {
     }
   }
 
-  private run(config: GameConfig, caption?: HTMLElement) {
+  private run(config: GameConfig, size: Pick<GameSettings, 'width' | 'height'>, caption?: HTMLElement) {
     this.runner = new Runner(config, this.canvas, (err) => {
       this.runner = null
       this.renderBar()
       this.say(`The game stopped on an error:\n\n${describe(err)}`, true)
-    })
+    }, size)
     this.say(null)
     this.caption.hidden = !caption
     this.caption.replaceChildren(...(caption ? [caption] : []))
@@ -136,7 +139,8 @@ export class Player {
         ? h('p', {}, 'Write ', h('code', {}, ENTRY), ' in the game folder, then press ▶ again.')
         : h('p', {}, 'Write ', h('code', {}, ENTRY), ' on the Mac, push it, then sync here.')
     resetWorld()
-    this.run(noGame, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
+    setMaps(16, [], [])
+    this.run(noGame, NO_GAME_SIZE, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
   }
 
   togglePause() {
@@ -160,6 +164,22 @@ export class Player {
 
   private get storage() {
     return this.project.storage
+  }
+
+  /** Every tileset of the game (tiles/), for the maps. */
+  private async loadTilesets(): Promise<TilesetData[]> {
+    const names = (await this.project.listBoard()).filter(isTileset)
+    return Promise.all(
+      names.map(async (name) => {
+        const sprite = await this.project.loadSprite(name)
+        return { name: tilesetName(name), sheet: toCanvas(sprite.frames[0]) }
+      }),
+    )
+  }
+
+  /** Every map of the game (maps/): the whole world. */
+  private async loadMaps() {
+    return Promise.all((await this.project.listMaps()).map((name) => this.project.loadMap(name)))
   }
 
   /** Every sprite of the game, as saved, for the engine's `sprite()`. */
@@ -220,7 +240,7 @@ export class Player {
       e.preventDefault()
       e.stopPropagation()
       if (!isPlaying()) {
-        if (currentPage() === 'editor') void this.play()
+        if (currentPage() !== 'settings') void this.play()
       } else if (this.runner?.paused) this.togglePause()
       else if (!this.runner) void this.play()
       return
@@ -296,10 +316,14 @@ export class Player {
   }
 }
 
+function toCanvas(bmp: Bitmap) {
+  const canvas = new OffscreenCanvas(bmp.width, bmp.height)
+  canvas.getContext('2d')!.putImageData(toImageData(bmp), 0, 0)
+  return canvas
+}
+
 function toSpriteData(sprite: Sprite): SpriteData {
-  const sheet = composeSheet(sprite)
-  const canvas = new OffscreenCanvas(sheet.width, sheet.height)
-  canvas.getContext('2d')!.putImageData(toImageData(sheet), 0, 0)
+  const canvas = toCanvas(composeSheet(sprite))
   const { meta } = sprite
   return {
     name: sprite.name,
@@ -312,10 +336,7 @@ function toSpriteData(sprite: Sprite): SpriteData {
 }
 
 function toFontData(name: string, font: { sheet: Bitmap; meta: FontMeta }): FontData {
-  const canvas = new OffscreenCanvas(font.sheet.width, font.sheet.height)
-  canvas.getContext('2d')!.putImageData(toImageData(font.sheet), 0, 0)
-  const { meta } = font
-  return { name, ...meta, sheet: canvas }
+  return { name, ...font.meta, sheet: toCanvas(font.sheet) }
 }
 
 /**
@@ -326,6 +347,7 @@ function toFontData(name: string, font: { sheet: Bitmap; meta: FontMeta }): Font
  *   lucarne.things()              // [{ type: 'Hero', x: 267, y: 120, facing: 'east', … }]
  *   lucarne.picture()             // the frame at game resolution, as a PNG data URL
  *   lucarne.ui()                  // the text on screen, and the modal thing in charge
+ *   lucarne.camera()              // { x, y, map }: where the camera is, and in which map
  *   lucarne.timings()             // milliseconds per update, per drawing, per frame
  */
 function installHandle(player: Player) {
@@ -346,7 +368,7 @@ function installHandle(player: Player) {
       runner().resume()
     },
     things: describeThings,
-    camera: () => ({ x: camera.x, y: camera.y }),
+    camera: () => ({ x: camera.x, y: camera.y, map: cameraMapName() }),
     ui() {
       const modal = modalThing()
       return { modal: modal ? modal.constructor.name : null, text: writtenText().map((t) => t.text) }

@@ -4,15 +4,20 @@
 import { h } from './dialog'
 import { icon } from './icons'
 
-export type Page = 'editor' | 'settings'
+export type Page = 'editor' | 'world' | 'settings'
 
-const PAGES: Record<Page, string> = { editor: '', settings: '#settings' }
+const PAGES: Record<Page, string> = { editor: '', world: '#world', settings: '#settings' }
 
-/** The engine's tools. More will come (map editor, code…). */
-const TOOLS: { page: Page; label: string }[] = [{ page: 'editor', label: 'Pixel art editor' }]
+/** The engine's tools. More will come (code…). */
+const TOOLS: { page: Page; label: string }[] = [
+  { page: 'editor', label: 'Pixel art editor' },
+  { page: 'world', label: 'World editor' },
+]
 
 export function currentPage(): Page {
-  return location.hash === PAGES.settings ? 'settings' : 'editor'
+  if (location.hash === PAGES.settings) return 'settings'
+  if (location.hash === PAGES.world) return 'world'
+  return 'editor'
 }
 
 const listeners: ((page: Page) => void)[] = []
@@ -100,7 +105,8 @@ export interface MenuAction {
   danger?: boolean
 }
 
-/** A ⋮ button with a drop-down list of actions, opening below it towards the left. */
+/** A ⋮ button with a drop-down list of actions, opening below it towards the left,
+ *  or above it when there is no room below (a row at the bottom of the screen). */
 export function createActionsMenu(title: string, actions: MenuAction[]): { el: HTMLElement; button: HTMLButtonElement } {
   const items = h('div', { className: 'menu-list end', role: 'menu', hidden: true })
   const button = h('button', {
@@ -116,7 +122,10 @@ export function createActionsMenu(title: string, actions: MenuAction[]): { el: H
   // Fixed, so a scrolling list around the button does not clip it.
   const close = dropdown(wrap, button, items, () => {
     const r = button.getBoundingClientRect()
-    items.style.top = `${r.bottom + 4}px`
+    const height = items.offsetHeight
+    const below = r.bottom + 4
+    const fits = below + height <= window.innerHeight - 8
+    items.style.top = `${fits ? below : Math.max(8, r.top - 4 - height)}px`
     items.style.right = `${window.innerWidth - r.right}px`
   })
   items.append(
@@ -135,7 +144,8 @@ export function createActionsMenu(title: string, actions: MenuAction[]): { el: H
   return { el: wrap, button }
 }
 
-/** Opens and closes `items` under `button` (outside click and Escape close it). Returns `close`. */
+/** Opens and closes `items` under `button` (outside click and Escape close it). Returns `close`.
+ *  `onOpen` runs once `items` shows, so it can measure it. */
 function dropdown(wrap: HTMLElement, button: HTMLButtonElement, items: HTMLElement, onOpen?: () => void) {
   const onOutside = (e: PointerEvent) => {
     if (!wrap.contains(e.target as Node)) close()
@@ -147,8 +157,8 @@ function dropdown(wrap: HTMLElement, button: HTMLButtonElement, items: HTMLEleme
     }
   }
   function open() {
-    onOpen?.()
     items.hidden = false
+    onOpen?.()
     button.setAttribute('aria-expanded', 'true')
     button.classList.add('active')
     document.addEventListener('pointerdown', onOutside, true)

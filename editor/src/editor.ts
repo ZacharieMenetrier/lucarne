@@ -23,18 +23,17 @@ import {
   type Point,
   type Rect,
 } from './bitmap'
-import { boundsOf, findFreeSpot, overlaps, resolveOverlaps, type BoardFile, type Placements } from './board'
+import { boundsOf, findFreeSpot, overlaps, resizeRect, resolveOverlaps, type BoardFile, type Corner, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
-import { MAX_SIZE, type Sprite } from './sprite'
+import { MAX_SIZE, isTileset, type Sprite } from './sprite'
 
 export const MIN_FPS = 2
 export const MAX_FPS = 24
 
 export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move' | 'origin'
 
-/** Corner of a sprite, for the resize handles of the Move tool. */
-export type Corner = 'nw' | 'ne' | 'sw' | 'se'
+export type { Corner }
 
 export interface PointerInput extends Point {
   shift: boolean
@@ -100,6 +99,8 @@ export class Editor {
   background: string | null = null
   /** Rows the palette is laid out in (saved in board.json), null: default. */
   paletteRows: number | null = null
+  /** The game's tile size: tilesets are whole tiles of it. */
+  tileSize = 16
   /** The active sprite is playing its animation on the board. */
   playing = false
   playIndex = 0
@@ -375,6 +376,7 @@ export class Editor {
         break
       }
       case 'origin': {
+        if (isTileset(this.active!)) break
         const before = this.origin
         if (before && before.x === q.x && before.y === q.y) {
           this.setOrigin(null, before)
@@ -429,40 +431,19 @@ export class Editor {
     this.emit()
   }
 
-  /** New footprint while dragging a corner: at least 1×1, at most MAX_SIZE,
-   * and stopped by the other sprites (they may touch). */
+  /** New footprint while dragging a corner: at least 1×1 (a tile, for a tileset), at most
+   * MAX_SIZE, and stopped by the other sprites (they may touch). A tileset keeps its width
+   * (TILESET_COLUMNS tiles): only its rows change. */
   private resizeRect(d: Extract<Drag, { kind: 'resize' }>, p: Point): Rect {
-    const o = d.origin
-    const west = d.corner[1] === 'w'
-    const north = d.corner[0] === 'n'
-    const dx = p.x - d.start.x
-    const dy = p.y - d.start.y
-    const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-    let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h
-    if (west) x0 = clamp(x0 + dx, x1 - MAX_SIZE, x1 - 1)
-    else x1 = clamp(x1 + dx, x0 + 1, x0 + MAX_SIZE)
-    if (north) y0 = clamp(y0 + dy, y1 - MAX_SIZE, y1 - 1)
-    else y1 = clamp(y1 + dy, y0 + 1, y0 + MAX_SIZE)
-    // Shrinking never hits anything; growing stops at the first neighbor.
-    // Only the moving edges can run into a sprite the original did not touch.
-    const others = this.othersThan(d.name)
-    for (let guard = 0; guard <= others.length; guard++) {
-      const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-      const hit = others.find((n) => overlaps(r, n))
-      if (!hit) break
-      const apartX = hit.x >= o.x + o.w || hit.x + hit.w <= o.x
-      const apartY = hit.y >= o.y + o.h || hit.y + hit.h <= o.y
-      if (!apartX && !apartY) break // already overlapping: leave it
-      const inX = west ? hit.x + hit.w - x0 : x1 - hit.x
-      const inY = north ? hit.y + hit.h - y0 : y1 - hit.y
-      // Diagonal neighbor: give up the axis that goes in the least.
-      if (apartX && (!apartY || inX <= inY)) {
-        if (west) x0 = hit.x + hit.w
-        else x1 = hit.x
-      } else if (north) y0 = hit.y + hit.h
-      else y1 = hit.y
-    }
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+    // A tileset is whole tiles: its edges move a tile at a time.
+    const tileset = isTileset(d.name)
+    const step = tileset ? this.tileSize : 1
+    const most = Math.floor(MAX_SIZE / step) * step
+    return resizeRect(d.origin, d.corner, p.x - d.start.x, p.y - d.start.y, this.othersThan(d.name), {
+      step,
+      min: { w: tileset ? d.origin.w : step, h: step },
+      max: { w: tileset ? d.origin.w : most, h: most },
+    })
   }
 
   /** Shows a sprite at a new footprint (preview while dragging a corner). */
@@ -918,11 +899,11 @@ export class Editor {
     pl.frame = Math.min(s.frame, s.durations.length - 1)
   }
 
-  /** Changes the frame list of the active sprite, as one undo step. */
+  /** Changes the frame list of the active sprite, as one undo step. A tileset has one frame. */
   private editFrames(change: (state: FrameState) => void) {
     const pl = this.placed
     const name = this.active
-    if (!pl || !name) return
+    if (!pl || !name || isTileset(name)) return
     this.stop()
     this.commitFloating()
     this.drag = null

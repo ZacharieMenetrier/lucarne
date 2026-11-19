@@ -126,10 +126,10 @@ class Night extends Thing {
   }
 }
 
-export const noGame = game({
-  width: W,
-  height: H,
+/** The scene's own resolution, whatever the game's settings. */
+export const NO_GAME_SIZE = { width: W, height: H }
 
+export const noGame = game({
   start() {
     tick = 0
     shooting = null

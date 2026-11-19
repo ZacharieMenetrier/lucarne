@@ -7,11 +7,11 @@
 // `fit`), and the canvas gets the display's own pixels. What is left around is the
 // editor's black bars.
 
-import { DEFAULT_HEIGHT, DEFAULT_WIDTH, TICK_RATE, type GameConfig } from './game'
+import { DEFAULT_SETTINGS, TICK_RATE, type GameConfig, type GameSettings } from './game'
 import { forceInput, listenInput, sampleInput, type Button } from './input'
 import { attachScreen } from './screen'
 import { resetTime, tickTime } from './time'
-import { drawWorld, updateWorld } from './world'
+import { drawWorld, settleCamera, updateWorld } from './world'
 
 const STEP = 1000 / TICK_RATE
 /** After a long stall (hidden tab, breakpoint), catch up at most this many updates. */
@@ -54,9 +54,11 @@ export class Runner {
     readonly canvas: HTMLCanvasElement,
     /** Called when the game's code throws; the game is stopped. */
     private readonly onError: (err: unknown) => void,
+    /** The game's resolution, from game.json. */
+    size: Pick<GameSettings, 'width' | 'height'> = DEFAULT_SETTINGS,
   ) {
-    this.width = positiveInt(config.width, DEFAULT_WIDTH, 'width')
-    this.height = positiveInt(config.height, DEFAULT_HEIGHT, 'height')
+    this.width = size.width
+    this.height = size.height
     canvas.width = this.width
     canvas.height = this.height
   }
@@ -97,6 +99,7 @@ export class Runner {
     listenInput(true)
     resetTime()
     if (!this.guard(() => this.config.start?.())) return
+    settleCamera()
     // A first frame right away, so the screen is never blank (even if paused at once).
     if (!this.present()) return
     this.last = performance.now()
@@ -222,12 +225,4 @@ export class Runner {
 /** Keeps a running average of the last second or so (at 60 to 144 frames per second). */
 function average(timings: Record<string, number>, key: string, value: number) {
   timings[key] = timings[key] === 0 ? value : timings[key] * 0.95 + value * 0.05
-}
-
-function positiveInt(value: unknown, fallback: number, name: string) {
-  if (value === undefined) return fallback
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 4096) {
-    throw new Error(`The game's ${name} must be a whole number of pixels, between 1 and 4096.`)
-  }
-  return value
 }

@@ -1,13 +1,20 @@
-// The game folder as the editor sees it: the palette, the sprites and the fonts.
+// The game folder as the editor sees it: the settings, the palette, the sprites, the
+// tilesets, the maps and the fonts.
 
-import { Bitmap } from './bitmap'
+import { Bitmap, resized } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
 import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
+import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
+import { parseMap, serializeMap, type GameMap } from './map'
 import { decodePng, encodePng } from './png'
 import {
   NAME_RE,
+  TILESET_COLUMNS,
+  TILESET_PREFIX,
   composeSheet,
+  isTileset,
+  tilesetName,
   defaultMeta,
   parseMeta,
   serializeMeta,
@@ -29,6 +36,9 @@ const PALETTE_FILE = 'palette.json'
 const BOARD_FILE = 'board.json'
 const SPRITES_DIR = 'sprites'
 const FONTS_DIR = 'fonts'
+const SETTINGS_FILE = 'game.json'
+const TILES_DIR = 'tiles'
+const MAPS_DIR = 'maps'
 
 export function parsePalette(text: string): string[] {
   const raw = JSON.parse(text) as unknown
@@ -44,6 +54,7 @@ export function normalizeHex(hex: string) {
 
 export class Project {
   palette: string[] = []
+  settings: GameSettings = parseSettings(null)
 
   constructor(readonly storage: Storage) {}
 
@@ -52,6 +63,7 @@ export class Project {
   }
 
   async load() {
+    await this.loadSettings()
     const text = await readText(this.storage, PALETTE_FILE)
     if (text === null) {
       this.palette = [...DEFAULT_PALETTE]
@@ -59,6 +71,17 @@ export class Project {
     } else {
       this.palette = parsePalette(text)
     }
+  }
+
+  /** Reads game.json again (it may have been changed by hand, or synced). */
+  async loadSettings(): Promise<GameSettings> {
+    this.settings = parseSettings(await readText(this.storage, SETTINGS_FILE))
+    return this.settings
+  }
+
+  async saveSettings(settings: GameSettings) {
+    await writeText(this.storage, SETTINGS_FILE, serializeSettings(settings))
+    this.settings = settings
   }
 
   async savePalette() {
@@ -91,7 +114,25 @@ export class Project {
     return [...names].sort()
   }
 
+  /** What sits on the board: the sprites, then the tilesets ("tiles/<name>"). */
+  async listBoard(): Promise<string[]> {
+    const [sprites, tiles] = await Promise.all([this.listSprites(), this.storage.list(TILES_DIR)])
+    const tilesets = tiles
+      .map((f) => /^(.+)\.png$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+      .map((n) => TILESET_PREFIX + n)
+    return [...sprites, ...tilesets]
+  }
+
+  /** A sprite, or a tileset ("tiles/<name>": one frame, cut in tiles by the game). */
   async loadSprite(name: string): Promise<Sprite> {
+    if (isTileset(name)) {
+      const png = await this.storage.read(`${TILES_DIR}/${tilesetName(name)}.png`)
+      if (!png) throw new Error(`Tileset not found: ${tilesetName(name)}`)
+      const sheet = widenTileset(await decodePng(png), this.settings.tileSize)
+      return { name, meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] }
+    }
     const [png, json] = await Promise.all([
       this.storage.read(`${SPRITES_DIR}/${name}.png`),
       readText(this.storage, `${SPRITES_DIR}/${name}.json`),
@@ -104,6 +145,10 @@ export class Project {
   }
 
   async saveSprite(sprite: Sprite) {
+    if (isTileset(sprite.name)) {
+      await this.storage.write(`${TILES_DIR}/${tilesetName(sprite.name)}.png`, await encodePng(sprite.frames[0]))
+      return
+    }
     const png = await encodePng(composeSheet(sprite))
     await this.storage.write(`${SPRITES_DIR}/${sprite.name}.png`, png)
     await writeText(this.storage, `${SPRITES_DIR}/${sprite.name}.json`, serializeMeta(sprite.meta))
@@ -135,7 +180,42 @@ export class Project {
   }
 
   async deleteSprite(name: string) {
+    if (isTileset(name)) return this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.png`)
     await this.storage.remove(`${SPRITES_DIR}/${name}.png`)
     await this.storage.remove(`${SPRITES_DIR}/${name}.json`)
   }
+
+  /** Map names: maps/<name>.json. */
+  async listMaps(): Promise<string[]> {
+    return (await this.storage.list(MAPS_DIR))
+      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+  }
+
+  async loadMap(name: string): Promise<GameMap> {
+    const text = await readText(this.storage, `${MAPS_DIR}/${name}.json`)
+    if (text === null) throw new Error(`Map not found: ${name}`)
+    try {
+      return parseMap(name, text)
+    } catch (err) {
+      throw new Error(`The map "${name}" could not be read: ${(err as Error).message}`)
+    }
+  }
+
+  async saveMap(map: GameMap) {
+    await writeText(this.storage, `${MAPS_DIR}/${map.name}.json`, serializeMap(map))
+  }
+
+  async deleteMap(name: string) {
+    await this.storage.remove(`${MAPS_DIR}/${name}.json`)
+  }
+}
+
+/** A tileset narrower than TILESET_COLUMNS tiles (made elsewhere, or before the rule) gets
+ *  empty columns on its right: its tiles keep their column and row, so maps are unchanged.
+ *  A wider one is left as it is: cutting it would lose tiles. */
+export function widenTileset(sheet: Bitmap, tileSize: number): Bitmap {
+  const w = TILESET_COLUMNS * tileSize
+  return sheet.width < w ? resized(sheet, w, sheet.height, 0, 0) : sheet
 }

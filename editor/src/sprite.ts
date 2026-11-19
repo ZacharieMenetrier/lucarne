@@ -27,6 +27,34 @@ export interface Sprite {
 }
 
 export const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
+
+/**
+ * Tilesets (tiles/<name>.png) sit on the board like sprites, under the name "tiles/<name>":
+ * a tileset and a sprite may then share a name. A tileset is one image with no JSON: the
+ * game's tile size says how to cut it, so it has no animation and no origin.
+ */
+export const TILESET_PREFIX = 'tiles/'
+
+/**
+ * A tileset is always this many tiles wide; it grows only in rows. One width for every
+ * tileset keeps the panel that picks tiles one picture wide at a readable scale, and a tile
+ * keeps its column when rows are added.
+ */
+export const TILESET_COLUMNS = 8
+
+export function isTileset(name: string) {
+  return name.startsWith(TILESET_PREFIX)
+}
+
+/** "tiles/outdoor" → "outdoor". */
+export function tilesetName(boardName: string) {
+  return boardName.slice(TILESET_PREFIX.length)
+}
+
+/** "outdoor" → "tiles/outdoor". */
+export function tilesetKey(name: string) {
+  return TILESET_PREFIX + name
+}
 export const MAX_SIZE = 512
 
 export function defaultMeta(frameWidth: number, frameHeight: number): SpriteMeta {

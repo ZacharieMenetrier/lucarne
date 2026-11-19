@@ -9,9 +9,27 @@
 // - Dragging a sprite's name moves it, whatever the tool. Double tap on a
 //   name (or on a sprite with the Move tool) zooms in on that sprite.
 
-import { colorToCss } from './color'
-import type { Editor, PointerInput } from './editor'
-import type { View } from './view'
+import type { Point } from './bitmap'
+import type { Corner } from './board'
+import { colorToCss, type Color } from './color'
+import type { PointerInput } from './editor'
+import type { Viewport } from './viewport'
+
+/** What the pointer works on: the board (Editor), or the world (World). */
+export interface Surface {
+  readonly tool: string
+  hitTest(p: Point): string | null
+  startResize(name: string, corner: Corner, p: Point): void
+  down(p: PointerInput): void
+  move(p: PointerInput): void
+  up(p: PointerInput): void
+  leave(): void
+  undo(): void
+  redo(): void
+  /** One finger held still picks the color under it (the board only). */
+  pickAt?(p: Point, boardHex: string): { color: Color; ok: boolean }
+  readonly color?: Color
+}
 
 const TAP_MAX_MS = 300
 const TAP_MAX_MOVE = 12
@@ -31,7 +49,7 @@ interface Gesture {
   oy0: number
 }
 
-export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Editor) {
+export function attachInput(canvas: HTMLCanvasElement, view: Viewport, editor: Surface) {
   const touches = new Map<number, { x: number; y: number }>()
   let gesture: Gesture | null = null
   let drawingId: number | null = null
@@ -70,6 +88,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
     const key = `${p.x},${p.y}`
     if (key === press.last) return
     press.last = key
+    if (!editor.pickAt) return
     const { color, ok } = editor.pickAt(p, view.boardColor)
     loupe.style.setProperty('--picked', colorToCss(color))
     loupe.classList.toggle('off-palette', !ok)
@@ -100,7 +119,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
 
   function touchDown(e: PointerEvent) {
     touches.set(e.pointerId, view.toDevice(e.clientX, e.clientY))
-    if (touches.size === 1 && !gesture) {
+    if (touches.size === 1 && !gesture && editor.pickAt) {
       const { clientX, clientY, pointerId } = e
       press = {
         id: pointerId,
@@ -113,7 +132,7 @@ export function attachInput(canvas: HTMLCanvasElement, view: View, editor: Edito
         timer: setTimeout(() => {
           if (!press) return
           press.active = true
-          loupe.style.setProperty('--before', colorToCss(editor.color))
+          loupe.style.setProperty('--before', colorToCss(editor.color ?? 0))
           loupe.hidden = false
           pickUnder(press.x, press.y)
         }, LONG_PRESS_MS),

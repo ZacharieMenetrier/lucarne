@@ -1,15 +1,29 @@
 import { App } from './app'
 import { Project } from './project'
+import { isTileset } from './sprite'
 import { buildSettingsPage } from './settings'
 import { openStorage } from './storage'
+import { WorldPage } from './worldpage'
 
 async function main() {
   const storage = await openStorage()
   const project = new Project(storage)
   await project.load()
   const app = new App(project)
-  buildSettingsPage(storage, () => app.refreshSync())
   await app.start()
+  const world = new WorldPage(project, app)
+  await world.load()
+  buildSettingsPage(storage, () => app.refreshSync(), {
+    settings: () => project.settings,
+    maps: () => world.mapSizes,
+    tilesets: () => [...app.editor.sprites.keys()].filter(isTileset),
+    save: async (s) => {
+      await project.saveSettings(s)
+      app.setTileSize(s.tileSize)
+    },
+  })
+  // ?play opens straight into the game (what an AI uses to test it).
+  if (new URLSearchParams(location.search).has('play')) app.play()
 }
 
 main().catch((err: Error) => {

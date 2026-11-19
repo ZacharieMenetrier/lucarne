@@ -141,3 +141,58 @@ export function resolveOverlaps(fixed: Rect[], movers: { name: string; rect: Rec
   }
   return out
 }
+
+/** Corner of a sprite (or a map), for the resize handles of the Move tool. */
+export type Corner = 'nw' | 'ne' | 'sw' | 'se'
+
+/**
+ * A rectangle resized by dragging one of its corners by (dx, dy): the opposite corner stays.
+ * Its edges move by whole `step`s, its size stays between `min` and `max`, and growing
+ * stops at the first of `others` in the way (they may touch). Rectangles it already
+ * overlaps are left alone.
+ */
+export function resizeRect(
+  o: Rect,
+  corner: Corner,
+  dx: number,
+  dy: number,
+  others: Rect[],
+  { step = 1, min = { w: 1, h: 1 }, max = { w: Infinity, h: Infinity } }: { step?: number; min?: { w: number; h: number }; max?: { w: number; h: number } } = {},
+): Rect {
+  const west = corner[1] === 'w'
+  const north = corner[0] === 'n'
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+  const snap = (v: number) => Math.round(v / step) * step
+  let x0 = o.x, y0 = o.y, x1 = o.x + o.w, y1 = o.y + o.h
+  if (west) x0 = clamp(x0 + snap(dx), x1 - max.w, x1 - min.w)
+  else x1 = clamp(x1 + snap(dx), x0 + min.w, x0 + max.w)
+  if (north) y0 = clamp(y0 + snap(dy), y1 - max.h, y1 - min.h)
+  else y1 = clamp(y1 + snap(dy), y0 + min.h, y0 + max.h)
+  // Shrinking never hits anything; growing stops at the first neighbor.
+  // Only the moving edges can run into a rectangle the original did not touch.
+  for (let guard = 0; guard <= others.length; guard++) {
+    const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+    const hit = others.find((n) => overlaps(r, n))
+    if (!hit) break
+    const apartX = hit.x >= o.x + o.w || hit.x + hit.w <= o.x
+    const apartY = hit.y >= o.y + o.h || hit.y + hit.h <= o.y
+    if (!apartX && !apartY) break // already overlapping: leave it
+    const inX = west ? hit.x + hit.w - x0 : x1 - hit.x
+    const inY = north ? hit.y + hit.h - y0 : y1 - hit.y
+    // Diagonal neighbor: give up the axis that goes in the least.
+    if (apartX && (!apartY || inX <= inY)) {
+      if (west) x0 = hit.x + hit.w
+      else x1 = hit.x
+    } else if (north) y0 = hit.y + hit.h
+    else y1 = hit.y
+  }
+  // Stopped by a neighbor: back to whole steps. A neighbor may leave less than the
+  // minimum: the size is then what fits (the rectangle never covers its neighbor).
+  const fit = (lo: number, hi: number, fixedLo: boolean): [number, number] => {
+    const len = Math.max(Math.min(step, hi - lo), Math.floor((hi - lo) / step) * step)
+    return fixedLo ? [lo, lo + len] : [hi - len, hi]
+  }
+  ;[x0, x1] = fit(x0, x1, !west)
+  ;[y0, y1] = fit(y0, y1, !north)
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}

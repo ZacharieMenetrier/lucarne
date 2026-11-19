@@ -163,16 +163,17 @@ button.active {
 .bg-swatches .swatch {
   min-height: 0;
 }
-#save-status {
+#save-status,
+.save-status {
   font-size: 12px;
   color: var(--muted);
   margin-right: 6px;
 }
-#save-status[data-status='pending'],
-#save-status[data-status='saving'] {
+:is(#save-status, .save-status)[data-status='pending'],
+:is(#save-status, .save-status)[data-status='saving'] {
   color: #ffcd75;
 }
-#save-status[data-status='error'] {
+:is(#save-status, .save-status)[data-status='error'] {
   color: var(--danger);
 }
 
@@ -287,11 +288,16 @@ button.active {
   padding: 10px;
   border-bottom: 1px solid var(--line);
 }
-#sprites-panel {
+#sprites-panel,
+#tilesets-panel {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+#tilesets-panel {
+  flex: 0 1 auto;
+  max-height: 40%;
 }
 .panel-head {
   display: flex;
@@ -476,7 +482,10 @@ button.swatch:hover:not(.add) {
 
 /* --- Sprites --------------------------------------------------------------- */
 
-#sprite-list {
+#sprite-list,
+#tileset-list {
+  /* min-height 0: a flex item does not shrink below its content otherwise, so it would never scroll. */
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -532,6 +541,12 @@ button.swatch:hover:not(.add) {
   padding: 6px;
   background: transparent;
   border-color: transparent;
+}
+/* The whole row is hovered, so the item stays lit while the pointer is on its ⋮
+   button or its menu is open. */
+.sprite-row:hover > .sprite-item:not(.active),
+.sprite-row:has(> .menu > button.active) > .sprite-item:not(.active) {
+  border-color: #4a4a5a;
 }
 .sprite-item.active {
   background: var(--panel-2);
@@ -990,6 +1005,107 @@ button.icon-btn svg {
   display: none;
 }
 
+/* --- World page ---------------------------------------------------------------- */
+
+#world-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+body[data-page='world'] #world-page {
+  display: flex;
+}
+.world-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 60px 1fr 240px;
+}
+.world-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.world-stage {
+  position: relative;
+  overflow: hidden;
+  background: var(--stage-bg);
+}
+.world-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  --crosshair: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='17' height='17'><path d='M8.5 1v4M8.5 12v4M1 8.5h4M12 8.5h4' stroke='black' stroke-opacity='.45' stroke-width='3'/><path d='M8.5 1v4M8.5 12v4M1 8.5h4M12 8.5h4' stroke='white' stroke-width='1'/></svg>") 8 8;
+}
+.world-canvas.tool-draw.on-active {
+  cursor: var(--crosshair), default;
+}
+.world-canvas.tool-move {
+  cursor: grab;
+}
+.world-canvas.tool-move.resize-nwse {
+  cursor: nwse-resize;
+}
+.world-canvas.tool-move.resize-nesw {
+  cursor: nesw-resize;
+}
+.world-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+}
+.world-side section {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The tileset on top, as tall as it is (it scrolls past 65% of the panel); the maps below
+   get the rest. */
+.world-tilesets {
+  flex: 0 1 auto;
+  max-height: 65%;
+}
+.world-maps {
+  flex: 1;
+}
+.world-tileset-select {
+  min-width: 0;
+  max-width: 60%;
+  padding: 3px 6px;
+}
+.world-list,
+.world-pickers {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.world-picker {
+  display: block;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: pointer;
+  background: repeating-conic-gradient(#3a3a44 0 25%, #2e2e36 0 50%) 0 0 / 8px 8px;
+}
+.page-body > .settings-form + .settings-form {
+  margin-top: 36px;
+}
+
 /* --- Settings page ----------------------------------------------------------- */
 
 #settings-page {
@@ -1157,7 +1273,8 @@ body[data-page='settings'] #settings-page {
 
 /* --- Play mode ------------------------------------------------------------------- */
 
-#run-game {
+#run-game,
+.run-game {
   order: 99;
   margin-left: 10px;
   width: 34px;
@@ -1171,16 +1288,19 @@ body[data-page='settings'] #settings-page {
   color: var(--bg);
   transition: background 0.15s, transform 0.1s;
 }
-#run-game svg {
+#run-game svg,
+.run-game svg {
   width: 20px;
   height: 20px;
   margin-left: 2px;
 }
-#run-game:hover:not(:disabled) {
+#run-game:hover:not(:disabled),
+.run-game:hover:not(:disabled) {
   border: 0;
   background: #fff;
 }
-#run-game:active {
+#run-game:active,
+.run-game:active {
   transform: scale(0.94);
 }
 #play-mode {

@@ -50,10 +50,13 @@ export function normalizeFolder(folder: string) {
 /** The files the editor reads and writes, plus game.js (the code it plays): the only ones that sync. */
 export function isEditorFile(path: string) {
   return (
+    path === 'game.json' ||
     path === 'palette.json' ||
     path === 'board.json' ||
     path === 'game.js' ||
     /^sprites\/[^/]+\.(png|json)$/.test(path) ||
+    /^tiles\/[^/]+\.png$/.test(path) ||
+    /^maps\/[^/]+\.json$/.test(path) ||
     /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path)
   )
 }
@@ -240,6 +243,8 @@ export async function syncWithGitHub(
     ...(await storage.list('')),
     ...(await storage.list('sprites')).map((n) => `sprites/${n}`),
     ...(await storage.list('fonts')).map((n) => `fonts/${n}`),
+    ...(await storage.list('tiles')).map((n) => `tiles/${n}`),
+    ...(await storage.list('maps')).map((n) => `maps/${n}`),
   ].filter(isEditorFile)
   for (const path of localPaths) {
     const data = await storage.read(path)

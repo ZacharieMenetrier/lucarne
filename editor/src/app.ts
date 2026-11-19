@@ -14,7 +14,7 @@ import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
 import { importFont } from './fontimport'
 import { Player, isPlaying } from './play'
-import { MAX_SIZE, NAME_RE, newSprite, type Sprite } from './sprite'
+import { MAX_SIZE, NAME_RE, TILESET_COLUMNS, isTileset, newSprite, tilesetKey, tilesetName, type Sprite } from './sprite'
 import { toImageData } from './png'
 import { View } from './view'
 
@@ -133,9 +133,17 @@ export class App {
   private framesKey = ''
   /** A frame was just dragged: the click that follows must not select. */
   private frameDragged = false
+  /** The maps that use a tileset (by its name, without "tiles/"): it cannot be deleted then. */
+  mapsUsing: (tileset: string) => string[] = () => []
+  /** A tileset was renamed (names without "tiles/"): the maps follow. */
+  onTilesetRenamed: (from: string, to: string) => Promise<void> = async () => {}
+  /** Saves what else the game is made of (the maps) before playing. */
+  beforePlay: () => Promise<void> = async () => {}
+  private player!: Player
 
   constructor(private readonly project: Project) {
     this.editor = new Editor(project.palette)
+    this.editor.tileSize = project.settings.tileSize
     this.view = new View($<HTMLCanvasElement>('canvas'), this.editor)
     try {
       this.view.showChecker = localStorage.getItem('lucarne.checker') === '1'
@@ -158,6 +166,7 @@ export class App {
     this.bindKeys()
     $('empty-new').addEventListener('click', () => void this.newSprite())
     $('sprites-new').addEventListener('click', () => void this.newSprite())
+    $('tilesets-new').addEventListener('click', () => void this.newTileset())
     $('palette-edit').addEventListener('click', () => void this.editPalette())
     this.editor.subscribe(() => this.render())
 
@@ -187,7 +196,7 @@ export class App {
 
   /** Loads every sprite and places it on the board. */
   private async loadBoard() {
-    const [names, { placements, background, paletteRows }] = await Promise.all([this.project.listSprites(), this.project.loadBoard()])
+    const [names, { placements, background, paletteRows }] = await Promise.all([this.project.listBoard(), this.project.loadBoard()])
     this.editor.background = background
     this.editor.paletteRows = paletteRows
     this.renderPalette()
@@ -292,10 +301,42 @@ export class App {
     return { el: h('div', {}, row, presets), read, check }
   }
 
-  private nameError(name: string, current?: string) {
+  /** What is wrong with a name typed for a sprite, or for a tileset (`tileset`: the name
+   * typed is without "tiles/", and `current` too). */
+  private nameError(name: string, current?: string, tileset = false) {
     if (!NAME_RE.test(name)) return 'Name: lowercase letters, digits, “-” and “_” (e.g. hero-walk).'
-    if (name !== current && this.spriteNames.includes(name)) return 'A sprite with this name already exists.'
+    const taken = this.spriteNames.includes(tileset ? tilesetKey(name) : name)
+    if (name !== current && taken) return `A ${tileset ? 'tileset' : 'sprite'} with this name already exists.`
     return null
+  }
+
+  /** The rows field of a tileset: its width is always TILESET_COLUMNS tiles. */
+  private tileFields(rows: number) {
+    const t = this.editor.tileSize
+    const most = Math.floor(MAX_SIZE / t)
+    const height = h('input', { type: 'number', min: 1, max: most, value: rows, name: 'rows', inputMode: 'numeric' })
+    const el = h('div', {},
+      h('label', {}, 'Rows', height),
+      h('p', { className: 'muted' }, `${TILESET_COLUMNS} tiles wide, in tiles of ${t} × ${t} pixels (the game’s tile size). Add rows later by dragging a corner.`))
+    const read = () => ({ w: TILESET_COLUMNS * t, h: Number(height.value) * t })
+    const check = () => {
+      const v = Number(height.value)
+      return Number.isInteger(v) && v >= 1 && v <= most ? null : `Rows: a whole number between 1 and ${most}.`
+    }
+    return { el, read, check }
+  }
+
+  async newTileset() {
+    const nameInput = h('input', { type: 'text', value: tilesetName(this.uniqueName(tilesetKey('tileset'))), autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const size = this.tileFields(8)
+    const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput), size.el)
+    const res = await openDialog('New tileset', body, [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Create', value: 'ok', kind: 'primary' },
+    ], () => this.nameError(nameInput.value.trim(), undefined, true) ?? size.check())
+    if (!res) return
+    const { w, h: hh } = size.read()
+    await this.create(newSprite(tilesetKey(nameInput.value.trim()), w, hh))
   }
 
   async newSprite() {
@@ -308,22 +349,25 @@ export class App {
     ], () => this.nameError(nameInput.value.trim()) ?? size.check())
     if (!res) return
 
-    const name = nameInput.value.trim()
     const { w, h: hh } = size.read()
-    const sprite = newSprite(name, w, hh)
+    await this.create(newSprite(nameInput.value.trim(), w, hh))
+  }
+
+  /** Saves a new sprite or tileset and puts it on the board, in free space near the middle of the screen. */
+  private async create(sprite: Sprite) {
     try {
       await this.project.saveSprite(sprite)
     } catch (err) {
       return toast(`Could not create: ${(err as Error).message}`)
     }
-    // In free space, near the middle of the screen.
+    const { width: w, height: hh } = sprite.frames[0]
     const c = this.view.center()
     const taken = [...this.editor.sprites.keys()].map((n) => this.editor.rectOf(n)!)
     const spot = findFreeSpot(w, hh, { x: c.x - w / 2, y: c.y - hh / 2 }, taken)
     this.editor.addSprite(sprite, spot.x, spot.y)
     this.saver.boardMoved()
     this.refreshSprites()
-    this.focusSprite(name)
+    this.focusSprite(sprite.name)
   }
 
   async editSprite() {
@@ -363,16 +407,18 @@ export class App {
   }
 
   private async askRename(from: string) {
-    const nameInput = h('input', { type: 'text', value: from, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const tileset = isTileset(from)
+    const shown = tileset ? tilesetName(from) : from
+    const nameInput = h('input', { type: 'text', value: shown, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
     const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput))
     queueMicrotask(() => nameInput.select())
-    const res = await openDialog('Rename sprite', body, [
+    const res = await openDialog(tileset ? 'Rename tileset' : 'Rename sprite', body, [
       { label: 'Cancel', value: 'cancel' },
       { label: 'Rename', value: 'ok', kind: 'primary' },
-    ], () => this.nameError(nameInput.value.trim(), from))
+    ], () => this.nameError(nameInput.value.trim(), shown, tileset))
     const name = nameInput.value.trim()
-    if (res !== 'ok' || name === from || !this.editor.sprites.has(from)) return
-    await this.renameSprite(from, name)
+    if (res !== 'ok' || name === shown || !this.editor.sprites.has(from)) return
+    await this.renameSprite(from, tileset ? tilesetKey(name) : name)
   }
 
   /** Copies a sprite under a new name, next to it on the board. */
@@ -408,6 +454,7 @@ export class App {
     }
     this.editor.renameSprite(from, to)
     this.saver.boardMoved()
+    if (isTileset(from)) await this.onTilesetRenamed(tilesetName(from), tilesetName(to))
     const thumb = this.thumbs.get(from)
     this.thumbs.delete(from)
     if (thumb) this.thumbs.set(to, thumb)
@@ -415,9 +462,19 @@ export class App {
   }
 
   private async deleteSprite(name: string) {
+    if (isTileset(name)) {
+      const maps = this.mapsUsing(tilesetName(name))
+      if (maps.length) {
+        const list = maps.map((m) => `“${m}”`).join(', ')
+        await openDialog('Tileset in use', h('p', {}, `“${tilesetName(name)}” cannot be deleted: the map${maps.length > 1 ? 's' : ''} ${list} use${maps.length > 1 ? '' : 's'} its tiles. Erase them from the map first.`), [{ label: 'OK', value: 'ok', kind: 'primary' }])
+        return
+      }
+    }
     const ok = await confirmDialog(
-      'Delete sprite',
-      `“${name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
+      isTileset(name) ? 'Delete tileset' : 'Delete sprite',
+      isTileset(name)
+        ? `“${tilesetName(name)}” (tiles/${tilesetName(name)}.png) will be deleted from the game folder. Git keeps the history of versions already committed.`
+        : `“${name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
       'Delete',
       true,
     )
@@ -703,19 +760,33 @@ export class App {
     } else toast(note)
   }
 
+  /** The game's tile size changed (settings): tilesets are cut differently. */
+  setTileSize(size: number) {
+    this.editor.tileSize = size
+    this.view.requestRender()
+  }
+
+  /** Saves everything, then plays the game. */
+  play() {
+    void this.player.play()
+  }
+
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
     $('topbar').prepend(createMenu([{ label: 'Import a font…', run: () => importFont(this.project) }]))
-    const player = new Player(this.project, () => this.saver.flush())
-    // ?play opens straight into the game (what an AI uses to test it).
-    if (new URLSearchParams(location.search).has('play')) void player.play()
+    const player = new Player(this.project, async () => {
+      await this.saver.flush()
+      await this.beforePlay()
+    })
+    this.player = player
     $('run-game').innerHTML = icon('play')
     $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')
     $('sync').addEventListener('click', () => void this.sync())
     this.refreshSync()
     $('sprites-new').innerHTML = icon('add')
+    $('tilesets-new').innerHTML = icon('add')
     $('palette-edit').innerHTML = icon('pencil')
     $('grid').innerHTML = icon('grid')
     $('checker').innerHTML = icon('checker')
@@ -979,7 +1050,7 @@ export class App {
       el.classList.toggle('playing', ed.playing && i === shown)
     }
     const fpsInput = $<HTMLInputElement>('fps')
-    fpsInput.disabled = !sprite
+    fpsInput.disabled = !sprite || isTileset(sprite.name)
     if (document.activeElement !== fpsInput) {
       fpsInput.value = sprite ? String(Math.min(MAX_FPS, Math.max(MIN_FPS, ed.fps))) : ''
       $('fps-value').textContent = sprite ? fpsInput.value : ''
@@ -993,8 +1064,10 @@ export class App {
       $('play').setAttribute('aria-label', ed.playing ? 'Pause' : 'Play')
     }
     $<HTMLButtonElement>('play').disabled = n < 2
-    $<HTMLButtonElement>('frame-add').disabled = !sprite
-    $<HTMLButtonElement>('frame-dup').disabled = !sprite
+    // A tileset is one image: no animation.
+    const still = !sprite || isTileset(sprite.name)
+    $<HTMLButtonElement>('frame-add').disabled = still
+    $<HTMLButtonElement>('frame-dup').disabled = still
     $<HTMLButtonElement>('frame-del').disabled = n < 2
   }
 
@@ -1116,14 +1189,17 @@ export class App {
 
   private renderSprites() {
     const list = $('sprite-list')
+    const tilesets = $('tileset-list')
     list.replaceChildren()
+    tilesets.replaceChildren()
     for (const name of this.spriteNames) {
-      const menu = createActionsMenu(`Options for ${name}`, [
+      const label = isTileset(name) ? tilesetName(name) : name
+      const menu = createActionsMenu(`Options for ${label}`, [
         { label: 'Rename', run: () => void this.askRename(name) },
         { label: 'Duplicate', run: () => void this.duplicateSprite(name) },
         { label: 'Delete', run: () => void this.deleteSprite(name), danger: true },
       ])
-      list.append(
+      ;(isTileset(name) ? tilesets : list).append(
         h('div', { className: 'sprite-row' },
           h('button', {
             className: 'sprite-item',
@@ -1131,7 +1207,7 @@ export class App {
             onclick: () => this.focusSprite(name),
           },
           this.thumbs.get(name) ?? h('span', { className: 'thumb' }),
-          h('span', { className: 'sprite-label' }, name)),
+          h('span', { className: 'sprite-label' }, label)),
           menu.el),
       )
     }

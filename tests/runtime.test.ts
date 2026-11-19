@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Font, setFonts } from '../runtime/fonts'
-import type { GameConfig } from '../runtime/game'
 import { input } from '../runtime/input'
+import { setMaps, type MapData } from '../runtime/maps'
 import { Runner } from '../runtime/runner'
 import { attachScreen, screen, writtenText } from '../runtime/screen'
 import { Sprite, setSprites, sprite } from '../runtime/sprites'
 import { time } from '../runtime/time'
 import { Dialogue, Menu } from '../runtime/ui'
-import { Thing, camera, drawWorld, modalThing, resetWorld, updateWorld, worldThings } from '../runtime/world'
+import { Thing, camera, cameraMapName, drawWorld, modalThing, resetWorld, updateWorld, worldThings } from '../runtime/world'
 
 const data = {
   name: 'hero',
@@ -68,6 +68,7 @@ function screenAt(w: number, h: number, scale: number) {
 beforeEach(() => {
   resetWorld()
   setSprites([data])
+  setMaps(16, [], [])
 })
 
 describe('sprites', () => {
@@ -275,6 +276,94 @@ describe('camera', () => {
   })
 })
 
+describe('maps', () => {
+  const sheet = { name: 'sheet' } as unknown as CanvasImageSource
+  /** A map of w × h cells at cell (x, y), every cell the tile at (1, 2) of "ground". */
+  const map = (name: string, x: number, y: number, w: number, h: number): MapData => ({
+    name, x, y, width: w, height: h,
+    cells: new Array(w * h).fill(null).map(() => ({ tileset: 'ground', col: 1, row: 2 })),
+  })
+
+  it('draws only the tiles on screen, under the things, on whole display pixels', () => {
+    const calls = screenAt(32, 32, 2)
+    setMaps(16, [{ name: 'ground', sheet }], [map('a', 0, 0, 10, 10)])
+    new Dot(0, 0)
+    camera.x = 8
+    camera.y = 0
+    drawWorld(1)
+    const tiles = calls.filter((c) => c[0] === 'image')
+    // Columns 0 to 2 (x 0 to 48, partly seen), rows 0 to 2.
+    expect(tiles.length).toBe(9)
+    expect(tiles[0].slice(1)).toEqual([16, 32, 16, 16, -16, 0, 32, 32])
+    // The thing is drawn after the tiles.
+    expect(calls.findIndex((c) => c[0] !== 'image')).toBe(9)
+  })
+
+  it('leaves empty cells and unknown tilesets undrawn', () => {
+    const calls = screenAt(32, 32, 1)
+    const m = map('a', 0, 0, 2, 2)
+    m.cells[0] = null
+    m.cells[1] = { tileset: 'gone', col: 0, row: 0 }
+    setMaps(16, [{ name: 'ground', sheet }], [m])
+    drawWorld(1)
+    expect(calls.filter((c) => c[0] === 'image').length).toBe(2)
+  })
+
+  it('keep the camera inside the map of the thing it follows', () => {
+    screenAt(100, 60, 1)
+    setMaps(10, [], [map('a', 0, 0, 30, 20)])
+    const hero = new Dot(20, 20)
+    camera.follow(hero)
+    expect([camera.x, camera.y]).toEqual([0, 0])
+    hero.place(295, 195)
+    updateWorld()
+    expect([camera.x, camera.y]).toEqual([200, 140])
+    hero.place(150, 100)
+    updateWorld()
+    expect([camera.x, camera.y]).toEqual([100, 70])
+    expect(cameraMapName()).toBe('a')
+  })
+
+  it('snap the camera to the next map, with no in-between', () => {
+    const calls = screenAt(100, 60, 1)
+    setMaps(10, [], [map('a', 0, 0, 30, 20), map('b', 30, 0, 30, 20)])
+    class Walker extends Dot {
+      update() {
+        this.move(2, 0)
+      }
+    }
+    const hero = new Walker(299, 100)
+    camera.follow(hero)
+    expect(camera.x).toBe(200)
+    updateWorld()
+    expect(cameraMapName()).toBe('b')
+    expect(camera.x).toBe(300)
+    drawWorld(0.5)
+    // The hero is drawn halfway (x 300), the camera where it is now, not halfway from the
+    // last map: (300 - 300, 100 - 70).
+    expect(calls.at(-1)!.slice(1, 3)).toEqual([0, 30])
+  })
+
+  it('settle the camera in its map when the game starts, even if it followed before', () => {
+    attachScreen(null)
+    setMaps(10, [], [map('a', 0, 0, 30, 20)])
+    camera.follow(new Dot(20, 20))
+    const r = new Runner({}, fakeCanvas(100, 60).canvas, (err) => { throw err }, { width: 100, height: 60 })
+    r.start()
+    expect([camera.x, camera.y]).toEqual([0, 0])
+    r.stop()
+  })
+
+  it('let the camera follow freely between maps', () => {
+    screenAt(100, 60, 1)
+    setMaps(10, [], [map('a', 0, 0, 30, 20)])
+    const hero = new Dot(1000, 1000)
+    camera.follow(hero)
+    expect([camera.x, camera.y]).toEqual([950, 970])
+    expect(cameraMapName()).toBe(null)
+  })
+})
+
 describe('modal things', () => {
   it('stop the world: only the last one updates, and the world clock stops', () => {
     const log: string[] = []
@@ -296,7 +385,7 @@ describe('modal things', () => {
 
   it('keep the UI clock running while the world clock stops', () => {
     const canvas = fakeCanvas(100, 100).canvas
-    const r = new Runner({ width: 100, height: 100 }, canvas, (err) => { throw err })
+    const r = new Runner({}, canvas, (err) => { throw err }, { width: 100, height: 100 })
     r.start()
     class Modal extends Thing {
       modal = true
@@ -314,7 +403,7 @@ describe('modal things', () => {
 describe('runner', () => {
   it('picks the largest whole scale that fits, at least 1', () => {
     const canvas = { width: 0, height: 0 } as HTMLCanvasElement
-    const r = new Runner({ width: 384, height: 216 }, canvas, () => {})
+    const r = new Runner({}, canvas, () => {}, { width: 384, height: 216 })
     r.fit(3024, 1800)
     expect([r.scale, canvas.width, canvas.height]).toEqual([7, 2688, 1512])
     r.fit(1920, 1080)
@@ -332,7 +421,7 @@ describe('runner', () => {
         }
       }
       const w = new Walker(10, 10)
-      const r = new Runner({ width: 100, height: 100 }, fakeCanvas(100, 100).canvas, (err) => { throw err })
+      const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
       r.start()
       r.step(60, ['right'])
       r.step(10, ['down', 'left'])
@@ -347,7 +436,7 @@ describe('runner', () => {
 
 describe('runner pacing', () => {
   /** Runs a game on a simulated display; returns how many updates ran on each frame. */
-  function simulate(hz: number, frames: number, jitterMs: number, config: GameConfig = {}, canvas?: HTMLCanvasElement) {
+  function simulate(hz: number, frames: number, jitterMs: number, size?: { width: number; height: number }, canvas?: HTMLCanvasElement) {
     let updates = 0
     class Counter extends Thing {
       update() {
@@ -356,7 +445,7 @@ describe('runner pacing', () => {
     }
     new Counter()
     canvas ??= fakeCanvas(10, 10).canvas
-    const r = new Runner(config, canvas, (err) => { throw err })
+    const r = new Runner({}, canvas, (err) => { throw err }, size)
     r.fit(canvas.width * 100, canvas.height * 100)
     r.start()
     const loop = (r as unknown as { loop: (t: number) => void }).loop
@@ -493,7 +582,7 @@ describe('dialogue and menu', () => {
   beforeEach(testFont)
 
   function play() {
-    const r = new Runner({ width: 200, height: 100 }, fakeCanvas(200, 100).canvas, (err) => { throw err })
+    const r = new Runner({}, fakeCanvas(200, 100).canvas, (err) => { throw err }, { width: 200, height: 100 })
     r.start()
     return r
   }

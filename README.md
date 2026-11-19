@@ -2,10 +2,11 @@
 
 A pixel art game engine where you draw, compose, code and play in one place.
 
-For now: the **pixel art editor** (step 1, first delivery: drawing).
+For now: the **pixel art editor** and the **world editor**.
 
 Every sprite of the game sits on one board, at the same scale, so you can check
-that they look consistent and draw on any of them directly.
+that they look consistent and draw on any of them directly. In the same way, every map of
+the game sits in one world, at its place.
 
 ## Running the editor
 
@@ -35,7 +36,8 @@ Use a fine-grained token limited to that repository, with **Contents: Read and w
 The token stays in the browser, on that device only.
 
 When the editor works from the browser's storage, a sync button shows in the top bar.
-It compares `palette.json`, `board.json`, `sprites/*` and `fonts/*` on the device, on GitHub, and
+It compares `game.json`, `palette.json`, `board.json`, `sprites/*`, `tiles/*`, `maps/*` and
+`fonts/*` on the device, on GitHub, and
 as they were at the last sync: changes on one side follow that side, changes sent to
 GitHub go out as one commit. A file (or sprite) changed on both sides is a conflict: the
 editor asks which version to keep. On Mac with `lucarne dev`, use git in the game folder.
@@ -44,12 +46,15 @@ editor asks which version to keep. On Mac with `lucarne dev`, use git in the gam
 
 ```
 my-game/
+  game.json          { "width": 384, "height": 216, "tileSize": 16 }   // every one optional
   palette.json       ["#1a1c2c", "#5d275d", …]
   board.json         where each sprite sits on the editor's board, and its color
   sprites/hero.png   sheet: the animation frames side by side, left to right
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
                        "frames": [{ "duration": 100 }],
                        "origin": { "x": 8, "y": 15 } }   // optional, a pixel
+  tiles/outdoor.png  a tileset: 8 tiles wide, whole rows of the tile size, no JSON
+  maps/town.json     a map: its place in the world and its tiles (see "Maps")
   fonts/name.png     a font: its characters in white, in a grid (made by importing one)
   fonts/name.json    which character is in which cell, and how far the next one starts
   fonts/name.license.txt   the font's license, when it has one
@@ -81,13 +86,13 @@ class Hero extends Thing {
 camera.follow(new Hero(160, 90))
 
 export default game({
-  width: 320, height: 180,                   // the world on screen, in game pixels
-  draw() { screen.clear('#1a1c2c') },        // the background, under the things
+  draw() { screen.clear('#1a1c2c') },        // the background, under the maps and things
 })
 ```
 
-`width` and `height` are the game's resolution: every display shows exactly that much of
-the world. The engine scales it up by the largest whole number that fits (×5 for
+The game's code says what it does; `game.json` says what it is, and the editor writes it
+(**Settings**, in the menu). `width` and `height` are the game's resolution (320 × 180
+unless set): every display shows exactly that much of the world. The engine scales it up by the largest whole number that fits (×5 for
 384 × 216 on a 1080p screen, ×10 on 4K) and fills the rest with black bars. The game never
 chooses the scale, and never needs to know it.
 
@@ -142,6 +147,36 @@ Before the game's code runs, the editor saves what is not saved yet and loads ev
 and font of the game folder, so `sprite()` and `font()` work anywhere, even at the top of
 a file.
 
+### Maps
+
+The whole game sits in one world. Each map (`maps/<name>.json`) has its place in it, and the
+engine draws every map itself, under the things, from the tilesets in `tiles/`: there is
+nothing to write in the code. A door to another map is `hero.place(x, y)`.
+
+- `tileSize` (`game.json`, 16 unless set) is the size of a tile, for the whole game. It
+  cannot change once a map or a tileset exists (64 at most).
+- A tileset is always 8 tiles wide and grows only in rows. A narrower one (made elsewhere)
+  gets empty columns on its right when the editor opens it.
+- A map is never smaller than the screen, and maps never overlap (they may touch).
+- The camera stays inside the map of the thing it follows, and stops at its edges. When
+  that thing goes into another map, the camera snaps to it at once: the maps around the one
+  shown never appear. Outside every map, the camera follows freely.
+
+```json
+{
+  "version": 1,
+  "x": 0, "y": 0, "width": 24, "height": 14,
+  "tilesets": ["house", "outdoor"],
+  "cells": [
+    [1, 3, 1], [1, 3, 1], null, …
+  ]
+}
+```
+
+Positions and sizes are in tiles. A cell is `[tileset, column, row]`, the tileset by its
+place in `tilesets` and the tile by its column and row in that tileset, so a tileset can
+grow downward without moving the tiles maps use; `null` is empty.
+
 ### Text and UI
 
 ```ts
@@ -185,6 +220,7 @@ page hidden (what an AI uses to test a game):
 lucarne.step(60, ['right'])   // 60 updates with "right" held, then shows the result
 lucarne.things()              // [{ type: 'Hero', x: 267, y: 120, facing: 'east', … }]
 lucarne.ui()                  // { modal: 'Menu', text: ['Yes', 'No', '>'] }
+lucarne.camera()              // { x: 96, y: 0, map: 'town' }
 await lucarne.picture()       // the frame at game resolution, as a PNG data URL
 lucarne.timings()             // milliseconds per update, per drawing, per frame
 ```
@@ -219,6 +255,25 @@ changed on either.
 
 With a pen, only the pen draws: fingers and the palm leave no marks.
 
+**Tilesets** have their own panel under the sprites. They sit on the board and are drawn
+like sprites, with their tile grid shown; they are 8 tiles wide, add or remove rows from a
+corner, and have no animation.
+
+The **world editor** (menu, top left) shows every map at its place. Zoom, pan and undo work
+as on the board. Its side panel shows one tileset at a time, at the panel's width, above the
+list of maps; the list next to "Tilesets" switches to another one.
+
+| Action | Keyboard / mouse |
+| --- | --- |
+| Stamp the tiles picked in a tileset panel (drag over several to pick a block) | B |
+| Eraser, eyedropper (picks the tile under it) | E, I |
+| Move a map (drag it), resize it from any corner | V |
+| Show every map | 0 |
+| Back to the board | Esc |
+
+**+** next to Maps makes a map one screen big, in free space. Maps snap to whole tiles,
+stop against each other, and never get smaller than one screen.
+
 ## Development
 
 ```bash
@@ -229,21 +284,25 @@ npm run build        # installable static version, in dist/
 
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
 (`runner.ts`), the world, its things and the camera (`world.ts`, smooth motion between
-updates), `screen.ts`, `sprites.ts`, `fonts.ts`, the dialogue and menu (`ui.ts`),
-`input.ts` and the clocks (`time.ts`). `game.js` holds only the game's code: the editor
+updates), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
+`fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), and the
+game's settings (`game.ts`, read from `game.json`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
 Editor code lives in `editor/src/`:
 
 - `bitmap.ts`, `color.ts`: pixels and operations (line, fill, flip…)
-- `sprite.ts`, `png.ts`: sprite format
+- `sprite.ts`, `png.ts`: sprite format, and tilesets (`tiles/<name>` on the board)
+- `map.ts`: map format (tested in `tests/world.test.ts`)
 - `font.ts`, `fontimport.ts`: font format, and importing a pixel font (tested in `tests/font.test.ts`)
 - `storage.ts`, `project.ts`: reading and writing the game folder (local server or OPFS)
-- `board.ts`: sprite positions (`board.json`) and automatic placement
+- `board.ts`: sprite positions (`board.json`), automatic placement, resizing by a corner
 - `editor.ts`: the board, tools, selection, history — no DOM, tested in `tests/`
-- `view.ts`, `input.ts`: rendering, zoom, mouse, pen and gestures
+- `viewport.ts`, `view.ts`, `input.ts`: zoom and panning, rendering the board, mouse, pen and gestures
+- `world.ts`: the world editor's maps, tools, history — no DOM, tested in `tests/world.test.ts`
+- `worldview.ts`, `worldpage.ts`: rendering the world, and its page
 - `app.ts`: interface, shortcuts, autosave
-- `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page
+- `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)
 - `github.ts`: GitHub sync (REST API, three-way comparison), tested in `tests/sync.test.ts`
 

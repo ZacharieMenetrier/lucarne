@@ -1,4 +1,4 @@
-// The settings page (#settings): for now, GitHub sync.
+// The settings page (#settings): the game's own settings (game.json), and GitHub sync.
 
 import { h } from './dialog'
 import {
@@ -11,16 +11,28 @@ import {
   testConnection,
   type GitHubSettings,
 } from './github'
+import { DEFAULT_SETTINGS, SETTING_LIMITS, type GameSettings } from '../../runtime/game'
 import { createMenu, onPage } from './menu'
 import type { Storage } from './storage'
 
 const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
 
+/** The game's settings, as the page reads and writes them. */
+export interface GameSettingsAccess {
+  settings(): GameSettings
+  /** Every map's size, in game pixels. */
+  maps(): { name: string; width: number; height: number }[]
+  /** The tilesets' names. */
+  tilesets(): string[]
+  save(settings: GameSettings): Promise<void>
+}
+
 /**
  * Builds the page and adds it to the document. `onSaved` runs after the
- * settings change (the editor shows or hides its sync button).
+ * GitHub settings change (the editor shows or hides its sync button).
  */
-export function buildSettingsPage(storage: Storage, onSaved: () => void) {
+export function buildSettingsPage(storage: Storage, onSaved: () => void, game: GameSettingsAccess) {
+  const gameForm = buildGameForm(game)
   const field = (props: Record<string, unknown>) =>
     h('input', { type: 'text', autocapitalize: 'off', autocomplete: 'off', spellcheck: false, ...props })
 
@@ -121,13 +133,87 @@ export function buildSettingsPage(storage: Storage, onSaved: () => void) {
 
   const page = h('div', { id: 'settings-page' },
     h('header', { className: 'page-bar' }, createMenu(), h('h1', {}, 'Settings')),
-    h('div', { className: 'page-body' }, form),
+    h('div', { className: 'page-body' }, gameForm.el, form),
   )
   document.body.append(page)
 
   onPage((p) => {
     if (p !== 'settings') return
+    gameForm.fill()
     fill()
     setStatus('')
   })
+}
+
+/**
+ * The game's settings: its resolution and its tile size (game.json). Maps are never smaller
+ * than the screen, so the resolution cannot grow beyond the smallest map; and the tile size
+ * cannot change once a map exists, since every map would be cut differently.
+ */
+function buildGameForm(game: GameSettingsAccess) {
+  const number = (name: keyof GameSettings) => {
+    const { min, max } = SETTING_LIMITS[name]
+    return h('input', { type: 'number', name, min, max, inputMode: 'numeric' })
+  }
+  const width = number('width')
+  const height = number('height')
+  const tileSize = number('tileSize')
+  const tileNote = h('small', {})
+  const status = h('p', { className: 'settings-status', role: 'status' })
+  const save = h('button', { type: 'submit', className: 'primary' }, 'Save')
+  const setStatus = (text: string, kind: 'ok' | 'error' | '' = '') => {
+    status.textContent = text
+    status.dataset.kind = kind
+  }
+  const fill = () => {
+    const s = game.settings()
+    width.value = String(s.width)
+    height.value = String(s.height)
+    tileSize.value = String(s.tileSize)
+    // Tilesets are drawn tile by tile, 8 tiles wide, and maps are counted in tiles: once
+    // either exists, another size would cut them wrong.
+    const maps = game.maps().length > 0
+    const tilesets = game.tilesets().length > 0
+    tileSize.disabled = maps || tilesets
+    tileNote.textContent = maps || tilesets
+      ? `The game has ${maps ? 'maps' : 'tilesets'}: ${maps ? 'their tiles are' : 'they are drawn'} at this size, so it can no longer change.`
+      : `Tilesets are cut in squares of this size (${DEFAULT_SETTINGS.tileSize} unless set).`
+    setStatus('')
+  }
+  const read = (): GameSettings => ({ width: Number(width.value), height: Number(height.value), tileSize: Number(tileSize.value) })
+  const check = (s: GameSettings) => {
+    for (const key of ['width', 'height', 'tileSize'] as const) {
+      const { min, max } = SETTING_LIMITS[key]
+      if (!Number.isInteger(s[key]) || s[key] < min || s[key] > max) {
+        return `${key === 'tileSize' ? 'Tile size' : key === 'width' ? 'Width' : 'Height'}: a whole number of pixels between ${min} and ${max}.`
+      }
+    }
+    const small = game.maps().filter((m) => m.width < s.width || m.height < s.height).map((m) => `“${m.name}”`)
+    if (small.length) {
+      return `A map is never smaller than the screen: make ${small.join(', ')} bigger in the world editor first.`
+    }
+    return null
+  }
+  const form = h('form', { className: 'settings-form', autocomplete: 'off' },
+    h('h2', {}, 'Game'),
+    h('p', { className: 'muted' }, 'What the game is, saved in game.json in the game folder.'),
+    h('div', { className: 'settings-row' },
+      h('label', {}, 'Width', width, h('small', {}, 'Of the screen, in game pixels.')),
+      h('label', {}, 'Height', height, h('small', {}, 'Every display shows exactly this much, scaled up.'))),
+    h('label', {}, 'Tile size', tileSize, tileNote),
+    h('div', { className: 'settings-actions' }, save),
+    status,
+  )
+  form.addEventListener('submit', (e) => {
+    e.preventDefault()
+    const s = read()
+    const err = check(s)
+    if (err) return setStatus(err, 'error')
+    save.disabled = true
+    game.save(s).then(
+      () => setStatus('Saved.', 'ok'),
+      (err: Error) => setStatus(`Could not save: ${err.message}`, 'error'),
+    ).finally(() => (save.disabled = false))
+  })
+  return { el: form, fill }
 }

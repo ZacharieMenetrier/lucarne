@@ -3,9 +3,9 @@ import { Bitmap, constrainLine, floodFill, flipH, linePoints, resized } from '..
 import { colorToHex, hexToColor } from '../editor/src/color'
 import { Editor } from '../editor/src/editor'
 import { findFreeSpot, overlaps, parseBoard, resolveOverlaps, serializeBoard, shelfLayout } from '../editor/src/board'
-import { parsePalette } from '../editor/src/project'
+import { parsePalette, widenTileset } from '../editor/src/project'
 import { lospecSlug } from '../editor/src/lospec'
-import { composeSheet, newSprite, parseMeta, serializeMeta, splitSheet } from '../editor/src/sprite'
+import { TILESET_COLUMNS, composeSheet, newSprite, parseMeta, serializeMeta, splitSheet } from '../editor/src/sprite'
 
 const RED = hexToColor('#ff0000')
 const BLUE = hexToColor('#0000ff')
@@ -73,6 +73,30 @@ describe('editor', () => {
     ed.activate('test')
     return ed
   }
+
+  it('keeps a tileset 8 tiles wide when a corner is dragged: only rows change', () => {
+    const ed = new Editor(['#ff0000'])
+    ed.tileSize = 4
+    ed.addSprite(newSprite('tiles/outdoor', TILESET_COLUMNS * 4, 8), 0, 0)
+    ed.startResize('tiles/outdoor', 'se', { x: 32, y: 8 })
+    ed.move(at(60, 17))
+    ed.up(at(60, 17))
+    expect(ed.bmp!.width).toBe(32)
+    expect(ed.bmp!.height).toBe(16)
+    ed.startResize('tiles/outdoor', 'nw', { x: 0, y: 0 })
+    ed.move(at(20, 0))
+    ed.up(at(20, 0))
+    expect(ed.bmp!.width).toBe(32)
+  })
+
+  it('widens a narrow tileset with empty columns, its tiles in place', () => {
+    const b = new Bitmap(8, 4)
+    b.set(5, 2, RED)
+    const w = widenTileset(b, 4)
+    expect([w.width, w.height]).toEqual([32, 4])
+    expect(w.get(5, 2)).toBe(RED)
+    expect(widenTileset(new Bitmap(40, 4), 4).width).toBe(40)
+  })
 
   it('draws, undoes and redoes', () => {
     const ed = setup()

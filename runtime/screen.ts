@@ -161,6 +161,16 @@ function px(v: number, origin: number) {
   return origin + Math.round(v * scale)
 }
 
+/**
+ * Draws a square of `size` pixels of `sheet`, taken at (sx, sy), with its top left on (x, y)
+ * in game pixels: a map's tile (see maps.ts). Whole positions land on whole display pixels,
+ * so tiles side by side never leave a seam.
+ */
+export function drawTile(sheet: CanvasImageSource, sx: number, sy: number, size: number, x: number, y: number) {
+  if (!ctx) return
+  ctx.drawImage(sheet, sx, sy, size, size, px(x, originX), px(y, originY), size * scale, size * scale)
+}
+
 /** Called by the world: drawing starts, of the world or of the UI. Clears the frame first. */
 export function beginDraw(what: 'world' | 'ui') {
   if (what === 'world') {

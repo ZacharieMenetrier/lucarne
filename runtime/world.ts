@@ -13,6 +13,7 @@
 // game's code never sees it. A thing that `place`s itself, or was just created, is drawn
 // where it is, with no in-between.
 
+import { drawMaps, mapAt } from './maps'
 import { beginDraw, endDraw, setOrigin, screen, screenScale } from './screen'
 
 /** Where the engine keeps its own state on each thing (a symbol: games never see it). */
@@ -107,6 +108,8 @@ let target: Thing | null = null
 let cameraFromX = 0
 let cameraFromY = 0
 let cameraJumped = true
+/** The map the followed thing is in: the camera stays inside it. */
+let cameraMap: string | null = null
 
 /**
  * What part of the world the screen shows: (x, y) is the world position at the top left
@@ -118,6 +121,10 @@ export const camera = {
   /**
    * Keeps a thing in the middle of the screen (or stops following, with null). The camera
    * moves after every thing has updated, so it always shows where the thing ended up.
+   *
+   * It stays inside the map the thing is in, stopping at its edges. When the thing goes
+   * into another map, the camera snaps to it at once: maps are never smaller than the
+   * screen, so the maps around the one shown never appear.
    */
   follow(thing: Thing | null) {
     target = thing
@@ -126,10 +133,34 @@ export const camera = {
   },
 }
 
+/** Centers the camera on a thing, inside its map. Returns whether it changed map. */
 function centerOn(thing: Thing | null) {
-  if (!thing) return
+  if (!thing) return false
   camera.x = thing.x - screen.width / 2
   camera.y = thing.y - screen.height / 2
+  const m = mapAt(thing.x, thing.y)
+  if (m) {
+    camera.x = within(camera.x, m.x, m.x + m.width - screen.width)
+    camera.y = within(camera.y, m.y, m.y + m.height - screen.height)
+  }
+  const changed = (m?.name ?? null) !== cameraMap
+  cameraMap = m?.name ?? null
+  return changed
+}
+
+/** Between lo and hi; lo when the map is smaller than the screen (a hand-edited file). */
+function within(v: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(v, Math.max(lo, hi)))
+}
+
+/**
+ * Puts the camera on the thing it follows, now that the screen has its size: the game's
+ * code may call `camera.follow` before the game starts, when the screen has none yet.
+ */
+export function settleCamera() {
+  if (!target) return
+  centerOn(target)
+  cameraJumped = true
 }
 
 /** Empties the world: called before a game's code runs. */
@@ -138,9 +169,15 @@ export function resetWorld() {
   created = 0
   anyRemoved = false
   target = null
+  cameraMap = null
   camera.x = 0
   camera.y = 0
   cameraJumped = true
+}
+
+/** The map the camera stays in (the followed thing's), or null. */
+export function cameraMapName(): string | null {
+  return cameraMap
 }
 
 /** The things in the world, in creation order. */
@@ -179,8 +216,7 @@ export function updateWorld(): boolean {
       if (!t[track].removed) t.update()
     }
     if (target && !target[track].removed) {
-      centerOn(target)
-      if (target[track].jumped) cameraJumped = true
+      if (centerOn(target) || target[track].jumped) cameraJumped = true
     }
   }
   if (anyRemoved) {
@@ -197,7 +233,7 @@ const sorted: Thing[] = []
 /**
  * Draws the world on the screen, `alpha` (0 to 1) of the way between the update before
  * and the last one: first `background` (the game's own draw, through the camera), then the
- * things from the top of the world down, then their UI.
+ * maps, then the things from the top of the world down, then their UI.
  *
  * Positions are rounded to display pixels only once, relative to the camera: a thing the
  * camera follows stays perfectly still on screen while the world scrolls behind it.
@@ -210,6 +246,7 @@ export function drawWorld(alpha: number, background?: () => void) {
   try {
     setOrigin(Math.round(-camX * scale), Math.round(-camY * scale))
     background?.()
+    drawMaps(camX, camY, screen.width, screen.height)
 
     sorted.length = 0
     for (const t of things) {
