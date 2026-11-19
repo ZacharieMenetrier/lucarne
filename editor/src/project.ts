@@ -97,8 +97,7 @@ export class Project {
     if (!png && json === null) throw new Error(`Sprite not found: ${name}`)
     const sheet = png ? await decodePng(png) : null
     const meta = json !== null ? parseMeta(json) : defaultMeta(sheet!.width, sheet!.height)
-    const filled =
-      sheet ?? new Bitmap(meta.frameWidth * meta.frames.length, meta.frameHeight * meta.directions.length)
+    const filled = sheet ?? new Bitmap(meta.frameWidth * meta.frames.length, meta.frameHeight)
     return { name, meta, frames: splitSheet(filled, meta) }
   }
 

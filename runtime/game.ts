@@ -1,14 +1,22 @@
 /** Everything a game is made of. All parts are optional. */
 export interface GameConfig {
-  /** Width of the game's screen, in pixels (320 by default). */
+  /**
+   * Width of the world on screen, in game pixels (320 by default). Every display shows
+   * exactly this much: the engine scales it by the largest whole number that fits, with
+   * black bars around.
+   */
   width?: number
-  /** Height of the game's screen, in pixels (180 by default). */
+  /** Height of the world on screen, in game pixels (180 by default). See `width`. */
   height?: number
   /** Called once, before the first update. */
   start?(): void
   /** Called 60 times per second, whatever the display's refresh rate. Move things here. */
   update?(): void
-  /** Called once per displayed frame, after the updates. Draw here, with `screen`. */
+  /**
+   * Called after each update. Draw here, with `screen` (and only here). Only draw: change
+   * nothing in the game. The engine shows what moved smoothly between two updates on every
+   * display, at 60, 120 or 144 Hz.
+   */
   draw?(): void
 }
 

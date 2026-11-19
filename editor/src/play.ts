@@ -219,16 +219,20 @@ export class Player {
     this.root.classList.toggle('paused', paused)
   }
 
-  /** Largest whole scale (in device pixels) at which the game fits. */
+  /**
+   * Gives the game the stage's space, in display pixels: the runner picks the scale and
+   * sizes the canvas. The canvas is then shown at one canvas pixel per display pixel; the
+   * stage's black fills the rest.
+   */
   private fit() {
     const r = this.runner
     if (!r) return
     const dpr = window.devicePixelRatio || 1
     const box = this.stage.getBoundingClientRect()
     const height = box.height - (this.caption.hidden ? 0 : this.caption.offsetHeight + CAPTION_GAP)
-    const scale = Math.max(1, Math.floor(Math.min((box.width * dpr) / r.width, (height * dpr) / r.height)))
-    this.canvas.style.width = `${(r.width * scale) / dpr}px`
-    this.canvas.style.height = `${(r.height * scale) / dpr}px`
+    r.fit(Math.floor(box.width * dpr), Math.floor(height * dpr))
+    this.canvas.style.width = `${this.canvas.width / dpr}px`
+    this.canvas.style.height = `${this.canvas.height / dpr}px`
   }
 }
 
@@ -241,7 +245,6 @@ function toSpriteData(sprite: Sprite): SpriteData {
     name: sprite.name,
     frameWidth: meta.frameWidth,
     frameHeight: meta.frameHeight,
-    directions: meta.directions.map((d) => d.name),
     durations: meta.frames.map((f) => f.duration),
     origin: meta.origin,
     sheet: canvas,

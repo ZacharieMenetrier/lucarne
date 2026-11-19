@@ -253,7 +253,7 @@ export class App {
   private refreshSprites() {
     this.spriteNames = [...this.editor.sprites.keys()].sort()
     for (const name of this.spriteNames) {
-      if (!this.thumbs.has(name)) this.thumbs.set(name, makeThumb(this.editor.sprites.get(name)!.sprite.frames[0][0]))
+      if (!this.thumbs.has(name)) this.thumbs.set(name, makeThumb(this.editor.sprites.get(name)!.sprite.frames[0]))
     }
     for (const name of this.thumbs.keys()) if (!this.editor.sprites.has(name)) this.thumbs.delete(name)
     this.renderSprites()
@@ -441,7 +441,7 @@ export class App {
         const snap = this.editor.snapshot(n)
         if (!snap) continue
         const old = this.thumbs.get(n)
-        const thumb = makeThumb(snap.frames[0][0])
+        const thumb = makeThumb(snap.frames[0])
         this.thumbs.set(n, thumb)
         old?.replaceWith(thumb)
       }
@@ -1072,7 +1072,7 @@ export class App {
     if (!snap) return
     const views = $('frame-strip').querySelectorAll<HTMLElement>('.frame-view')
     views.forEach((view, i) => {
-      const bmp = snap.frames[0][i]
+      const bmp = snap.frames[i]
       if (bmp) view.replaceChildren(makeThumb(bmp, 56))
     })
   }

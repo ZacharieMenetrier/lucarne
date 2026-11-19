@@ -52,12 +52,12 @@ describe('bitmap', () => {
 
 describe('sprite', () => {
   it('splits and recomposes the sheet', () => {
-    const meta = parseMeta(JSON.stringify({ frameWidth: 2, frameHeight: 2, directions: [{ name: 'a' }, { name: 'b' }], frames: [{ duration: 80 }, {}] }))
+    const meta = parseMeta(JSON.stringify({ frameWidth: 2, frameHeight: 2, frames: [{ duration: 80 }, {}] }))
     expect(meta.frames[1].duration).toBe(100)
-    const sheet = new Bitmap(4, 4)
-    sheet.set(3, 3, RED)
+    const sheet = new Bitmap(4, 2)
+    sheet.set(3, 1, RED)
     const frames = splitSheet(sheet, meta)
-    expect(frames[1][1].get(1, 1)).toBe(RED)
+    expect(frames[1].get(1, 1)).toBe(RED)
     expect(composeSheet({ name: 'x', meta, frames }).equals(sheet)).toBe(true)
   })
 
@@ -99,7 +99,7 @@ describe('editor', () => {
     ed.move(at(4, 4))
     ed.up(at(4, 4))
     // While moving, saving already sees the result.
-    expect(ed.snapshot()!.frames[0][0].get(4, 4)).toBe(RED)
+    expect(ed.snapshot()!.frames[0].get(4, 4)).toBe(RED)
     ed.deselect()
     expect(ed.bmp!.get(4, 4)).toBe(RED)
     expect(ed.bmp!.get(0, 0)).toBe(0)
@@ -179,7 +179,7 @@ describe('board', () => {
     const ed = board()
     const blue = hexToColor('#0000ff')
     const red = hexToColor('#ff0000')
-    ed.sprites.get('slime')!.sprite.frames[0][0].set(1, 1, blue)
+    ed.sprites.get('slime')!.sprite.frames[0].set(1, 1, blue)
     ed.pickAt({ x: 21, y: 1 }, '#ff0000')
     expect(ed.color).toBe(blue)
     expect(ed.active).not.toBe('slime') // picking does not focus
@@ -194,9 +194,9 @@ describe('board', () => {
     const ed = board()
     click(ed, 21, 2)
     expect(ed.active).toBe('slime')
-    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 2)).toBe(0)
+    expect(ed.sprites.get('slime')!.sprite.frames[0].get(1, 2)).toBe(0)
     click(ed, 21, 2)
-    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 2)).toBe(RED)
+    expect(ed.sprites.get('slime')!.sprite.frames[0].get(1, 2)).toBe(RED)
     click(ed, 12, 2) // between the two: nothing
     expect(ed.active).toBe('slime')
     expect(ed.canUndo).toBe(true)
@@ -211,11 +211,11 @@ describe('board', () => {
     click(ed, 21, 1) // focus slime
     click(ed, 21, 1)
     ed.undo()
-    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(1, 1)).toBe(0)
-    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(1, 1)).toBe(RED)
+    expect(ed.sprites.get('slime')!.sprite.frames[0].get(1, 1)).toBe(0)
+    expect(ed.sprites.get('hero')!.sprite.frames[0].get(1, 1)).toBe(RED)
     ed.undo()
     expect(ed.active).toBe('hero')
-    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(1, 1)).toBe(0)
+    expect(ed.sprites.get('hero')!.sprite.frames[0].get(1, 1)).toBe(0)
     expect(edits).toEqual(['hero', 'slime', 'slime', 'hero'])
   })
 
@@ -241,7 +241,7 @@ describe('board', () => {
     ed.activate('slime')
     ed.paste()
     ed.deselect()
-    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
+    expect(ed.sprites.get('slime')!.sprite.frames[0].get(0, 0)).toBe(RED)
   })
 
   it('replaces a color in every sprite as one undo step', () => {
@@ -252,8 +252,8 @@ describe('board', () => {
     click(ed, 20, 0)
     expect(ed.replaceColorEverywhere(RED, BLUE).sort()).toEqual(['hero', 'slime'])
     ed.undo()
-    expect(ed.sprites.get('hero')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
-    expect(ed.sprites.get('slime')!.sprite.frames[0][0].get(0, 0)).toBe(RED)
+    expect(ed.sprites.get('hero')!.sprite.frames[0].get(0, 0)).toBe(RED)
+    expect(ed.sprites.get('slime')!.sprite.frames[0].get(0, 0)).toBe(RED)
   })
 
   it('keeps the drawing in place when resizing from the center', () => {
@@ -321,17 +321,17 @@ describe('animation frames', () => {
     expect(ed.frame).toBe(1)
     ed.down({ x: 1, y: 1, shift: false, alt: false })
     ed.up({ x: 1, y: 1, shift: false, alt: false })
-    expect(ed.sprite!.frames[0][1].get(1, 1)).toBe(RED)
-    expect(ed.sprite!.frames[0][0].get(1, 1)).not.toBe(RED)
+    expect(ed.sprite!.frames[1].get(1, 1)).toBe(RED)
+    expect(ed.sprite!.frames[0].get(1, 1)).not.toBe(RED)
     ed.duplicateFrame()
-    expect(ed.sprite!.frames[0][2].get(1, 1)).toBe(RED)
+    expect(ed.sprite!.frames[2].get(1, 1)).toBe(RED)
     ed.deleteFrame()
     expect(ed.sprite!.meta.frames).toHaveLength(2)
     ed.undo() // delete
     ed.undo() // duplicate
     expect(ed.sprite!.meta.frames).toHaveLength(2)
     ed.undo() // pixel
-    expect(ed.sprite!.frames[0][1].get(1, 1)).not.toBe(RED)
+    expect(ed.sprite!.frames[1].get(1, 1)).not.toBe(RED)
     ed.undo() // add
     expect(ed.sprite!.meta.frames).toHaveLength(1)
   })
@@ -343,7 +343,7 @@ describe('animation frames', () => {
     ed.addFrame()
     ed.moveFrame(-1)
     expect(ed.frame).toBe(0)
-    expect(ed.sprite!.frames[0][1].get(0, 0)).toBe(RED)
+    expect(ed.sprite!.frames[1].get(0, 0)).toBe(RED)
     ed.deleteFrame()
     ed.deleteFrame()
     expect(ed.sprite!.meta.frames).toHaveLength(1)
@@ -367,9 +367,9 @@ describe('animation frames', () => {
     const ed = setup()
     ed.addFrame()
     ed.resize(6, 6, 0, 0)
-    expect(ed.sprite!.frames[0].map((b) => b.width)).toEqual([6, 6])
+    expect(ed.sprite!.frames.map((b) => b.width)).toEqual([6, 6])
     ed.undo()
-    expect(ed.sprite!.frames[0].map((b) => b.width)).toEqual([4, 4])
+    expect(ed.sprite!.frames.map((b) => b.width)).toEqual([4, 4])
   })
 
   it('plays from the current frame and stops when drawing', () => {

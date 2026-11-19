@@ -11,12 +11,10 @@ export interface SpriteData {
   name: string
   frameWidth: number
   frameHeight: number
-  /** One name per sheet row. */
-  directions: string[]
   /** One duration per sheet column, in milliseconds. */
   durations: number[]
   origin?: { x: number; y: number }
-  /** The sheet: one row per direction, one column per frame. */
+  /** The sheet: one frame after the other, left to right. */
   sheet: CanvasImageSource
 }
 
@@ -27,8 +25,6 @@ export class Sprite {
   readonly height: number
   /** The pixel placed on the position given to `screen.sprite` (top left if not set). */
   readonly origin: { readonly x: number; readonly y: number }
-  /** Names of the drawn directions (one row of the sheet each). */
-  readonly directions: readonly string[]
   /** Duration of each frame, in milliseconds. */
   readonly durations: readonly number[]
   /** Duration of the whole animation, in milliseconds. */
@@ -41,7 +37,6 @@ export class Sprite {
     this.width = data.frameWidth
     this.height = data.frameHeight
     this.origin = data.origin ?? { x: 0, y: 0 }
-    this.directions = data.directions
     this.durations = data.durations
     this.duration = data.durations.reduce((a, b) => a + b, 0)
     this.sheet = data.sheet
@@ -61,18 +56,6 @@ export class Sprite {
       if (t < 0) return i
     }
     return this.durations.length - 1
-  }
-
-  /** Sheet row of a direction, by name or index. */
-  row(direction: string | number) {
-    const row = typeof direction === 'number' ? direction : this.directions.indexOf(direction)
-    if (!Number.isInteger(row) || row < 0 || row >= this.directions.length) {
-      throw new Error(
-        `The sprite "${this.name}" has no direction ${JSON.stringify(direction)} ` +
-          `(it has: ${this.directions.join(', ')}).`,
-      )
-    }
-    return row
   }
 }
 

@@ -46,9 +46,9 @@ editor asks which version to keep. On Mac with `lucarne dev`, use git in the gam
 my-game/
   palette.json       ["#1a1c2c", "#5d275d", …]
   board.json         where each sprite sits on the editor's board, and its color
-  sprites/hero.png   sheet: one row per direction, one column per frame
+  sprites/hero.png   sheet: the animation frames side by side, left to right
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
-                       "directions": [{ "name": "default" }], "frames": [{ "duration": 100 }],
+                       "frames": [{ "duration": 100 }],
                        "origin": { "x": 8, "y": 15 } }   // optional, a pixel
   code/main.ts       the game's code (TypeScript), starting point
   game.js            built from code/ by `lucarne dev`: commit it, never edit it
@@ -68,11 +68,30 @@ import { game, input, screen } from 'lucarne'
 
 let x = 156
 export default game({
-  width: 320, height: 180,                // the game's screen, in pixels
+  width: 320, height: 180,                // the world on screen, in game pixels
   update() { x += input.x * 2 },          // 60 times per second
   draw() { screen.clear('#1a1c2c'); screen.rect(x, 86, 8, 8, '#ffcd75') },
 })
 ```
+
+`width` and `height` are the game's resolution: every display shows exactly that much of
+the world. The engine scales it up by the largest whole number that fits (×5 for
+384 × 216 on a 1080p screen, ×10 on 4K) and fills the rest with black bars. The game never
+chooses the scale, and never needs to know it.
+
+Positions are in game pixels and may have decimals. Things are drawn on the display's own
+pixels: a whole number puts them on the game's pixel grid, a fraction places them between
+its pixels, so a hero running at 1.5 pixels per update moves smoothly instead of stepping
+2, 1, 2, 1. The art is never resampled: a sprite's pixels stay whole squares. Keep what
+must line up with the world's grid (ground, walls) on whole numbers.
+
+`update` runs 60 times per second on every display, and `draw` after each update. Displays
+refresh at other rates (120 Hz, 144 Hz…), so the engine records what `draw` draws and, on
+each displayed frame, shows what moved between its last two positions: motion is smooth on
+any display, with no `dt` in the game's code. Things are recognized by what they look like
+and where they are; one that moved more than 8 pixels in an update jumped (a teleport, a new
+room) and is shown where it is. `draw` only draws: the screen cannot be used elsewhere, and
+the game should not change in it.
 
 Sprites are drawn by name. Their origin pixel lands on the position given, and their
 animation plays by itself on the game's clock (`time.ms`, which stops while paused):
@@ -83,9 +102,9 @@ import { game, screen, sprite } from 'lucarne'
 export default game({
   draw() {
     screen.clear('#1a1c2c')
-    screen.sprite(sprite('hero'), 160, 90)                       // animated, first direction
-    screen.sprite(sprite('hero'), 200, 90, { flipX: true })      // mirrored
-    screen.sprite(sprite('hero'), 240, 90, { direction: 'north', frame: 0 })
+    screen.sprite(sprite('hero'), 160, 90)                    // animated
+    screen.sprite(sprite('hero'), 200, 90, { flipX: true })   // mirrored
+    screen.sprite(sprite('hero'), 240, 90, { frame: 0 })      // one frame
   },
 })
 ```
@@ -132,7 +151,8 @@ npm run build        # installable static version, in dist/
 ```
 
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
-(`runner.ts`), `screen.ts`, `input.ts`, `sprites.ts` and the clock (`time.ts`). `game.js` holds only the game's code: the editor
+(`runner.ts`), `screen.ts`, `interpolate.ts` (smooth motion between updates), `input.ts`,
+`sprites.ts` and the clock (`time.ts`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
 Editor code lives in `editor/src/`:
