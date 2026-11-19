@@ -1198,6 +1198,12 @@ body[data-page='settings'] #settings-page {
 .play-bar {
   height: 44px;
 }
+.play-timings {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding-right: 12px;
+  white-space: nowrap;
+}
 .play-stage {
   position: relative;
   flex: 1;

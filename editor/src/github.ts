@@ -53,14 +53,15 @@ export function isEditorFile(path: string) {
     path === 'palette.json' ||
     path === 'board.json' ||
     path === 'game.js' ||
-    /^sprites\/[^/]+\.(png|json)$/.test(path)
+    /^sprites\/[^/]+\.(png|json)$/.test(path) ||
+    /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path)
   )
 }
 
-/** Files that belong together: a sprite's PNG and JSON are one choice in a conflict. */
+/** Files that belong together: a sprite's (or a font's) files are one choice in a conflict. */
 export function groupOf(path: string) {
-  const m = /^sprites\/(.+)\.(png|json)$/.exec(path)
-  return m ? `sprites/${m[1]}` : path
+  const m = /^(sprites|fonts)\/(.+?)\.(png|json|license\.txt)$/.exec(path)
+  return m ? `${m[1]}/${m[2]}` : path
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +239,7 @@ export async function syncWithGitHub(
   const localPaths = [
     ...(await storage.list('')),
     ...(await storage.list('sprites')).map((n) => `sprites/${n}`),
+    ...(await storage.list('fonts')).map((n) => `fonts/${n}`),
   ].filter(isEditorFile)
   for (const path of localPaths) {
     const data = await storage.read(path)

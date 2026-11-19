@@ -12,6 +12,7 @@ import { createActionsMenu, createMenu, currentPage } from './menu'
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
+import { importFont } from './fontimport'
 import { Player, isPlaying } from './play'
 import { MAX_SIZE, NAME_RE, newSprite, type Sprite } from './sprite'
 import { toImageData } from './png'
@@ -705,8 +706,10 @@ export class App {
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
-    $('topbar').prepend(createMenu())
+    $('topbar').prepend(createMenu([{ label: 'Import a font…', run: () => importFont(this.project) }]))
     const player = new Player(this.project, () => this.saver.flush())
+    // ?play opens straight into the game (what an AI uses to test it).
+    if (new URLSearchParams(location.search).has('play')) void player.play()
     $('run-game').innerHTML = icon('play')
     $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')

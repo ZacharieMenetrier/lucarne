@@ -28,6 +28,8 @@ const tapped = new Set<string>()
 let now = new Set<Button>()
 let before = new Set<Button>()
 let stick = { x: 0, y: 0 }
+/** Buttons held by a script instead of the player (`lucarne.step`), or null. */
+let forced: Set<Button> | null = null
 
 export const input = {
   /** Horizontal direction, from -1 (left) to 1 (right). */
@@ -48,6 +50,12 @@ export const input = {
 export function sampleInput() {
   before = now
   now = new Set()
+  if (forced) {
+    for (const b of forced) now.add(b)
+    input.x = (now.has('right') ? 1 : 0) - (now.has('left') ? 1 : 0)
+    input.y = (now.has('down') ? 1 : 0) - (now.has('up') ? 1 : 0)
+    return
+  }
   for (const code of [...held, ...tapped]) {
     const b = KEYS[code]
     if (b) now.add(b)
@@ -87,6 +95,14 @@ function onKeyUp(e: KeyboardEvent) {
 function onBlur() {
   held.clear()
   tapped.clear()
+}
+
+/**
+ * Holds these buttons instead of reading the player's (null: back to the player). Used to
+ * drive a game from a script: the AI handle, tests.
+ */
+export function forceInput(buttons: Iterable<Button> | null) {
+  forced = buttons ? new Set(buttons) : null
 }
 
 /** Starts or stops listening to the keyboard (only while a game runs). */

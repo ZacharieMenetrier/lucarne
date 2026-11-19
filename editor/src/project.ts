@@ -1,8 +1,9 @@
-// The game folder as the editor sees it: the palette and the sprites.
+// The game folder as the editor sees it: the palette, the sprites and the fonts.
 
 import { Bitmap } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
+import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
 import { decodePng, encodePng } from './png'
 import {
   NAME_RE,
@@ -27,6 +28,7 @@ export const PALETTE_WARNING = 32
 const PALETTE_FILE = 'palette.json'
 const BOARD_FILE = 'board.json'
 const SPRITES_DIR = 'sprites'
+const FONTS_DIR = 'fonts'
 
 export function parsePalette(text: string): string[] {
   const raw = JSON.parse(text) as unknown
@@ -105,6 +107,31 @@ export class Project {
     const png = await encodePng(composeSheet(sprite))
     await this.storage.write(`${SPRITES_DIR}/${sprite.name}.png`, png)
     await writeText(this.storage, `${SPRITES_DIR}/${sprite.name}.json`, serializeMeta(sprite.meta))
+  }
+
+  /** Font names: fonts/<name>.png with its .json. */
+  async listFonts(): Promise<string[]> {
+    const files = new Set(await this.storage.list(FONTS_DIR))
+    return [...files]
+      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && files.has(`${n}.png`))
+      .sort()
+  }
+
+  async loadFont(name: string): Promise<{ sheet: Bitmap; meta: FontMeta }> {
+    const [png, json] = await Promise.all([
+      this.storage.read(`${FONTS_DIR}/${name}.png`),
+      readText(this.storage, `${FONTS_DIR}/${name}.json`),
+    ])
+    if (!png || json === null) throw new Error(`Font not found: ${name}`)
+    return { sheet: await decodePng(png), meta: parseFontMeta(json) }
+  }
+
+  /** Saves a font, and its license when there is one (it travels with the font). */
+  async saveFont(name: string, font: ImportedFont, license: string | null) {
+    await this.storage.write(`${FONTS_DIR}/${name}.png`, await encodePng(font.sheet))
+    await writeText(this.storage, `${FONTS_DIR}/${name}.json`, serializeFontMeta(font.meta))
+    if (license !== null) await writeText(this.storage, `${FONTS_DIR}/${name}.license.txt`, license)
   }
 
   async deleteSprite(name: string) {

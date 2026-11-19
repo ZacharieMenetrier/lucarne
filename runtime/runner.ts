@@ -1,7 +1,6 @@
-// Runs a game: a fixed-step loop (60 updates per second, each followed by the game's
-// draw, recorded) and, on each displayed frame, the latest recording, with what moved drawn
-// between its last two positions. Used by the editor, not by games. Only one game runs at
-// a time.
+// Runs a game: a fixed-step loop (60 updates per second of the world's things) and, on
+// each displayed frame, the world drawn between its last two updates (see world.ts). Used
+// by the editor, not by games. Only one game runs at a time.
 //
 // The game shows the same world everywhere: its width × height in game pixels. The
 // runner scales it up by the largest whole number that fits the space it is given (see
@@ -9,20 +8,27 @@
 // editor's black bars.
 
 import { DEFAULT_HEIGHT, DEFAULT_WIDTH, TICK_RATE, type GameConfig } from './game'
-import { listenInput, sampleInput } from './input'
-import { link } from './interpolate'
-import { attachScreen, presentScreen, recordScreen, type Command } from './screen'
+import { forceInput, listenInput, sampleInput, type Button } from './input'
+import { attachScreen } from './screen'
 import { resetTime, tickTime } from './time'
+import { drawWorld, updateWorld } from './world'
 
 const STEP = 1000 / TICK_RATE
 /** After a long stall (hidden tab, breakpoint), catch up at most this many updates. */
 const MAX_CATCH_UP = 5
 /** Display periods on which updates fall evenly: 60, 120, 180 and 240 Hz. */
 const EVEN_PERIODS = [1, 2, 3, 4].map((k) => STEP / k)
-/** How far the measured period may be from one of them (a display at 59.94 Hz still counts). */
-const PERIOD_TOLERANCE = 0.03
-/** Frames over which the display's period is measured. */
-const PERIOD_FRAMES = 30
+/**
+ * How far the measured period may be from one of them: a display at 59.94 Hz still counts,
+ * one at 58.5 Hz does not (counting it would make the game run 2.5% fast).
+ */
+const PERIOD_TOLERANCE = 0.01
+/**
+ * Frames over which the display's period is measured. Timestamps jitter by up to a
+ * millisecond; averaged over 60 frames, that is under 1% even at 240 Hz (see
+ * PERIOD_TOLERANCE).
+ */
+const PERIOD_FRAMES = 60
 
 export class Runner {
   readonly width: number
@@ -36,10 +42,12 @@ export class Runner {
   private _scale = 1
   /** Durations of the last displayed frames, in milliseconds. */
   private readonly frameTimes: number[] = []
-  /** What the game drew after its last update, paired with what it drew the update before. */
-  private drawn: Command[] = []
   /** How far the displayed frame is between the last two updates (0 to 1). */
   private alpha = 0
+  /** The display's period, when updates fall on it evenly (see `pace`). */
+  private period: number | undefined
+  /** How long updates, drawing and frames take, in milliseconds (averaged). */
+  readonly timings = { update: 0, draw: 0, frame: 0 }
 
   constructor(
     private readonly config: GameConfig,
@@ -51,6 +59,11 @@ export class Runner {
     this.height = positiveInt(config.height, DEFAULT_HEIGHT, 'height')
     canvas.width = this.width
     canvas.height = this.height
+  }
+
+  /** The game's own draw (its background), for whoever draws the world again. */
+  get draw() {
+    return () => this.config.draw?.()
   }
 
   get paused() {
@@ -75,7 +88,7 @@ export class Runner {
     this.canvas.height = this.height * scale
     if (!this.started || this.stopped) return
     attachScreen(this.canvas, this.width, this.height)
-    presentScreen(this.drawn, this.alpha)
+    this.present()
   }
 
   start() {
@@ -85,8 +98,7 @@ export class Runner {
     resetTime()
     if (!this.guard(() => this.config.start?.())) return
     // A first frame right away, so the screen is never blank (even if paused at once).
-    if (!this.record()) return
-    presentScreen(this.drawn, 0)
+    if (!this.present()) return
     this.last = performance.now()
     this.frame = requestAnimationFrame(this.loop)
   }
@@ -115,29 +127,57 @@ export class Runner {
     attachScreen(null)
   }
 
+  /**
+   * Runs `count` updates at once, with these buttons held instead of the player's, then
+   * shows the result. The game stays paused: a script drives it, update by update, the
+   * same way every time (the AI handle, tests).
+   */
+  step(count: number, buttons: Iterable<Button> = []) {
+    if (this.stopped) return
+    this.pause()
+    forceInput(buttons)
+    try {
+      for (let i = 0; i < count; i++) if (!this.update()) return
+    } finally {
+      forceInput(null)
+    }
+    this.alpha = 1
+    this.present()
+  }
+
   private loop = (time: number) => {
+    average(this.timings, 'frame', time - this.last)
     this.lag = Math.min(this.pace(this.lag, time - this.last), STEP * MAX_CATCH_UP)
     this.last = time
     // A hair under a whole update counts: three thirds of one may round just below it.
     while (this.lag >= STEP - 1e-6) {
       this.lag -= STEP
-      sampleInput()
-      if (!this.guard(() => this.config.update?.())) return
-      tickTime()
-      if (!this.record()) return
+      if (!this.update()) return
     }
-    this.alpha = Math.min(1, Math.max(0, this.lag / STEP))
-    presentScreen(this.drawn, this.alpha)
+    // On a 60 Hz display each frame shows exactly one update: show it as it is, rather
+    // than between it and the one before (which only adds a frame of delay).
+    this.alpha = this.period === STEP ? 1 : Math.min(1, Math.max(0, this.lag / STEP))
+    if (!this.present()) return
     this.frame = requestAnimationFrame(this.loop)
   }
 
-  /** Records the game's draw, paired with the one before. False if the game failed. */
-  private record() {
-    return this.guard(() => {
-      const next = recordScreen(() => this.config.draw?.())
-      link(this.drawn, next)
-      this.drawn = next
-    })
+  /** One update of the world. False if the game failed. */
+  private update() {
+    const start = performance.now()
+    sampleInput()
+    let ran = true
+    if (!this.guard(() => (ran = updateWorld()))) return false
+    tickTime(ran)
+    average(this.timings, 'update', performance.now() - start)
+    return true
+  }
+
+  /** Draws the world as it is shown on this frame. False if the game failed. */
+  private present() {
+    const start = performance.now()
+    const ok = this.guard(() => drawWorld(this.alpha, this.draw))
+    average(this.timings, 'draw', performance.now() - start)
+    return ok
   }
 
   /**
@@ -160,6 +200,7 @@ export class Runner {
     const usual = times.filter((t) => Math.abs(t - median) < median / 2)
     const measured = usual.reduce((a, b) => a + b, 0) / usual.length
     const period = EVEN_PERIODS.find((p) => Math.abs(measured - p) < p * PERIOD_TOLERANCE)
+    this.period = period
     if (period === undefined) return lag + delta
     // Whole periods only, the lag included, so rounding errors never shift the beat.
     return Math.round((lag + Math.round(delta / period) * period) / period) * period
@@ -176,6 +217,11 @@ export class Runner {
       return false
     }
   }
+}
+
+/** Keeps a running average of the last second or so (at 60 to 144 frames per second). */
+function average(timings: Record<string, number>, key: string, value: number) {
+  timings[key] = timings[key] === 0 ? value : timings[key] * 0.95 + value * 0.05
 }
 
 function positiveInt(value: unknown, fallback: number, name: string) {

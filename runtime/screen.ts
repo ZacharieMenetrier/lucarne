@@ -7,44 +7,29 @@
 // things on the game's pixel grid, fractions move them smoothly between its pixels. The
 // art itself is never resampled: a sprite's pixels are always whole squares.
 //
-// The game draws after each update, and what it draws is recorded, not shown at once.
-// Each displayed frame then shows the latest recording, with what moved placed between its
-// position in the update before and its position now (see interpolate.ts): motion is
-// smooth whatever the display's refresh rate, while the game still updates 60 times per
-// second.
+// The screen is drawn on only while the world draws (see world.ts): in the game's `draw`
+// (the background, through the camera), in a thing's `draw` (around the thing: (0, 0) is
+// where it is) and in a thing's `drawUI` (on the screen itself, over everything).
 
+import { font as gameFont, type TextOptions } from './fonts'
 import type { Sprite } from './sprites'
 import { time } from './time'
-
-/** A position, in game pixels. */
-export interface Point {
-  x: number
-  y: number
-}
-
-/** Something drawn at a position: what interpolation moves. */
-interface Placed extends Point {
-  /** What it is: things with the same key are the same kind of thing (a sprite, a color). */
-  key: string
-  /** Where it was in the recording before, when it moved there smoothly. */
-  from?: Point
-}
-
-/** One drawing call, as recorded. */
-export type Command =
-  | { kind: 'clear'; color: string }
-  | (Placed & { kind: 'rect'; width: number; height: number; color: string })
-  | (Placed & { kind: 'sprite'; sprite: Sprite; frame: number; flipX: boolean })
 
 let ctx: CanvasRenderingContext2D | null = null
 /** Display pixels per game pixel. */
 let scale = 1
-/** The commands of the draw in progress, or null outside the game's draw(). */
-let recording: Command[] | null = null
+/** Where (0, 0) is, in display pixels: set by the world for each thing it draws. */
+let originX = 0
+let originY = 0
+/** What is being drawn, or null outside drawing (the screen cannot be used then). */
+let phase: 'world' | 'ui' | null = null
+/** The text written on the frame being drawn: what `lucarne.ui()` reports. */
+let written: { text: string; x: number; y: number }[] = []
+let lastWritten: { text: string; x: number; y: number }[] = []
 
-function record(command: Command) {
-  if (!recording) throw new Error("The screen can only be drawn on in the game's draw().")
-  recording.push(command)
+function check() {
+  if (!phase) throw new Error("The screen can only be drawn on in draw(), drawUI() or the game's draw().")
+  return ctx
 }
 
 export const screen = {
@@ -55,21 +40,103 @@ export const screen = {
 
   /** Fills the whole screen with a color ("#1a1c2c"). */
   clear(color: string) {
-    record({ kind: 'clear', color })
+    const c = check()
+    if (!c) return
+    c.fillStyle = color
+    c.fillRect(0, 0, screen.width * scale, screen.height * scale)
   },
 
   /** Fills a rectangle. */
   rect(x: number, y: number, width: number, height: number, color: string) {
-    record({ kind: 'rect', key: `rect ${color} ${width} ${height}`, x, y, width, height, color })
+    const c = check()
+    if (!c) return
+    c.fillStyle = color
+    const left = px(x, originX)
+    const top = px(y, originY)
+    c.fillRect(left, top, px(x + width, originX) - left, px(y + height, originY) - top)
   },
 
   /**
    * Draws a sprite with its origin pixel on (x, y). By default it plays its animation,
-   * looping, on the game's clock (`time.ms`).
+   * looping, on the game's clock (`time.ms`; in `drawUI`, the UI's clock, `time.uiMs`).
    */
   sprite(s: Sprite, x: number, y: number, options: SpriteOptions = {}) {
-    const frame = options.frame === undefined ? s.frameAt(time.ms) : wrap(Math.floor(options.frame), s.frames)
-    record({ kind: 'sprite', key: `sprite ${s.name}`, sprite: s, x, y, frame, flipX: options.flipX ?? false })
+    const c = check()
+    if (!c) return
+    const frame = options.frame === undefined ? s.frameAt(clock()) : wrap(Math.floor(options.frame), s.frames)
+    const flipX = options.flipX ?? false
+    const { width: w, height: h } = s
+    // Mirrored, the origin pixel stays under (x, y): it moves to the other side of the frame.
+    const left = px(x, originX) - (flipX ? w - 1 - s.origin.x : s.origin.x) * scale
+    const top = px(y, originY) - s.origin.y * scale
+    if (!flipX) {
+      c.drawImage(s.sheet, frame * w, 0, w, h, left, top, w * scale, h * scale)
+      return
+    }
+    c.save()
+    c.translate(left + w * scale, top)
+    c.scale(-1, 1)
+    c.drawImage(s.sheet, frame * w, 0, w, h, 0, 0, w * scale, h * scale)
+    c.restore()
+  },
+
+  /**
+   * Draws a sprite as a box of any size, its top left on (x, y): its middle row and middle
+   * column stretch, its edges and corners stay as drawn. A window frame is drawn once and
+   * fits any text.
+   */
+  panel(s: Sprite, x: number, y: number, width: number, height: number) {
+    const c = check()
+    if (!c) return
+    const frame = s.frameAt(clock())
+    const sx = frame * s.width
+    // The middle pixel stretches; what is before and after it stays.
+    const cx = Math.floor(s.width / 2)
+    const cy = Math.floor(s.height / 2)
+    const xs = [0, cx, cx + 1, s.width]
+    const ys = [0, cy, cy + 1, s.height]
+    const right = s.width - cx - 1
+    const bottom = s.height - cy - 1
+    const dx = [x, x + cx, x + width - right, x + width]
+    const dy = [y, y + cy, y + height - bottom, y + height]
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        const left = px(dx[col], originX)
+        const top = px(dy[row], originY)
+        const w = px(dx[col + 1], originX) - left
+        const h = px(dy[row + 1], originY) - top
+        if (w <= 0 || h <= 0 || xs[col + 1] === xs[col] || ys[row + 1] === ys[row]) continue
+        c.drawImage(s.sheet, sx + xs[col], ys[row], xs[col + 1] - xs[col], ys[row + 1] - ys[row], left, top, w, h)
+      }
+    }
+  },
+
+  /**
+   * Writes text with its top left on (x, y), in the game's font (see fonts.ts). Lines
+   * break at "\n", and between words to fit `options.width`.
+   */
+  text(text: string, x: number, y: number, color: string, options: TextOptions = {}) {
+    const c = check()
+    const f = options.font ?? gameFont()
+    written.push({ text, x, y })
+    if (!c) return
+    const w = f.cellWidth
+    const h = f.cellHeight
+    let line = 0
+    for (const content of f.lines(text, options.width)) {
+      let cx = x
+      const top = px(y + line * f.lineHeight, originY)
+      for (const ch of content) {
+        // A space is blank: nothing to stamp.
+        const i = ch === ' ' ? -1 : f.glyph(ch)
+        if (i >= 0) {
+          const at = f.cell(i)
+          c.drawImage(f.tinted(color, i), at.x, at.y, w, h, px(cx, originX), top, w * scale, h * scale)
+        }
+        cx += f.advance(ch)
+      }
+      line++
+    }
   },
 }
 
@@ -84,64 +151,46 @@ function wrap(i: number, n: number) {
   return ((i % n) + n) % n
 }
 
-/** Runs the game's draw and returns what it drew. Called by the loop after each update. */
-export function recordScreen(draw: () => void): Command[] {
-  recording = []
-  try {
-    draw()
-    return recording
-  } finally {
-    recording = null
+/** The clock animations play on: the world's, or the UI's (which a modal UI keeps running). */
+function clock() {
+  return phase === 'ui' ? time.uiMs : time.ms
+}
+
+/** A position in game pixels, in display pixels, from an origin in display pixels. */
+function px(v: number, origin: number) {
+  return origin + Math.round(v * scale)
+}
+
+/** Called by the world: drawing starts, of the world or of the UI. Clears the frame first. */
+export function beginDraw(what: 'world' | 'ui') {
+  if (what === 'world') {
+    written = []
+    if (ctx) ctx.clearRect(0, 0, screen.width * scale, screen.height * scale)
   }
+  phase = what
 }
 
-/**
- * Shows a recording on the canvas. `alpha` (0 to 1) is how far the displayed frame is
- * between the update before and the last one: what moved is drawn that far along.
- */
-export function presentScreen(commands: readonly Command[], alpha: number) {
-  if (!ctx) return
-  const c = ctx
-  for (const cmd of commands) {
-    if (cmd.kind === 'clear') {
-      c.fillStyle = cmd.color
-      c.fillRect(0, 0, screen.width * scale, screen.height * scale)
-      continue
-    }
-    const x = cmd.from ? cmd.from.x + (cmd.x - cmd.from.x) * alpha : cmd.x
-    const y = cmd.from ? cmd.from.y + (cmd.y - cmd.from.y) * alpha : cmd.y
-    if (cmd.kind === 'rect') drawRect(c, x, y, cmd.width, cmd.height, cmd.color)
-    else drawSprite(c, cmd.sprite, cmd.frame, x, y, cmd.flipX)
-  }
+export function endDraw() {
+  phase = null
+  originX = 0
+  originY = 0
+  lastWritten = written
 }
 
-/** A position in game pixels, in display pixels. */
-function px(v: number) {
-  return Math.round(v * scale)
+/** Where (0, 0) is, in display pixels. */
+export function setOrigin(x: number, y: number) {
+  originX = x
+  originY = y
 }
 
-function drawRect(c: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string) {
-  c.fillStyle = color
-  const left = px(x)
-  const top = px(y)
-  c.fillRect(left, top, px(x + width) - left, px(y + height) - top)
+/** Display pixels per game pixel. */
+export function screenScale() {
+  return scale
 }
 
-function drawSprite(c: CanvasRenderingContext2D, s: Sprite, frame: number, x: number, y: number, flipX: boolean) {
-  const { width: w, height: h } = s
-  const sx = frame * w
-  // Mirrored, the origin pixel stays under (x, y): it moves to the other side of the frame.
-  const left = px(x) - (flipX ? w - 1 - s.origin.x : s.origin.x) * scale
-  const top = px(y) - s.origin.y * scale
-  if (!flipX) {
-    c.drawImage(s.sheet, sx, 0, w, h, left, top, w * scale, h * scale)
-    return
-  }
-  c.save()
-  c.translate(left + w * scale, top)
-  c.scale(-1, 1)
-  c.drawImage(s.sheet, sx, 0, w, h, 0, 0, w * scale, h * scale)
-  c.restore()
+/** The text written on the last frame, in screen order. */
+export function writtenText(): readonly { text: string; x: number; y: number }[] {
+  return lastWritten
 }
 
 /**
@@ -149,8 +198,8 @@ function drawSprite(c: CanvasRenderingContext2D, s: Sprite, frame: number, x: nu
  * The game is `width` × `height` game pixels; the canvas, a whole multiple of that.
  * Called again whenever the canvas is resized: resizing resets its drawing settings.
  */
-export function attachScreen(canvas: HTMLCanvasElement | null, width = 0, height = 0) {
-  ctx = canvas?.getContext('2d') ?? null
+export function attachScreen(canvas: HTMLCanvasElement | OffscreenCanvas | null, width = 0, height = 0) {
+  ctx = (canvas?.getContext('2d') as CanvasRenderingContext2D | null | undefined) ?? null
   if (ctx) ctx.imageSmoothingEnabled = false
   screen.width = canvas ? width : 0
   screen.height = canvas ? height : 0

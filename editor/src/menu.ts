@@ -39,8 +39,8 @@ window.addEventListener('popstate', emit)
 window.addEventListener('hashchange', emit)
 document.body.dataset.page = currentPage()
 
-/** A burger button with its drop-down menu, for the start of a top bar. */
-export function createMenu(): HTMLElement {
+/** A burger button with its drop-down menu, for the start of a top bar. `actions` go under the tools. */
+export function createMenu(actions: MenuAction[] = []): HTMLElement {
   const items = h('div', { className: 'menu-list', role: 'menu', hidden: true })
   const button = h('button', {
     type: 'button',
@@ -68,6 +68,17 @@ export function createMenu(): HTMLElement {
   items.append(
     h('div', { className: 'menu-label' }, 'Tools'),
     ...TOOLS.map((t) => item(t.page, t.label)),
+    ...actions.map((a) =>
+      h('button', {
+        type: 'button',
+        role: 'menuitem',
+        className: 'menu-item',
+        onclick: () => {
+          close()
+          a.run()
+        },
+      }, a.label),
+    ),
     h('hr'),
     item('settings', 'Settings'),
   )

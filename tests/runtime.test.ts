@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { Font, setFonts } from '../runtime/fonts'
 import type { GameConfig } from '../runtime/game'
+import { input } from '../runtime/input'
 import { Runner } from '../runtime/runner'
-import { JUMP, link } from '../runtime/interpolate'
-import { attachScreen, presentScreen, recordScreen, screen, type Command } from '../runtime/screen'
+import { attachScreen, screen, writtenText } from '../runtime/screen'
 import { Sprite, setSprites, sprite } from '../runtime/sprites'
+import { time } from '../runtime/time'
+import { Dialogue, Menu } from '../runtime/ui'
+import { Thing, camera, drawWorld, modalThing, resetWorld, updateWorld, worldThings } from '../runtime/world'
 
 const data = {
   name: 'hero',
@@ -12,6 +16,59 @@ const data = {
   durations: [100, 50, 100],
   sheet: {} as CanvasImageSource,
 }
+
+// The browser APIs the runtime touches, enough for node.
+const g = globalThis as Record<string, unknown>
+g.window ??= { addEventListener() {}, removeEventListener() {} }
+g.navigator ??= {}
+g.requestAnimationFrame = () => 0
+g.cancelAnimationFrame = () => {}
+
+/** A 2D context that records fills and images, in display pixels. */
+function fakeContext(calls: unknown[][]) {
+  return {
+    imageSmoothingEnabled: true,
+    fillStyle: '',
+    globalCompositeOperation: '',
+    fillRect: (...a: number[]) => calls.push(['rect', ...a]),
+    clearRect() {},
+    drawImage: (...a: unknown[]) => calls.push(['image', ...a.slice(1)]),
+    save() {},
+    restore() {},
+    translate: (...a: number[]) => calls.push(['translate', ...a]),
+    scale() {},
+  }
+}
+
+function fakeCanvas(width: number, height: number) {
+  const calls: unknown[][] = []
+  const ctx = fakeContext(calls)
+  const canvas = { width, height, getContext: () => ctx } as unknown as HTMLCanvasElement
+  return { canvas, ctx, calls }
+}
+
+// Fonts tint their sheet on small canvases of their own: those draw nothing here.
+g.OffscreenCanvas = class {
+  constructor(
+    public width: number,
+    public height: number,
+  ) {}
+  getContext() {
+    return fakeContext([])
+  }
+}
+
+/** A screen of `w` × `h` game pixels at ×`scale`, recording what is drawn. */
+function screenAt(w: number, h: number, scale: number) {
+  const fake = fakeCanvas(w * scale, h * scale)
+  attachScreen(fake.canvas, w, h)
+  return fake.calls
+}
+
+beforeEach(() => {
+  resetWorld()
+  setSprites([data])
+})
 
 describe('sprites', () => {
   it('picks the frame for a time, looping', () => {
@@ -22,125 +79,235 @@ describe('sprites', () => {
   })
 
   it('looks sprites up by name', () => {
-    setSprites([data])
     expect(sprite('hero').origin).toEqual({ x: 0, y: 0 })
     expect(() => sprite('cat')).toThrow('there are: hero')
   })
 })
 
-/** A canvas whose context records fills and images, in display pixels. */
-function fakeCanvas(width: number, height: number) {
-  const calls: unknown[][] = []
-  const ctx = {
-    imageSmoothingEnabled: true,
-    fillStyle: '',
-    fillRect: (...a: number[]) => calls.push(['rect', ...a]),
-    drawImage: (...a: unknown[]) => calls.push(['image', ...a.slice(1)]),
-    save() {},
-    restore() {},
-    translate: (...a: number[]) => calls.push(['translate', ...a]),
-    scale() {},
-  }
-  const canvas = { width, height, getContext: () => ctx } as unknown as HTMLCanvasElement
-  return { canvas, ctx, calls }
-}
-
 describe('screen', () => {
   it('keeps game pixels as the unit and scales to the canvas', () => {
-    const { canvas, ctx, calls } = fakeCanvas(1920, 1080)
-    attachScreen(canvas, 384, 216)
+    const calls = screenAt(384, 216, 5)
     expect([screen.width, screen.height]).toEqual([384, 216])
-    expect(ctx.imageSmoothingEnabled).toBe(false)
-    const drawn = recordScreen(() => {
+    drawWorld(1, () => {
       screen.clear('#000')
       screen.rect(10, 20, 3, 2, '#fff')
     })
-    expect(calls).toEqual([])
-    presentScreen(drawn, 1)
     expect(calls).toEqual([
       ['rect', 0, 0, 1920, 1080],
       ['rect', 50, 100, 15, 10],
     ])
-    attachScreen(null)
   })
 
   it('places fractions on display pixels, never resampling the art', () => {
     setSprites([{ ...data, origin: { x: 2, y: 7 } }])
-    const { canvas, calls } = fakeCanvas(1920, 1080)
-    attachScreen(canvas, 384, 216)
+    const calls = screenAt(384, 216, 5)
     const s = sprite('hero')
     // 1.5 game pixels at ×5: 7.5 display pixels, rounded to 8; the 8×8 art becomes 40×40.
-    const drawn = recordScreen(() => {
+    drawWorld(1, () => {
       screen.sprite(s, 11.5, 10, { frame: 0 })
       screen.sprite(s, 11.5, 10, { frame: 0, flipX: true })
     })
-    presentScreen(drawn, 1)
     expect(calls).toEqual([
       ['image', 0, 0, 8, 8, 58 - 10, 50 - 35, 40, 40],
       ['translate', 58 - 25 + 40, 50 - 35],
       ['image', 0, 0, 8, 8, 0, 0, 40, 40],
     ])
-    attachScreen(null)
   })
 
-  it('can only be drawn on in draw()', () => {
-    expect(() => screen.rect(0, 0, 1, 1, '#fff')).toThrow("only be drawn on in the game's draw()")
+  it('can only be drawn on while the world draws', () => {
+    expect(() => screen.rect(0, 0, 1, 1, '#fff')).toThrow('can only be drawn on in draw()')
+  })
+
+  it('stretches the middle row and column of a panel, keeping edges and corners', () => {
+    setSprites([{ ...data, name: 'panel', frameWidth: 5, frameHeight: 5, durations: [100] }])
+    const calls = screenAt(100, 100, 1)
+    drawWorld(1, () => screen.panel(sprite('panel'), 10, 20, 30, 12))
+    // Source columns 0-1 | 2 | 3-4 (rows the same) onto 10-11 | 12-37 | 38-39.
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      [0, 0, 2, 2, 10, 20, 2, 2], [2, 0, 1, 2, 12, 20, 26, 2], [3, 0, 2, 2, 38, 20, 2, 2],
+      [0, 2, 2, 1, 10, 22, 2, 8], [2, 2, 1, 1, 12, 22, 26, 8], [3, 2, 2, 1, 38, 22, 2, 8],
+      [0, 3, 2, 2, 10, 30, 2, 2], [2, 3, 1, 2, 12, 30, 26, 2], [3, 3, 2, 2, 38, 30, 2, 2],
+    ])
   })
 })
 
-describe('interpolation', () => {
-  beforeEach(() => setSprites([data, { ...data, name: 'bat' }, { ...data, name: 'hero_idle' }]))
-  /** Records a draw, paired with the one before; returns where each thing was before. */
-  function step(previous: Command[], draw: () => void) {
-    const next = recordScreen(draw)
-    link(previous, next)
-    return next
+/** A thing that records its updates and draws a 1×1 rectangle where it is. */
+class Dot extends Thing {
+  updates = 0
+  constructor(
+    x: number,
+    y: number,
+    readonly log: string[] = [],
+    readonly name = 'dot',
+  ) {
+    super(x, y)
   }
-  const froms = (cmds: Command[]) => cmds.map((c) => (c.kind === 'clear' ? null : (c.from ?? null)))
+  update() {
+    this.updates++
+    this.log.push(this.name)
+  }
+  draw() {
+    screen.rect(0, 0, 1, 1, this.name)
+  }
+}
 
-  it('moves what moved, between its two positions', () => {
-    const { canvas, calls } = fakeCanvas(10, 10)
-    attachScreen(canvas, 10, 10)
-    const a = step([], () => screen.rect(0, 0, 1, 1, '#fff'))
-    const b = step(a, () => screen.rect(4, 2, 1, 1, '#fff'))
-    presentScreen(b, 0.5)
-    expect(calls).toEqual([['rect', 2, 1, 1, 1]])
-    attachScreen(null)
+describe('things', () => {
+  it('update in the order they were created; one created meanwhile waits for the next update', () => {
+    const log: string[] = []
+    class Spawner extends Dot {
+      update() {
+        super.update()
+        if (this.updates === 1) new Dot(0, 0, log, 'child')
+      }
+    }
+    new Dot(0, 0, log, 'a')
+    new Spawner(0, 0, log, 'spawner')
+    new Dot(0, 0, log, 'b')
+    updateWorld()
+    expect(log).toEqual(['a', 'spawner', 'b'])
+    updateWorld()
+    expect(log.slice(3)).toEqual(['a', 'spawner', 'b', 'child'])
   })
 
-  it('keeps each of two identical things on its own path, whatever the order', () => {
-    const a = step([], () => {
-      screen.sprite(sprite('bat'), 0, 0)
-      screen.sprite(sprite('bat'), 50, 0)
-    })
-    const b = step(a, () => {
-      screen.sprite(sprite('bat'), 51, 0)
-      screen.sprite(sprite('bat'), 1, 0)
-    })
-    expect(froms(b)).toEqual([{ x: 50, y: 0 }, { x: 0, y: 0 }])
+  it('leave the world at the end of the update that removes them', () => {
+    const log: string[] = []
+    const a = new Dot(0, 0, log, 'a')
+    class Remover extends Dot {
+      update() {
+        super.update()
+        a.remove()
+      }
+    }
+    new Remover(0, 0, log, 'remover')
+    updateWorld()
+    expect(log).toEqual(['a', 'remover'])
+    expect(worldThings().map((t) => (t as Dot).name)).toEqual(['remover'])
+    expect(a.removed).toBe(true)
   })
 
-  it('follows a sprite that turns into another, and leaves still things alone', () => {
-    const a = step([], () => {
-      screen.clear('#000')
-      screen.rect(5, 5, 2, 2, '#fff')
-      screen.sprite(sprite('hero'), 10, 10)
-    })
-    const b = step(a, () => {
-      screen.clear('#000')
-      screen.rect(5, 5, 2, 2, '#fff')
-      screen.sprite(sprite('hero_idle'), 11.5, 10)
-    })
-    expect(froms(b)).toEqual([null, null, { x: 10, y: 10 }])
+  it('are drawn between their last two positions, around themselves', () => {
+    const calls = screenAt(100, 100, 10)
+    class Mover extends Dot {
+      update() {
+        this.move(4, 2)
+      }
+    }
+    new Mover(10, 10)
+    updateWorld()
+    updateWorld()
+    drawWorld(0.5)
+    // Halfway between (14, 12) and (18, 14), at ×10.
+    expect(calls).toEqual([['rect', 160, 130, 10, 10]])
   })
 
-  it('does not move what jumped, nor what is new', () => {
-    const a = step([], () => screen.sprite(sprite('hero'), 0, 0))
-    const b = step(a, () => {
-      screen.sprite(sprite('hero'), JUMP + 1, 0)
-      screen.sprite(sprite('bat'), 100, 100)
-    })
-    expect(froms(b)).toEqual([null, null])
+  it('are drawn where they are when new or placed: no in-between', () => {
+    const calls = screenAt(100, 100, 10)
+    const dot = new Dot(10, 10)
+    drawWorld(0.5)
+    updateWorld()
+    dot.place(50, 50)
+    drawWorld(0.5)
+    expect(calls).toEqual([
+      ['rect', 100, 100, 10, 10],
+      ['rect', 500, 500, 10, 10],
+    ])
+  })
+
+  it('are drawn from the top of the world down, ties in creation order', () => {
+    const calls = screenAt(100, 100, 1)
+    new Dot(0, 50, [], 'low')
+    new Dot(1, 10, [], 'high')
+    new Dot(2, 50, [], 'low too')
+    drawWorld(1)
+    expect(calls.map((c) => c[1])).toEqual([1, 0, 2])
+  })
+
+  it('draw their UI over the world, on the screen itself', () => {
+    const calls = screenAt(100, 100, 1)
+    class Hud extends Thing {
+      drawUI() {
+        screen.rect(2, 3, 1, 1, '#fff')
+      }
+    }
+    new Hud(40, 40)
+    new Dot(10, 10)
+    camera.x = 5
+    drawWorld(1)
+    expect(calls).toEqual([
+      ['rect', 5, 10, 1, 1],
+      ['rect', 2, 3, 1, 1],
+    ])
+  })
+})
+
+describe('camera', () => {
+  it('keeps the thing it follows still in the middle while the world scrolls', () => {
+    const calls = screenAt(100, 60, 5)
+    class Walker extends Dot {
+      update() {
+        this.move(1.3, 0)
+      }
+    }
+    const hero = new Walker(30, 30)
+    camera.follow(hero)
+    updateWorld()
+    for (const alpha of [0, 0.3, 0.7, 1]) {
+      drawWorld(alpha, () => screen.rect(0, 0, 1, 1, 'ground'))
+    }
+    const heroes = calls.filter((_, i) => i % 2 === 1)
+    expect(new Set(heroes.map((c) => `${c[1]},${c[2]}`))).toEqual(new Set(['250,150']))
+    // The ground moves under it: the camera goes from x = 30 - 50 to 31.3 - 50, at ×5.
+    const grounds = calls.filter((_, i) => i % 2 === 0).map((c) => c[1])
+    expect(grounds).toEqual([100, 98, 95, 94])
+  })
+
+  it('jumps with a thing it follows when the thing is placed', () => {
+    const calls = screenAt(100, 60, 1)
+    class Teleporter extends Dot {
+      update() {
+        this.place(500, 500)
+      }
+    }
+    camera.follow(new Teleporter(30, 30))
+    updateWorld()
+    drawWorld(0.5, () => screen.rect(0, 0, 1, 1, 'ground'))
+    expect(calls[0].slice(1, 3)).toEqual([-450, -470])
+  })
+})
+
+describe('modal things', () => {
+  it('stop the world: only the last one updates, and the world clock stops', () => {
+    const log: string[] = []
+    new Dot(0, 0, log, 'world')
+    class Modal extends Dot {
+      modal = true
+    }
+    const first = new Modal(0, 0, log, 'first')
+    const second = new Modal(0, 0, log, 'second')
+    expect(updateWorld()).toBe(false)
+    expect(log).toEqual(['second'])
+    second.remove()
+    updateWorld()
+    first.remove()
+    updateWorld()
+    expect(log).toEqual(['second', 'first', 'world'])
+    expect(modalThing()).toBe(null)
+  })
+
+  it('keep the UI clock running while the world clock stops', () => {
+    const canvas = fakeCanvas(100, 100).canvas
+    const r = new Runner({ width: 100, height: 100 }, canvas, (err) => { throw err })
+    r.start()
+    class Modal extends Thing {
+      modal = true
+    }
+    r.step(6)
+    const m = new Modal()
+    r.step(6)
+    m.remove()
+    r.step(6)
+    expect([time.ms, time.uiMs]).toEqual([200, 300])
+    r.stop()
   })
 })
 
@@ -155,19 +322,41 @@ describe('runner', () => {
     r.fit(100, 100)
     expect([r.scale, canvas.width, canvas.height]).toEqual([1, 384, 216])
   })
+
+  it('steps a given number of updates with buttons held, the same way every time', () => {
+    const run = () => {
+      resetWorld()
+      class Walker extends Thing {
+        update() {
+          this.move(input.x * 1.25, input.y)
+        }
+      }
+      const w = new Walker(10, 10)
+      const r = new Runner({ width: 100, height: 100 }, fakeCanvas(100, 100).canvas, (err) => { throw err })
+      r.start()
+      r.step(60, ['right'])
+      r.step(10, ['down', 'left'])
+      expect(r.paused).toBe(true)
+      r.stop()
+      return [w.x, w.y]
+    }
+    expect(run()).toEqual([10 + 75 - 12.5, 20])
+    expect(run()).toEqual(run())
+  })
 })
 
 describe('runner pacing', () => {
   /** Runs a game on a simulated display; returns how many updates ran on each frame. */
   function simulate(hz: number, frames: number, jitterMs: number, config: GameConfig = {}, canvas?: HTMLCanvasElement) {
-    const g = globalThis as Record<string, unknown>
-    g.window ??= { addEventListener() {}, removeEventListener() {} }
-    g.requestAnimationFrame = () => 0
-    g.cancelAnimationFrame = () => {}
     let updates = 0
-    canvas ??= { width: 0, height: 0, getContext: () => ({}) } as unknown as HTMLCanvasElement
-    const update = config.update
-    const r = new Runner({ ...config, update: () => (updates++, update?.()) }, canvas, (err) => { throw err })
+    class Counter extends Thing {
+      update() {
+        updates++
+      }
+    }
+    new Counter()
+    canvas ??= fakeCanvas(10, 10).canvas
+    const r = new Runner(config, canvas, (err) => { throw err })
     r.fit(canvas.width * 100, canvas.height * 100)
     r.start()
     const loop = (r as unknown as { loop: (t: number) => void }).loop
@@ -194,33 +383,151 @@ describe('runner pacing', () => {
     expect(beat.replace(/^0*1/, '')).toMatch(/^(001)*0{0,2}$/)
   })
 
-  /** Display pixels the drawn thing moves on each frame, at ×100, at 144 Hz. */
-  function stepsAt144(jitterMs: number) {
-    let x = 0
-    const { canvas, calls } = fakeCanvas(10, 10)
-    simulate(144, 300, jitterMs, {
-      width: 10,
-      height: 10,
-      update: () => (x += 1.5),
-      draw: () => screen.rect(x, 0, 1, 1, '#fff'),
-    }, canvas)
-    const xs = calls.map((c) => c[1] as number)
-    return xs.slice(30).map((v, i) => v - xs[29 + i])
+  it('does not take a 58.5 Hz display for a 60 Hz one', () => {
+    // Counted as 60 Hz, it would run 60 updates per second of 58.5 frames: 2.5% fast.
+    const total = simulate(58.5, 585, 0.2).reduce((a, b) => a + b, 0)
+    expect(Math.abs(total - 600)).toBeLessThanOrEqual(1)
+  })
+
+  /** Display pixels a moving thing goes on each frame, at ×100. */
+  function steps(hz: number, jitterMs: number) {
+    resetWorld()
+    const fake = fakeCanvas(10, 10)
+    class Mover extends Thing {
+      update() {
+        this.move(1.5, 0)
+      }
+      draw() {
+        screen.rect(0, 0, 1, 1, '#fff')
+      }
+    }
+    new Mover()
+    simulate(hz, 300, jitterMs, { width: 10, height: 10 }, fake.canvas)
+    const xs = fake.calls.map((c) => c[1] as number)
+    return { xs, steps: xs.slice(30).map((v, i) => v - xs[29 + i]) }
   }
 
   it('moves things evenly on every displayed frame at 144 Hz', () => {
     // 1.5 pixels × 60 updates / 144 frames = 62.5 display pixels per frame at ×100.
     // Without interpolation, steps would be 0 or 150.
-    expect(new Set(stepsAt144(0))).toEqual(new Set([62, 63]))
+    expect(new Set(steps(144, 0).steps)).toEqual(new Set([62, 63]))
     // Jittery timestamps shift each frame a little (no steady beat to lock on at 144 Hz):
     // within ±0.1 game pixel here, under half a display pixel at ×5.
-    const jittery = stepsAt144(0.5)
+    const jittery = steps(144, 0.5).steps
     expect(Math.min(...jittery)).toBeGreaterThan(62.5 - 15)
     expect(Math.max(...jittery)).toBeLessThan(62.5 + 15)
+  })
+
+  it('shows the last update as it is on a 60 Hz display, without a frame of delay', () => {
+    resetWorld()
+    let x = 0
+    class Mover extends Thing {
+      update() {
+        this.move(1.5, 0)
+        x = this.x
+      }
+      draw() {
+        screen.rect(0, 0, 1, 1, '#fff')
+      }
+    }
+    new Mover()
+    const fake = fakeCanvas(10, 10)
+    simulate(60, 120, 0.5, { width: 10, height: 10 }, fake.canvas)
+    const last = fake.calls[fake.calls.length - 1][1] as number
+    expect(last).toBe(Math.round(x * 100))
   })
 
   it('still runs 60 updates per second at other rates', () => {
     const total = simulate(144, 144 * 5, 1).reduce((a, b) => a + b, 0)
     expect(Math.abs(total - 300)).toBeLessThanOrEqual(1)
+  })
+})
+
+/** A font of 4 × 6 cells: the next character starts 3 pixels after a space, 4 after "a", 5 after "b". */
+function testFont() {
+  setFonts([{
+    name: 'test',
+    cellWidth: 4,
+    cellHeight: 6,
+    columns: 2,
+    characters: ' ab?',
+    advances: [3, 4, 5, 4],
+    sheet: {} as CanvasImageSource,
+  }])
+}
+
+describe('text', () => {
+  beforeEach(testFont)
+
+  it('measures and wraps between words', () => {
+    const f = new Font({ name: 't', cellWidth: 4, cellHeight: 6, columns: 2, characters: ' ab?', advances: [3, 4, 5, 4], sheet: {} as CanvasImageSource })
+    expect(f.lineWidth('ab')).toBe(4 + 5)
+    expect(f.lines('ab ab ab', 21)).toEqual(['ab ab', 'ab'])
+    expect(f.lines('a\nb')).toEqual(['a', 'b'])
+    expect(f.measure('ab ab ab', 21)).toEqual({ width: 21, height: 12 })
+  })
+
+  it('stamps each character on whole pixels, from its cell', () => {
+    const calls = screenAt(100, 100, 2)
+    drawWorld(1, () => screen.text('ab a\nzb', 10, 20, '#fff'))
+    // Cells: " " 0, "a" 1, "b" 2, "?" 3 (2 per row). An unknown character draws "?".
+    // "a" at 10, "b" at 10 + 4, a space (not drawn) at 19, "a" at 19 + 3, at ×2.
+    expect(calls.map((c) => c.slice(1))).toEqual([
+      [4, 0, 4, 6, 20, 40, 8, 12],
+      [0, 6, 4, 6, 28, 40, 8, 12],
+      [4, 0, 4, 6, 44, 40, 8, 12],
+      [4, 6, 4, 6, 20, 52, 8, 12],
+      [0, 6, 4, 6, 28, 52, 8, 12],
+    ])
+    expect(writtenText().map((t) => t.text)).toEqual(['ab a\nzb'])
+  })
+
+  it('needs a font in the game folder', () => {
+    setFonts([])
+    screenAt(10, 10, 1)
+    expect(() => drawWorld(1, () => screen.text('a', 0, 0, '#fff'))).toThrow('No font in fonts/')
+  })
+})
+
+describe('dialogue and menu', () => {
+  beforeEach(testFont)
+
+  function play() {
+    const r = new Runner({ width: 200, height: 100 }, fakeCanvas(200, 100).canvas, (err) => { throw err })
+    r.start()
+    return r
+  }
+
+  it('shows a dialogue letter by letter, page by page, then closes', () => {
+    const r = play()
+    const d = new Dialogue(['ab ab', 'b ab ab'])
+    r.step(4) // half a letter per update
+    expect(writtenText().map((t) => t.text)).toEqual(['ab'])
+    r.step(1, ['action']) // the whole page at once
+    expect(d.done).toBe(true)
+    expect(writtenText().map((t) => t.text)).toEqual(['ab ab'])
+    r.step(1)
+    r.step(1, ['action']) // next page
+    r.step(1)
+    r.step(1, ['action']) // shown at once
+    r.step(1)
+    r.step(1, ['action']) // closes
+    expect(d.removed).toBe(true)
+    r.stop()
+  })
+
+  it('moves a menu cursor and calls back with the choice', () => {
+    const r = play()
+    let chosen = -1
+    new Menu(['a', 'b', 'ab'], (i) => (chosen = i))
+    r.step(1, ['up']) // wraps to the last
+    r.step(1)
+    r.step(1, ['down'])
+    r.step(1)
+    r.step(1, ['down'])
+    r.step(1, ['action'])
+    expect(chosen).toBe(1)
+    expect(modalThing()).toBe(null)
+    r.stop()
   })
 })

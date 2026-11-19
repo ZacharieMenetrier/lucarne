@@ -2,10 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "editeur",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "name": "lutin",
+      "url": "http://localhost:5173",
       "port": 5173
+    },
+    {
+      "name": "test-editor",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "npm run dev -- \"${TMPDIR:-/tmp}/lucarne-test-game\" --port 5174"],
+      "port": 5174
     }
   ]
 }

@@ -71,6 +71,11 @@ export function sprite(name: string): Sprite {
   return s
 }
 
+/** The sprite named `name`, or null if the game has none. */
+export function findSprite(name: string): Sprite | null {
+  return loaded.get(name) ?? null
+}
+
 /** Called by the editor before the game's code runs. */
 export function setSprites(list: SpriteData[]) {
   loaded = new Map(list.map((d) => [d.name, new Sprite(d)]))

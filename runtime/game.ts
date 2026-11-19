@@ -8,14 +8,16 @@ export interface GameConfig {
   width?: number
   /** Height of the world on screen, in game pixels (180 by default). See `width`. */
   height?: number
-  /** Called once, before the first update. */
-  start?(): void
-  /** Called 60 times per second, whatever the display's refresh rate. Move things here. */
-  update?(): void
   /**
-   * Called after each update. Draw here, with `screen` (and only here). Only draw: change
-   * nothing in the game. The engine shows what moved smoothly between two updates on every
-   * display, at 60, 120 or 144 Hz.
+   * Called once when the game starts, before the first update. The world is empty then:
+   * create the game's things here (or at the top of `code/main.ts`, which also runs anew
+   * each time the game starts).
+   */
+  start?(): void
+  /**
+   * Draws the world's background, through the camera, under the things: on every
+   * displayed frame. Only draw: change nothing in the game. What moves is a thing (see
+   * `Thing`), drawn smoothly between its updates.
    */
   draw?(): void
 }
