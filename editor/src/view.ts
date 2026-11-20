@@ -22,6 +22,7 @@ export class View extends Viewport {
   showGrid = false
   showChecker = false
   private checkerPattern: { tint: string; size: number; pattern: CanvasPattern } | null = null
+  private hatchPattern: { size: number; pattern: CanvasPattern } | null = null
 
   /** One canvas per sprite redrawn every frame. Never shared: Safari may
    * draw a canvas lazily, showing whatever it contains at the end. */
@@ -148,26 +149,42 @@ export class View extends Viewport {
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
 
-    // Origin (Origin tool only): crosshair across the sprite through the origin
-    // pixel, and the pixel outlined. White over black so it shows on any color.
+    // Origin (Origin tool only): the origin pixel outlined, with four short ticks. White over black so it shows on any color.
     if (tool === 'origin') {
-      for (const { pl, bmp, x, y, w, h } of visible) {
+      for (const { pl, bmp, x, y } of visible) {
         const o = pl.sprite.meta.origin
         if (!o || o.x >= bmp.width || o.y >= bmp.height) continue
         const px = x + o.x * z
         const py = y + o.y * z
         const cx = Math.round(px + z / 2 - lw / 2)
         const cy = Math.round(py + z / 2 - lw / 2)
+        // Four short ticks just outside the pixel, like a reticle: marks the spot
+        // without covering the art.
+        const tick = Math.max(3 * lw, Math.round(z * 0.75))
         for (const [color, g] of [['#000', lw], ['#fff', 0]] as const) {
           ctx.fillStyle = color
-          ctx.fillRect(cx - g, y, lw + 2 * g, h)
-          ctx.fillRect(x, cy - g, w, lw + 2 * g)
+          ctx.fillRect(cx - g, py - tick - g, lw + 2 * g, tick + g)
+          ctx.fillRect(cx - g, py + z, lw + 2 * g, tick + g)
+          ctx.fillRect(px - tick - g, cy - g, tick + g, lw + 2 * g)
+          ctx.fillRect(px + z, cy - g, tick + g, lw + 2 * g)
         }
         ctx.lineWidth = lw
         ctx.strokeStyle = '#000'
         ctx.strokeRect(px + lw / 2, py + lw / 2, z - lw, z - lw)
         ctx.strokeStyle = '#fff'
         ctx.strokeRect(px + lw * 1.5, py + lw * 1.5, z - lw * 3, z - lw * 3)
+      }
+    }
+
+    // Solid boxes of the tilesets (Box tool only): hatched, so the art shows through.
+    if (tool === 'box') {
+      for (const { name, pl, x, y } of visible) {
+        if (!isTileset(name)) continue
+        for (const b of pl.sprite.meta.solid ?? []) {
+          const bx = x + (b.column * editor.tileSize + b.x) * z
+          const by = y + (b.row * editor.tileSize + b.y) * z
+          this.drawSolid(bx, by, b.width * z, b.height * z, lw)
+        }
       }
     }
 
@@ -199,6 +216,36 @@ export class View extends Viewport {
       ctx.setLineDash([])
       this.requestRender()
     }
+  }
+
+  /** A solid box: red hatching anchored to the board, and its outline. */
+  private drawSolid(x: number, y: number, w: number, h: number, lw: number) {
+    const { ctx } = this
+    const size = Math.max(6, Math.round(6 * this.dpr))
+    if (this.hatchPattern?.size !== size) {
+      const tile = document.createElement('canvas')
+      tile.width = tile.height = size
+      const t = tile.getContext('2d')!
+      t.strokeStyle = DANGER
+      t.lineWidth = Math.max(1, Math.round(this.dpr))
+      t.beginPath()
+      // A diagonal, and the corners that continue it, so the stripes join across tiles.
+      for (const o of [-size, 0, size]) {
+        t.moveTo(o, size)
+        t.lineTo(o + size, 0)
+      }
+      t.stroke()
+      this.hatchPattern = { size, pattern: ctx.createPattern(tile, 'repeat')! }
+    }
+    const { pattern } = this.hatchPattern
+    pattern.setTransform(new DOMMatrix().translate(this.ox, this.oy))
+    ctx.fillStyle = 'rgba(224, 86, 107, 0.18)'
+    ctx.fillRect(x, y, w, h)
+    ctx.fillStyle = pattern
+    ctx.fillRect(x, y, w, h)
+    ctx.strokeStyle = DANGER
+    ctx.lineWidth = lw
+    ctx.strokeRect(x + lw / 2, y + lw / 2, w - lw, h - lw)
   }
 
   /** Draws pixels; `live` names a sprite that changes every frame. */

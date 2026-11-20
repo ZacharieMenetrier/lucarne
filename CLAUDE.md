@@ -12,7 +12,7 @@ should get the right behavior by writing nothing. This is a requirement for ever
   and make it the only one. Decide; write why in a comment. If the right choice is unclear,
   ask the user rather than letting each game choose.
 - A game declares what it is (its resolution, its sprites, its code), never how the engine
-  works (scaling, frame rate, keys, file layout, where things are found).
+  works (scaling, frame rate, keys, file layout, where actors are found).
 - When a choice really belongs to the game, it gets one obvious default, so that leaving it
   out is the usual case.
 - Files and folders have fixed names and places. The engine finds them; nothing points to
@@ -38,7 +38,7 @@ Lucarne is developed AI first: an AI must be able to run, play and check everyth
   Playing reads the game folder and writes nothing. In play mode, `window.lucarne` drives
   the game without the keyboard or screenshots (README: "Driving a game from a script"):
   `lucarne.step(n, buttons)` runs n updates with those buttons held (exact, works with the
-  page hidden), `lucarne.things()` lists the things and their state, `lucarne.ui()` the
+  page hidden), `lucarne.actors()` lists the actors and their state, `lucarne.ui()` the
   text on screen, `await lucarne.picture()` the frame at game resolution.
 - The browser pane only follows `.claude/launch.json` of the session's working folder: from
   a game's folder, start the test editor with Bash, in the background.

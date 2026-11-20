@@ -1,5 +1,5 @@
-// Ready-made UI: a dialogue box and a menu. Both are modal things: while one is open, the
-// world stops behind it (see `Thing.modal`), and it removes itself when done.
+// Ready-made UI: a dialogue box and a menu. Both are modal actors: while one is open, the
+// world stops behind it (see `Actor.modal`), and it removes itself when done.
 //
 //   new Dialogue(['Hello!', 'Nice weather today.'])
 //   new Menu(['Yes', 'No'], (i) => { if (i === 0) shop.open() })
@@ -14,7 +14,7 @@ import { input } from './input'
 import { screen } from './screen'
 import { findSprite } from './sprites'
 import { time } from './time'
-import { Thing } from './world'
+import { Actor } from './world'
 
 /** Space around a box and the screen's edge, in pixels. */
 const MARGIN = 4
@@ -46,7 +46,7 @@ function padding() {
  * other. The action button shows the whole page at once, then goes to the next one; after
  * the last, the dialogue closes.
  */
-export class Dialogue extends Thing {
+export class Dialogue extends Actor {
   modal = true
   /** Color of the text (and of a plain box's border). */
   color = '#f4f4f4'
@@ -101,7 +101,7 @@ export class Dialogue extends Thing {
  * A list of choices in a box, in the middle of the screen. Up and down move the cursor,
  * the action button chooses: the menu closes and calls `onChoose`.
  */
-export class Menu extends Thing {
+export class Menu extends Actor {
   modal = true
   /** Color of the text (and of a plain box's border). */
   color = '#f4f4f4'

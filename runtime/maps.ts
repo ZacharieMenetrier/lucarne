@@ -1,10 +1,13 @@
 // The game's maps (maps/*.json) and the tilesets they take their tiles from (tiles/*.png).
 //
 // The whole game sits in one world: each map has its place in it, and every map is there
-// from the start. The engine draws them itself, under the things, and the camera stays
-// inside the map that holds the thing it follows (see world.ts). Nothing to write in the
+// from the start. The engine draws them itself, under the actors, and the camera stays
+// inside the map that holds the actor it follows (see world.ts). Nothing to write in the
 // game's code to see them: a door to another map is `hero.place(x, y)`, and `map(name)` or
-// `mapAt(x, y)` say where a map is (to place a thing in it, or keep it inside).
+// `mapAt(x, y)` say where a map is (to place an actor in it, or keep it inside).
+//
+// A map also says which actors stand in it when the game starts (see `placeActors` in
+// world.ts): the game's code says what a villager is, the map says where each one starts.
 //
 // The editor loads every tileset and map before the game's code runs.
 
@@ -17,6 +20,17 @@ export interface Tile {
   row: number
 }
 
+/**
+ * An actor placed on a map: the name its class is exported under from `code/main.ts`, and
+ * where it starts (its feet), in game pixels from the map's top left corner. Placed actors
+ * move with their map.
+ */
+export interface Placement {
+  type: string
+  x: number
+  y: number
+}
+
 /** A map as the editor hands it to the engine. Positions and sizes are in cells. */
 export interface MapData {
   name: string
@@ -26,12 +40,37 @@ export interface MapData {
   height: number
   /** Row by row from the top left; null for an empty cell (the background shows). */
   cells: (Tile | null)[]
+  /** The actors that start in it, in the order they are created. */
+  actors: Placement[]
+}
+
+/**
+ * The solid part of a tile (tiles/<name>.json): one rectangle, in pixels inside the tile.
+ * A tile has at most one; a tile without one is not solid.
+ */
+export interface TileBox {
+  column: number
+  row: number
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export interface TilesetData {
   name: string
   /** Its pixels: whole tiles, `tileSize` wide and high. */
   sheet: CanvasImageSource
+  /** Its solid tiles (none if left out). */
+  solid?: TileBox[]
+}
+
+/** A rectangle in the world, in game pixels. */
+export interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 /** A map's place in the world, in game pixels. */
@@ -46,19 +85,51 @@ export interface MapRect {
 let size = 16
 let maps: MapData[] = []
 let sheets = new Map<string, CanvasImageSource>()
+/** Solid tiles by tileset, then by "column,row". */
+let solids = new Map<string, Map<string, TileBox>>()
 
 /** Called by the editor before the game's code runs. */
 export function setMaps(tileSize: number, tilesets: TilesetData[], list: MapData[]) {
   size = tileSize
   sheets = new Map(tilesets.map((t) => [t.name, t.sheet]))
+  solids = new Map(tilesets.map((t) => [t.name, new Map((t.solid ?? []).map((b) => [`${b.column},${b.row}`, b]))]))
   maps = list
+}
+
+/** The map holding a cell, if any. */
+function mapOfCell(cx: number, cy: number): MapData | undefined {
+  return maps.find((m) => cx >= m.x && cy >= m.y && cx < m.x + m.width && cy < m.y + m.height)
+}
+
+/**
+ * Pushes into `out` the solid rectangles (world pixels) of the cells that a rectangle of
+ * the world touches: the solid part of each tile there, and every cell outside the maps,
+ * whole. The camera never leaves the maps, so neither does anything that collides: the
+ * space between them is a wall. A game with no maps has no walls at all.
+ */
+export function solidsIn(left: number, top: number, right: number, bottom: number, out: Rect[]) {
+  if (!maps.length) return
+  const x0 = Math.floor(left / size)
+  const y0 = Math.floor(top / size)
+  const x1 = Math.ceil(right / size) - 1
+  const y1 = Math.ceil(bottom / size) - 1
+  for (let cy = y0; cy <= y1; cy++) {
+    for (let cx = x0; cx <= x1; cx++) {
+      const m = mapOfCell(cx, cy)
+      if (!m) {
+        out.push({ x: cx * size, y: cy * size, width: size, height: size })
+        continue
+      }
+      const t = m.cells[(cy - m.y) * m.width + (cx - m.x)]
+      const b = t && solids.get(t.tileset)?.get(`${t.col},${t.row}`)
+      if (b) out.push({ x: cx * size + b.x, y: cy * size + b.y, width: b.width, height: b.height })
+    }
+  }
 }
 
 /** The map under a world point (game pixels), or null between maps. Maps never overlap. */
 export function mapAt(x: number, y: number): MapRect | null {
-  const cx = Math.floor(x / size)
-  const cy = Math.floor(y / size)
-  const m = maps.find((m) => cx >= m.x && cy >= m.y && cx < m.x + m.width && cy < m.y + m.height)
+  const m = mapOfCell(Math.floor(x / size), Math.floor(y / size))
   return m ? rectOf(m) : null
 }
 
@@ -70,6 +141,16 @@ export function map(name: string): MapRect {
   const m = maps.find((m) => m.name === name)
   if (!m) throw new Error(`No map named "${name}" in maps/`)
   return rectOf(m)
+}
+
+/**
+ * Every actor placed on the maps, in the world (game pixels): map by map, by name, then in
+ * each map's order. The same order every time, so updates run in the same order too.
+ */
+export function placements(): { map: string; type: string; x: number; y: number }[] {
+  return [...maps]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .flatMap((m) => m.actors.map((t) => ({ map: m.name, type: t.type, x: m.x * size + t.x, y: m.y * size + t.y })))
 }
 
 function rectOf(m: MapData): MapRect {

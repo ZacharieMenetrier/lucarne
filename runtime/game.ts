@@ -2,15 +2,15 @@
  * resolution, its tile size) are in game.json, which the editor writes (see `GameSettings`). */
 export interface GameConfig {
   /**
-   * Called once when the game starts, before the first update. The world is empty then:
-   * create the game's things here (or at the top of `code/main.ts`, which also runs anew
-   * each time the game starts).
+   * Called once when the game starts, before the first update. The actors placed on the
+   * maps are in the world then, after the ones `code/main.ts` created at its top level
+   * (which also runs anew each time the game starts).
    */
   start?(): void
   /**
-   * Draws the world's background, through the camera, under the things: on every
-   * displayed frame. Only draw: change nothing in the game. What moves is a thing (see
-   * `Thing`), drawn smoothly between its updates.
+   * Draws the world's background, through the camera, under the actors: on every
+   * displayed frame. Only draw: change nothing in the game. What moves is an actor (see
+   * `Actor`), drawn smoothly between its updates.
    */
   draw?(): void
 }

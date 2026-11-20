@@ -36,8 +36,9 @@ describe('sync helpers', () => {
     expect(isEditorFile('game.json')).toBe(true)
     expect(isEditorFile('tiles/outdoor.png')).toBe(true)
     expect(isEditorFile('maps/town.json')).toBe(true)
-    expect(isEditorFile('tiles/outdoor.json')).toBe(false)
+    expect(isEditorFile('tiles/outdoor.json')).toBe(true)
     expect(groupOf('sprites/hero.json')).toBe('sprites/hero')
+    expect(groupOf('tiles/outdoor.json')).toBe('tiles/outdoor')
     expect(groupOf('board.json')).toBe('board.json')
   })
 

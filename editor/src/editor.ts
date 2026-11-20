@@ -26,12 +26,12 @@ import {
 import { boundsOf, findFreeSpot, overlaps, resizeRect, resolveOverlaps, type BoardFile, type Corner, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
-import { MAX_SIZE, isTileset, type Sprite } from './sprite'
+import { MAX_SIZE, isTileset, sortTileBoxes, type Sprite, type TileBox } from './sprite'
 
 export const MIN_FPS = 2
 export const MAX_FPS = 24
 
-export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move' | 'origin'
+export type ToolId = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'rectFill' | 'select' | 'move' | 'origin' | 'box'
 
 export type { Corner }
 
@@ -70,6 +70,7 @@ type Change =
   | { kind: 'place'; name: string; from: Point; to: Point }
   | { kind: 'frames'; name: string; before: FrameState; after: FrameState }
   | { kind: 'origin'; name: string; before: Point | null; after: Point | null }
+  | { kind: 'solid'; name: string; before: TileBox[]; after: TileBox[] }
   | { kind: 'group'; items: Change[] }
 
 // Drag points are local to the active sprite, except 'place' (board).
@@ -80,6 +81,7 @@ type Drag =
   | { kind: 'float'; start: Point; origin: Point }
   | { kind: 'pick' }
   | { kind: 'origin'; before: Point | null }
+  | { kind: 'box'; before: TileBox[]; column: number; row: number; start: Point; moved: boolean }
   | { kind: 'place'; name: string; start: Point; origin: Point }
   | { kind: 'resize'; name: string; corner: Corner; start: Point; origin: Rect; frames: Bitmap[]; rect: Rect }
 
@@ -317,6 +319,22 @@ export class Editor {
   // -------------------------------------------------------------------------
   // Tools and color
 
+  /**
+   * Can this tool work on the image being edited? The origin is a sprite's, walls are a
+   * tileset's: on the other kind (or with nothing to edit), the tool stays where it is,
+   * greyed out, and a click says why instead of doing nothing.
+   */
+  toolApplies(tool: ToolId, name = this.active): boolean {
+    if (tool === 'origin') return name !== null && !isTileset(name)
+    if (tool === 'box') return name !== null && isTileset(name)
+    return true
+  }
+
+  /** Why a tool cannot work on the image being edited (see `toolApplies`). */
+  whyNot(tool: ToolId): string {
+    return tool === 'origin' ? 'The origin is for sprites: a tileset has none' : 'Walls are for tilesets: pick one to set its solid tiles'
+  }
+
   setTool(tool: ToolId) {
     if (tool !== 'select') this.deselect()
     this.tool = tool
@@ -376,7 +394,10 @@ export class Editor {
         break
       }
       case 'origin': {
-        if (isTileset(this.active!)) break
+        if (!this.toolApplies('origin')) {
+          this.onMessage(this.whyNot('origin'))
+          break
+        }
         const before = this.origin
         if (before && before.x === q.x && before.y === q.y) {
           this.setOrigin(null, before)
@@ -384,6 +405,18 @@ export class Editor {
           this.drag = { kind: 'origin', before }
           this.setOriginRaw(q)
         }
+        break
+      }
+      case 'box': {
+        // Tilesets only, for now: on a sprite, a box will be its frame's hitbox.
+        if (!this.toolApplies('box')) {
+          this.onMessage(this.whyNot('box'))
+          break
+        }
+        const ts = this.tileSize
+        const column = Math.floor(q.x / ts)
+        const row = Math.floor(q.y / ts)
+        this.drag = { kind: 'box', before: this.solid.map((b) => ({ ...b })), column, row, start: q, moved: false }
         break
       }
       case 'picker':
@@ -510,6 +543,10 @@ export class Editor {
       case 'origin':
         this.setOriginRaw(q)
         break
+      case 'box':
+        if (q.x !== d.start.x || q.y !== d.start.y) d.moved = true
+        if (d.moved) this.dragBox(d, q)
+        break
       case 'shape':
         this.updateShape(q)
         break
@@ -572,6 +609,22 @@ export class Editor {
       case 'origin': {
         const after = this.origin
         if (after && (!d.before || d.before.x !== after.x || d.before.y !== after.y)) this.setOrigin(after, d.before)
+        break
+      }
+      case 'box': {
+        if (d.moved) this.dragBox(d, q)
+        else {
+          // A click: a tile without a box becomes solid on its whole area; one with a
+          // box loses it. Walls take one click; the drag is for half tiles.
+          const had = d.before.some((b) => b.column === d.column && b.row === d.row)
+          const ts = this.tileSize
+          this.setTileBox(d.column, d.row, had ? null : { x: 0, y: 0, width: ts, height: ts })
+        }
+        const after = this.solid
+        if (JSON.stringify(after) !== JSON.stringify(d.before)) {
+          this.history.push({ kind: 'solid', name: this.active!, before: d.before, after: after.map((b) => ({ ...b })) })
+          this.onEdit(this.active!)
+        }
         break
       }
       case 'select':
@@ -637,6 +690,32 @@ export class Editor {
     this.setOriginRaw(after)
     this.history.push({ kind: 'origin', name, before, after: this.origin })
     this.onEdit(name)
+  }
+
+  /** The solid tiles of the active tileset (empty for a sprite). */
+  get solid(): TileBox[] {
+    return this.sprite?.meta.solid ?? []
+  }
+
+  /** Sets (or clears, with null) the box of a tile of the active tileset, with no history. */
+  private setTileBox(column: number, row: number, r: { x: number; y: number; width: number; height: number } | null) {
+    const sprite = this.sprite
+    if (!sprite) return
+    const rest = this.solid.filter((b) => b.column !== column || b.row !== row)
+    const all = r ? sortTileBoxes([...rest, { column, row, ...r }]) : rest
+    if (all.length) sprite.meta.solid = all
+    else delete sprite.meta.solid
+  }
+
+  /** The box being dragged: from the pixel pressed to the one under the pointer, kept
+   * inside the tile pressed (one box per tile, never across two). */
+  private dragBox(d: Extract<Drag, { kind: 'box' }>, q: Point) {
+    const ts = this.tileSize
+    const x0 = d.column * ts
+    const y0 = d.row * ts
+    const inTile = (p: Point) => ({ x: Math.max(x0, Math.min(x0 + ts - 1, p.x)), y: Math.max(y0, Math.min(y0 + ts - 1, p.y)) })
+    const r = rectFromCorners(inTile(d.start), inTile(q))
+    this.setTileBox(d.column, d.row, { x: r.x - x0, y: r.y - y0, width: r.w, height: r.h })
   }
 
   private pick(p: Point) {
@@ -983,6 +1062,11 @@ export class Editor {
       if (o) pl.sprite.meta.origin = { ...o }
       else delete pl.sprite.meta.origin
       this.onEdit(c.name)
+    } else if (c.kind === 'solid') {
+      const boxes = (undo ? c.before : c.after).map((b) => ({ ...b }))
+      if (boxes.length) pl.sprite.meta.solid = boxes
+      else delete pl.sprite.meta.solid
+      this.onEdit(c.name)
     } else if (c.kind === 'frames') {
       this.restore(pl, undo ? c.before : c.after)
       this.onEdit(c.name)
@@ -1018,6 +1102,18 @@ export class Editor {
       this.setFrame(pl, f, resized(b, w, h, ox, oy))
       items.push({ kind: 'pixels', name, f, before, after: pl.sprite.frames[f].clone() })
     })
+    // A tileset's solid tiles stay with their pixels; those cut off go with them.
+    const solid = pl.sprite.meta.solid
+    if (solid) {
+      const shift = Math.round(oy / this.tileSize)
+      const rows = Math.floor(h / this.tileSize)
+      const moved = solid.map((b) => ({ ...b, row: b.row + shift })).filter((b) => b.row >= 0 && b.row < rows)
+      if (JSON.stringify(moved) !== JSON.stringify(solid)) {
+        if (moved.length) pl.sprite.meta.solid = moved
+        else delete pl.sprite.meta.solid
+        items.push({ kind: 'solid', name, before: solid, after: moved.map((b) => ({ ...b })) })
+      }
+    }
     const o = pl.sprite.meta.origin
     if (o && (ox || oy)) {
       pl.sprite.meta.origin = { x: o.x + ox, y: o.y + oy }

@@ -4,19 +4,24 @@
 import { h } from './dialog'
 import { icon } from './icons'
 
-export type Page = 'editor' | 'world' | 'settings'
+export type Page = 'editor' | 'actors' | 'world' | 'settings'
 
-const PAGES: Record<Page, string> = { editor: '', world: '#world', settings: '#settings' }
+const PAGES: Record<Page, string> = { editor: '', actors: '#actors', world: '#world', settings: '#settings' }
 
-/** The engine's tools. More will come (code…). */
-const TOOLS: { page: Page; label: string }[] = [
-  { page: 'editor', label: 'Pixel art editor' },
-  { page: 'world', label: 'World editor' },
+/**
+ * The engine's editors, in the switch at the left of every top bar, in the order a game is
+ * made: the pixels, the actors made of them, the world they are placed in.
+ */
+const EDITORS: { page: Page; label: string; title: string }[] = [
+  { page: 'editor', label: 'Pixels', title: 'Pixel art editor: sprites and tilesets' },
+  { page: 'actors', label: 'Actors', title: 'Actors: the body of each class of actors' },
+  { page: 'world', label: 'World', title: 'World editor: maps and actors' },
 ]
 
 export function currentPage(): Page {
   if (location.hash === PAGES.settings) return 'settings'
   if (location.hash === PAGES.world) return 'world'
+  if (location.hash === PAGES.actors) return 'actors'
   return 'editor'
 }
 
@@ -71,8 +76,6 @@ export function createMenu(actions: MenuAction[] = []): HTMLElement {
     }, label)
 
   items.append(
-    h('div', { className: 'menu-label' }, 'Tools'),
-    ...TOOLS.map((t) => item(t.page, t.label)),
     ...actions.map((a) =>
       h('button', {
         type: 'button',
@@ -84,7 +87,7 @@ export function createMenu(actions: MenuAction[] = []): HTMLElement {
         },
       }, a.label),
     ),
-    h('hr'),
+    ...(actions.length ? [h('hr')] : []),
     item('settings', 'Settings'),
   )
 
@@ -97,6 +100,31 @@ export function createMenu(actions: MenuAction[] = []): HTMLElement {
     }
   })
   return wrap
+}
+
+/**
+ * The switch between the editors (Pixels | Actors | World), next to the menu: going from one to the
+ * other is what is done most, so it is always in view. On another page (settings), neither
+ * is lit, and either one goes back.
+ */
+export function createEditorSwitch(): HTMLElement {
+  const buttons = EDITORS.map((e) =>
+    h('button', {
+      type: 'button',
+      role: 'radio',
+      title: e.title,
+      'data-editor': e.page,
+      onclick: () => goTo(e.page),
+    }, e.label))
+  const el = h('div', { className: 'editor-switch', role: 'radiogroup', 'aria-label': 'Editor' }, ...buttons)
+  onPage((page) => {
+    for (const b of buttons) {
+      const on = b.dataset.editor === page
+      b.classList.toggle('active', on)
+      b.setAttribute('aria-checked', String(on))
+    }
+  })
+  return el
 }
 
 export interface MenuAction {

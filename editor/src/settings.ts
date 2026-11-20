@@ -12,7 +12,7 @@ import {
   type GitHubSettings,
 } from './github'
 import { DEFAULT_SETTINGS, SETTING_LIMITS, screenSize, settingsError, type GameSettings } from '../../runtime/game'
-import { createMenu, onPage } from './menu'
+import { createEditorSwitch, createMenu, onPage } from './menu'
 import type { Storage } from './storage'
 
 const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -132,7 +132,7 @@ export function buildSettingsPage(storage: Storage, onSaved: () => void, game: G
   })
 
   const page = h('div', { id: 'settings-page' },
-    h('header', { className: 'page-bar' }, createMenu(), h('h1', {}, 'Settings')),
+    h('header', { className: 'page-bar' }, createMenu(), createEditorSwitch(), h('h1', {}, 'Settings')),
     h('div', { className: 'page-body' }, gameForm.el, form),
   )
   document.body.append(page)

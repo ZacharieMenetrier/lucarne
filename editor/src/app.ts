@@ -8,7 +8,7 @@ import { Editor, MAX_FPS, MIN_FPS, type ToolId } from './editor'
 import { icon } from './icons'
 import { isConfigured, loadSettings, syncWithGitHub, type Conflict, type Side } from './github'
 import { fetchLospecPalette, lospecSlug, type LospecPalette } from './lospec'
-import { createActionsMenu, createMenu, currentPage } from './menu'
+import { createActionsMenu, createEditorSwitch, createMenu, currentPage } from './menu'
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
@@ -27,8 +27,10 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: 'rect', label: 'Rectangle', key: 'R' },
   { id: 'rectFill', label: 'Filled rectangle', key: '⇧R' },
   { id: 'select', label: 'Select', key: 'M' },
-  { id: 'origin', label: 'Origin', key: 'O' },
   { id: 'move', label: 'Move sprite', key: 'V' },
+  // The image's own tools, after a divider: each works on one kind of image only.
+  { id: 'origin', label: 'Origin (sprites)', key: 'O' },
+  { id: 'box', label: 'Walls (tilesets)', key: 'X' },
 ]
 
 /** Tiles per palette row. A palette always holds whole rows. */
@@ -139,6 +141,10 @@ export class App {
   onTilesetRenamed: (from: string, to: string) => Promise<void> = async () => {}
   /** Saves what else the game is made of (the maps) before playing. */
   beforePlay: () => Promise<void> = async () => {}
+  /** Saves the sprites not saved yet (what the game's code draws with). */
+  saveSprites() {
+    return this.saver.flush()
+  }
   private player!: Player
 
   constructor(private readonly project: Project) {
@@ -774,13 +780,13 @@ export class App {
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
-    $('topbar').prepend(createMenu([{ label: 'Import a font…', run: () => importFont(this.project) }]))
+    $('topbar').prepend(createMenu([{ label: 'Import a font…', run: () => importFont(this.project) }]), createEditorSwitch())
     const player = new Player(this.project, async () => {
       await this.saver.flush()
       await this.beforePlay()
     })
     this.player = player
-    $('run-game').innerHTML = icon('play')
+    $('run-game').innerHTML = `${icon('play')}<span>Play</span>`
     $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')
     $('sync').addEventListener('click', () => void this.sync())
@@ -853,6 +859,7 @@ export class App {
   private buildTools() {
     const nav = $('tools')
     for (const t of TOOLS) {
+      if (t.id === 'origin') nav.append(h('hr', { className: 'tool-divider', 'aria-hidden': 'true' }))
       nav.append(
         h('button', {
           className: 'tool',
@@ -860,7 +867,10 @@ export class App {
           'aria-label': t.label,
           'data-tool': t.id,
           html: icon(t.id),
-          onclick: () => this.editor.setTool(t.id),
+          onclick: () => {
+            if (this.editor.toolApplies(t.id)) this.editor.setTool(t.id)
+            else toast(this.editor.whyNot(t.id))
+          },
         }),
       )
     }
@@ -885,7 +895,7 @@ export class App {
 
   private bindKeys() {
     const input = attachInput(this.view.canvas, this.view, this.editor)
-    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select', o: 'origin', v: 'move' }
+    const toolKeys: Record<string, ToolId> = { b: 'pencil', e: 'eraser', g: 'fill', i: 'picker', l: 'line', r: 'rect', m: 'select', o: 'origin', v: 'move', x: 'box' }
 
     window.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement
@@ -916,7 +926,10 @@ export class App {
       if (k === 'r' && e.shiftKey) ed.setTool('rectFill')
       else if (k === 'h' && e.shiftKey) ed.flip('h')
       else if (k === 'v' && e.shiftKey) ed.flip('v')
-      else if (!e.shiftKey && toolKeys[k]) ed.setTool(toolKeys[k])
+      else if (!e.shiftKey && toolKeys[k]) {
+        if (ed.toolApplies(toolKeys[k])) ed.setTool(toolKeys[k])
+        else toast(ed.whyNot(toolKeys[k]))
+      }
       else if (e.key === 'Delete' || e.key === 'Backspace') ed.deleteSelection()
       else if (k === 'a' && !e.shiftKey) this.toggleFrames()
       else if (e.key === 'Enter' && !ed.selection && !ed.floating) ed.playing ? ed.stop() : ed.play()
@@ -961,8 +974,10 @@ export class App {
     $('anim-toggle').classList.toggle('active', !$('frames').hidden)
     $('background-swatch').style.background = ed.background ?? ''
 
-    for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
+    for (const el of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       el.classList.toggle('active', el.dataset.tool === ed.tool)
+      // Greyed out on the other kind of image, never switched away from.
+      el.classList.toggle('unavailable', !ed.toolApplies(el.dataset.tool as ToolId))
     }
 
     const bar = $('selbar')

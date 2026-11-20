@@ -1,9 +1,11 @@
 // Draws the world in its canvas: every map at its place, at the same scale, with its tiles
-// (taken from the tilesets on the board, as they are now), the tile grid, the
-// block of tiles about to be stamped, and the frame of one screen of the game.
+// (taken from the tilesets on the board, as they are now), the tile grid, the actors placed
+// on the maps (drawn by the game's own code, see actortypes.ts), the block of tiles or the
+// actor about to be placed, and the frame of one screen of the game.
 
 import type { Bitmap } from './bitmap'
 import { toImageData } from './png'
+import type { ActorPicture } from './actortypes'
 import { Viewport, isLight } from './viewport'
 import type { World } from './world'
 
@@ -22,6 +24,9 @@ export class WorldView extends Viewport {
     private readonly tileset: (name: string) => Bitmap | null,
     /** The board color (the game's, else the editor's). */
     private readonly background: () => string,
+    /** A class of actors' picture; null when it draws nothing, undefined when the game's
+     * code has no such class (or could not be run). */
+    private readonly picture: (type: string) => ActorPicture | null | undefined,
   ) {
     super(canvas, world)
     this.zoomRaw = 2
@@ -70,7 +75,7 @@ export class WorldView extends Viewport {
     const hv = world.hover
     const under = hv ? world.hitTest(hv) : null
     canvas.classList.toggle('tool-move', tool === 'move')
-    canvas.classList.toggle('tool-draw', tool !== 'move')
+    canvas.classList.toggle('tool-draw', tool !== 'move' && tool !== 'select')
     canvas.classList.toggle('on-active', under !== null)
     const corner = tool === 'move' ? (world.resizeCorner ?? this.hoverHandle?.corner ?? null) : null
     canvas.classList.toggle('resize-nwse', corner === 'nw' || corner === 'se')
@@ -122,6 +127,37 @@ export class WorldView extends Viewport {
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
 
+    // The actors, from the back to the front, as the game draws them. Painting tiles,
+    // they fade a little: they are there, but out of the way.
+    const mode = world.mode
+    if (mode === 'tiles') ctx.globalAlpha = 0.45
+    for (const t of world.actorsInDepthOrder()) this.drawActor(t.actor.type, t.x, t.y, ink)
+    ctx.globalAlpha = 1
+    if (mode === 'actors') {
+      for (const t of world.selection) {
+        const p = world.placed(t)
+        if (p) this.outline(world.actorRect(p), ink.cursor)
+      }
+      const box = world.selectBox
+      if (box) {
+        ctx.fillStyle = 'rgba(65, 166, 246, 0.12)'
+        ctx.fillRect(this.ox + box.x * z, this.oy + box.y * z, box.w * z, box.h * z)
+        ctx.strokeStyle = '#41a6f6'
+        ctx.lineWidth = lw
+        ctx.strokeRect(Math.round(this.ox + box.x * z) + lw / 2, Math.round(this.oy + box.y * z) + lw / 2, Math.round(box.w * z), Math.round(box.h * z))
+      }
+    }
+
+    // The actor about to be placed, under the pointer: where it would stand.
+    if (hv && tool === 'place' && world.actorType && !world.dragging) {
+      const at = world.placeAt(world.actorType, hv)
+      if (world.mapForActor(at)) {
+        ctx.globalAlpha = 0.6
+        this.drawActor(world.actorType, at.x, at.y, ink)
+        ctx.globalAlpha = 1
+      }
+    }
+
     // The block about to be stamped, under the pointer.
     if (hv && under && tool === 'tile' && world.brush) {
       const sheet = this.sheet(world.brush.tileset)
@@ -147,7 +183,7 @@ export class WorldView extends Viewport {
     }
 
     // One screen of the game around the pointer, kept inside the map as the camera is.
-    if (hv && under && tool !== 'move') {
+    if (hv && under && mode === 'tiles') {
       const r = world.rectOf(under)!
       const sw = world.screen.columns * world.tileSize
       const sh = world.screen.rows * world.tileSize
@@ -162,5 +198,42 @@ export class WorldView extends Viewport {
     }
 
     if (tool === 'move') this.drawHandles(visible.map((v) => v.name), world.active, world.resizeCorner, ink)
+  }
+
+  /**
+   * Draws an actor with its feet at (x, y), in world pixels: its picture, or a dashed frame
+   * when it draws nothing, or a red one when the game's code has no such class.
+   */
+  private drawActor(type: string, x: number, y: number, ink: typeof ON_DARK) {
+    const { ctx, world } = this
+    const z = this.zoom
+    const lw = Math.max(1, Math.round(this.dpr))
+    const p = this.picture(type)
+    const b = world.boundsOf(type)
+    const left = Math.round(this.ox + (x + b.x) * z)
+    const top = Math.round(this.oy + (y + b.y) * z)
+    const w = Math.round(b.w * z)
+    const h = Math.round(b.h * z)
+    if (p) {
+      ctx.drawImage(p.image, left, top, w, h)
+      return
+    }
+    ctx.strokeStyle = p === undefined ? DANGER : ink.active
+    ctx.lineWidth = lw
+    ctx.setLineDash([3 * lw, 3 * lw])
+    ctx.strokeRect(left + lw / 2, top + lw / 2, w - lw, h - lw)
+    ctx.setLineDash([])
+  }
+
+  /** A frame just around a rectangle of the world. */
+  private outline(r: { x: number; y: number; w: number; h: number }, color: string) {
+    const { ctx } = this
+    const z = this.zoom
+    const lw = Math.max(1, Math.round(this.dpr))
+    const left = Math.round(this.ox + r.x * z)
+    const top = Math.round(this.oy + r.y * z)
+    ctx.strokeStyle = color
+    ctx.lineWidth = lw
+    ctx.strokeRect(left - lw * 1.5, top - lw * 1.5, Math.round(r.w * z) + lw * 3, Math.round(r.h * z) + lw * 3)
   }
 }

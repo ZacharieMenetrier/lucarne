@@ -5,7 +5,7 @@ import { Editor } from '../editor/src/editor'
 import { findFreeSpot, overlaps, parseBoard, resolveOverlaps, serializeBoard, shelfLayout } from '../editor/src/board'
 import { parsePalette, widenTileset } from '../editor/src/project'
 import { lospecSlug } from '../editor/src/lospec'
-import { TILESET_COLUMNS, composeSheet, newSprite, parseMeta, serializeMeta, splitSheet } from '../editor/src/sprite'
+import { TILESET_COLUMNS, composeSheet, newSprite, parseMeta, parseTileBoxes, serializeMeta, serializeTileBoxes, splitSheet } from '../editor/src/sprite'
 
 const RED = hexToColor('#ff0000')
 const BLUE = hexToColor('#0000ff')
@@ -427,5 +427,120 @@ describe('sprite origin', () => {
     expect(parseMeta(serializeMeta(meta)).origin).toBeUndefined()
     meta.origin = { x: 2, y: 3 }
     expect(parseMeta(serializeMeta(meta)).origin).toEqual({ x: 2, y: 3 })
+  })
+})
+
+describe('solid boxes of a tileset', () => {
+  const at = (x: number, y: number) => ({ x, y, shift: false, alt: false })
+  /** A tileset of 8 × 2 tiles of 4 pixels, active, with the Box tool. */
+  function tileset() {
+    const ed = new Editor(['#ff0000'])
+    ed.tileSize = 4
+    ed.addSprite(newSprite('tiles/outdoor', TILESET_COLUMNS * 4, 8), 0, 0)
+    ed.activate('tiles/outdoor')
+    ed.setTool('box')
+    return ed
+  }
+  const click = (ed: Editor, x: number, y: number) => (ed.down(at(x, y)), ed.up(at(x, y)))
+  function drag(ed: Editor, from: [number, number], to: [number, number]) {
+    ed.down(at(...from))
+    ed.move(at(...to))
+    ed.up(at(...to))
+  }
+
+  it('belong to tilesets, as the origin belongs to sprites: elsewhere, a click says so', () => {
+    const ed = tileset()
+    ed.addSprite(newSprite('hero', 4, 4), 100, 0)
+    expect(ed.toolApplies('box')).toBe(true)
+    expect(ed.toolApplies('origin')).toBe(false)
+    const said: string[] = []
+    ed.onMessage = (t) => said.push(t)
+    // On a sprite, the Walls tool stays chosen (never switched silently) and explains.
+    ed.activate('hero')
+    expect([ed.tool, ed.toolApplies('box'), ed.toolApplies('origin')]).toEqual(['box', false, true])
+    click(ed, 101, 1)
+    expect(said).toEqual(['Walls are for tilesets: pick one to set its solid tiles'])
+    expect(ed.sprite!.meta.solid).toBeUndefined()
+  })
+
+  it('make a whole tile solid with a click, and not solid with another', () => {
+    const ed = tileset()
+    const edited: string[] = []
+    ed.onEdit = (n) => edited.push(n)
+    click(ed, 5, 6)
+    expect(ed.solid).toEqual([{ column: 1, row: 1, x: 0, y: 0, width: 4, height: 4 }])
+    click(ed, 6, 5)
+    expect(ed.solid).toEqual([])
+    expect(ed.sprite!.meta.solid).toBeUndefined()
+    expect(edited).toEqual(['tiles/outdoor', 'tiles/outdoor'])
+  })
+
+  it('draw one box per tile, kept inside the tile pressed', () => {
+    const ed = tileset()
+    drag(ed, [8, 2], [30, 30])
+    expect(ed.solid).toEqual([{ column: 2, row: 0, x: 0, y: 2, width: 4, height: 2 }])
+    // A new box replaces the old one.
+    drag(ed, [9, 0], [9, 1])
+    expect(ed.solid).toEqual([{ column: 2, row: 0, x: 1, y: 0, width: 1, height: 2 }])
+    drag(ed, [0, 7], [1, 6])
+    expect(ed.solid.map((b) => [b.column, b.row])).toEqual([[2, 0], [0, 1]])
+  })
+
+  it('undo and redo as one step each', () => {
+    const ed = tileset()
+    click(ed, 0, 0)
+    drag(ed, [0, 0], [1, 1])
+    ed.undo()
+    expect(ed.solid).toEqual([{ column: 0, row: 0, x: 0, y: 0, width: 4, height: 4 }])
+    ed.undo()
+    expect(ed.solid).toEqual([])
+    ed.redo()
+    ed.redo()
+    expect(ed.solid).toEqual([{ column: 0, row: 0, x: 0, y: 0, width: 2, height: 2 }])
+  })
+
+  it('stay with their tiles when rows are added on top, and go with the rows cut off', () => {
+    const ed = tileset()
+    click(ed, 0, 0)
+    click(ed, 0, 4)
+    ed.resize(32, 12, 0, 4)
+    expect(ed.solid.map((b) => b.row)).toEqual([1, 2])
+    ed.resize(32, 8, 0, 0)
+    expect(ed.solid.map((b) => b.row)).toEqual([1])
+    ed.undo()
+    ed.undo()
+    expect(ed.solid.map((b) => b.row)).toEqual([0, 1])
+  })
+
+  it('do nothing on a sprite, for now', () => {
+    const ed = new Editor(['#ff0000'])
+    ed.addSprite(newSprite('hero', 8, 8), 0, 0)
+    ed.activate('hero')
+    ed.setTool('box')
+    click(ed, 1, 1)
+    expect(ed.sprite!.meta.solid).toBeUndefined()
+  })
+
+  it('are saved one line per tile, and read back cut to their tile', () => {
+    const boxes = [
+      { column: 3, row: 1, x: 0, y: 8, width: 16, height: 8 },
+      { column: 0, row: 0, x: 0, y: 0, width: 16, height: 16 },
+    ]
+    const text = serializeTileBoxes(boxes)
+    expect(text).toBe(
+      [
+        '{',
+        '  "version": 1,',
+        '  "solid": [',
+        '    { "column": 0, "row": 0, "x": 0, "y": 0, "width": 16, "height": 16 },',
+        '    { "column": 3, "row": 1, "x": 0, "y": 8, "width": 16, "height": 8 }',
+        '  ]',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    expect(parseTileBoxes(text, 16)).toEqual([boxes[1], boxes[0]])
+    const odd = '{ "solid": [{ "column": 1, "row": 0, "x": -2, "y": 4, "width": 30, "height": 4 }, { "column": 9, "row": 0, "x": 0, "y": 0, "width": 1, "height": 1 }, { "column": 2, "row": 0, "x": 0, "y": 0, "width": 0, "height": 4 }] }'
+    expect(parseTileBoxes(odd, 16)).toEqual([{ column: 1, row: 0, x: 0, y: 4, width: 16, height: 4 }])
   })
 })

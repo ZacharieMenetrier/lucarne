@@ -53,17 +53,18 @@ export function isEditorFile(path: string) {
     path === 'game.json' ||
     path === 'palette.json' ||
     path === 'board.json' ||
+    path === 'actors.json' ||
     path === 'game.js' ||
     /^sprites\/[^/]+\.(png|json)$/.test(path) ||
-    /^tiles\/[^/]+\.png$/.test(path) ||
+    /^tiles\/[^/]+\.(png|json)$/.test(path) ||
     /^maps\/[^/]+\.json$/.test(path) ||
     /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path)
   )
 }
 
-/** Files that belong together: a sprite's (or a font's) files are one choice in a conflict. */
+/** Files that belong together: a sprite's (a tileset's, a font's) files are one choice in a conflict. */
 export function groupOf(path: string) {
-  const m = /^(sprites|fonts)\/(.+?)\.(png|json|license\.txt)$/.exec(path)
+  const m = /^(sprites|tiles|fonts)\/(.+?)\.(png|json|license\.txt)$/.exec(path)
   return m ? `${m[1]}/${m[2]}` : path
 }
 

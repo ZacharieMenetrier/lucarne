@@ -1,4 +1,4 @@
-// Runs a game: a fixed-step loop (60 updates per second of the world's things) and, on
+// Runs a game: a fixed-step loop (60 updates per second of the world's actors) and, on
 // each displayed frame, the world drawn between its last two updates (see world.ts). Used
 // by the editor, not by games. Only one game runs at a time.
 //
@@ -188,7 +188,7 @@ export class Runner {
    *
    * Browsers report frame times with up to a millisecond of jitter. At 120 Hz an update is
    * due every other frame, and that jitter sometimes moves one a frame early or late: a
-   * position stays on screen for 1 frame then 3 instead of 2 and 2, and moving things
+   * position stays on screen for 1 frame then 3 instead of 2 and 2, and moving actors
    * hitch. So when the display's rate divides the update rate (60, 120, 180, 240 Hz), each
    * frame counts as exactly a whole number of the display's periods: updates fall on a
    * steady beat. At other rates (144 Hz) no beat is steady, and the measured time is used.

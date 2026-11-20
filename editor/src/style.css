@@ -122,6 +122,94 @@ button.active {
   padding: 0 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.page-bar {
+  position: relative;
+}
+/* Play: the main action of every top bar, at its right end, in the accent color. */
+.run-game {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 14px 0 9px;
+  background: var(--accent);
+  border-color: var(--accent);
+  border-radius: 8px;
+  color: #0d1b2a;
+  font-weight: 600;
+  font-size: 13px;
+}
+.run-game svg {
+  width: 18px;
+  height: 18px;
+}
+.run-game:hover:not(:disabled) {
+  border-color: var(--accent);
+  filter: brightness(1.08);
+}
+/* Pixels | World, next to the menu: the same quiet pill as the world's mode switch. */
+.editor-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.editor-switch button {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  transition: background-color 0.12s, color 0.12s;
+}
+.editor-switch button:hover:not(.active) {
+  color: var(--text);
+}
+.editor-switch button.active {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--line);
+}
+/* How the canvas is shown (fit, grid, checkerboard, board color): floating on the canvas,
+   bottom left, as they only concern it. */
+.view-controls {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  opacity: 0.85;
+}
+.view-controls:hover {
+  opacity: 1;
+}
+.view-controls button.icon {
+  width: 30px;
+  height: 30px;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 7px;
+}
+.view-controls button.icon svg {
+  width: 18px;
+  height: 18px;
+}
+.view-controls button.icon:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.view-controls button.icon.active {
+  background: var(--panel-2);
+  color: var(--accent);
 }
 .spacer {
   flex: 1;
@@ -199,6 +287,20 @@ button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #0d1b2a;
+}
+/* Tools for one kind of image only (origin: sprites, walls: tilesets), set apart below
+   the drawing tools, and greyed out on the other kind: always in the same place. */
+.tool-divider {
+  width: 28px;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.tool.unavailable {
+  opacity: 0.3;
+}
+.tool.unavailable:hover:not(:disabled) {
+  border-color: var(--line);
 }
 
 #stage {
@@ -1007,7 +1109,8 @@ button.icon-btn svg {
 
 /* --- World page ---------------------------------------------------------------- */
 
-#world-page {
+#world-page,
+#actors-page {
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -1016,8 +1119,29 @@ button.icon-btn svg {
   background: var(--bg);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
-body[data-page='world'] #world-page {
+body[data-page='world'] #world-page,
+body[data-page='actors'] #actors-page {
   display: flex;
+}
+/* The Actors page: the actor large, and the list of classes with its box on the right. */
+.actors-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 240px;
+}
+.actors-canvas {
+  cursor: var(--crosshair), default;
+}
+.actors-box {
+  gap: 8px;
+}
+.actors-info {
+  margin: 0;
+  font-size: 12px;
+}
+.actors-box button[hidden] {
+  display: none;
 }
 .world-body {
   flex: 1;
@@ -1078,15 +1202,135 @@ body[data-page='world'] #world-page {
    get the rest. */
 .world-tilesets {
   flex: 0 1 auto;
-  max-height: 65%;
+}
+.world-actors {
+  flex: 1;
+  gap: 8px;
+}
+.world-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 9px;
+}
+/* How many of a class are placed, at the right of its row: a click selects them all. */
+.actor-count {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  min-width: 22px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--bg);
+  border-color: transparent;
+  border-radius: 999px;
+}
+.actor-count:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line);
+}
+.world-actors .sprite-row .sprite-item {
+  padding-right: 44px;
+}
+/* The mode switch, on top of the tools: three icons in one quiet pill, the mode on a
+   raised segment. It says what the tools below work on. */
+.mode-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.mode-switch button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 0.12s, color 0.12s;
+}
+.mode-switch button svg {
+  width: 18px;
+  height: 18px;
+}
+.mode-switch button:hover:not(.active) {
+  color: var(--text);
+}
+.mode-switch button.active {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--line);
+}
+.world-tools .tool[hidden] {
+  display: none;
+}
+.world-side section[hidden] {
+  display: none;
+}
+.world-error {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0;
 }
 .world-maps {
   flex: 1;
 }
-.world-tileset-select {
+.chip-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
   max-width: 60%;
-  padding: 3px 6px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.chip-select[hidden] {
+  display: none;
+}
+.chip-select:hover,
+.chip-select:focus-within {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.chip-select:focus-within {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.chip-select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-select-icon {
+  display: grid;
+  flex: none;
+}
+.chip-select-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.chip-select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 .world-list,
 .world-pickers {
@@ -1273,36 +1517,6 @@ body[data-page='settings'] #settings-page {
 
 /* --- Play mode ------------------------------------------------------------------- */
 
-#run-game,
-.run-game {
-  order: 99;
-  margin-left: 10px;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  background: var(--text);
-  color: var(--bg);
-  transition: background 0.15s, transform 0.1s;
-}
-#run-game svg,
-.run-game svg {
-  width: 20px;
-  height: 20px;
-  margin-left: 2px;
-}
-#run-game:hover:not(:disabled),
-.run-game:hover:not(:disabled) {
-  border: 0;
-  background: #fff;
-}
-#run-game:active,
-.run-game:active {
-  transform: scale(0.94);
-}
 #play-mode {
   position: fixed;
   inset: 0;

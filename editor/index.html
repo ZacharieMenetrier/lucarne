@@ -21,11 +21,7 @@
         <span class="spacer"></span>
         <span id="save-status" data-status="saved">Saved</span>
         <button id="sync" class="icon" title="Sync with GitHub" aria-label="Sync with GitHub" hidden></button>
-        <button id="background" class="icon" title="Board color" aria-label="Board color"><span id="background-swatch"></span></button>
-        <button id="checker" class="icon" title="Checkerboard" aria-label="Checkerboard"></button>
-        <button id="grid" class="icon" title="Grid (#)" aria-label="Grid"></button>
-        <button id="fit" class="icon" title="Show every sprite (0)" aria-label="Show every sprite"></button>
-        <button id="run-game" title="Play game (⌘↵)" aria-label="Play game"></button>
+        <button id="run-game" class="run-game" title="Play the game (⌘↵)"></button>
       </header>
 
       <nav id="tools" aria-label="Tools"></nav>
@@ -34,6 +30,13 @@
         <canvas id="canvas"></canvas>
         <div id="selbar" hidden></div>
         <button id="anim-toggle" class="icon" title="Animation panel (A)" aria-label="Animation panel"></button>
+        <!-- How the board is shown: on the canvas, since they only change the canvas. -->
+        <div class="view-controls" role="toolbar" aria-label="View">
+          <button id="fit" class="icon" title="Show every sprite (0)" aria-label="Show every sprite"></button>
+          <button id="grid" class="icon" title="Grid (#)" aria-label="Grid"></button>
+          <button id="checker" class="icon" title="Checkerboard" aria-label="Checkerboard"></button>
+          <button id="background" class="icon" title="Board color" aria-label="Board color"><span id="background-swatch"></span></button>
+        </div>
         <div id="empty">
           <p>No sprites yet.</p>
           <button id="empty-new" class="primary">New sprite</button>

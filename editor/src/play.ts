@@ -13,7 +13,7 @@ import { Runner } from '../../runtime/runner'
 import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { time } from '../../runtime/time'
-import { camera, cameraMapName, drawWorld, modalThing, resetWorld, worldThings } from '../../runtime/world'
+import { camera, cameraMapName, drawWorld, linkBoxes, modalActor, placeActors, resetWorld, actorTypes, setBoxes, worldActors, type ActorType } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
 import type { FontMeta } from './font'
 import { h } from './dialog'
@@ -23,12 +23,25 @@ import { NO_GAME_SIZE, noGame } from './nogame'
 import { toImageData } from './png'
 import type { Project } from './project'
 import { composeSheet, isTileset, tilesetName, type Sprite } from './sprite'
-import { readText } from './storage'
+import { readText, type Storage } from './storage'
 
 const GAME_FILE = 'game.js'
 const ENTRY = 'code/main.ts'
 /** Space between the screen and its caption (see .play-screen in style.css). */
 const CAPTION_GAP = 20
+
+let engineTurn: Promise<unknown> = Promise.resolve()
+
+/**
+ * Runs `fn` alone with the engine: its world, sprites and maps are one set, shared by the
+ * game that starts and by the world editor, which runs the game's code to draw its actors.
+ * One waits for the other.
+ */
+export function useEngine<T>(fn: () => Promise<T>): Promise<T> {
+  const run = engineTurn.then(fn, fn)
+  engineTurn = run.catch(() => {})
+  return run
+}
 
 /** Is a game on screen (running or paused)? Editor shortcuts stay off meanwhile. */
 export function isPlaying() {
@@ -102,15 +115,18 @@ export class Player {
     this.say('Loading…')
     try {
       await this.saveFirst()
-      const code = await this.loadCode()
-      if (code === null) return
-      const settings = await this.project.loadSettings()
-      setSprites(await this.loadSprites())
-      setFonts(await this.loadFonts())
-      setMaps(settings.tileSize, await this.loadTilesets(), await this.loadMaps())
-      // The game's code creates its things as it runs: in an empty world.
-      resetWorld()
-      this.run(await importGame(code), screenSize(settings))
+      await useEngine(async () => {
+        const code = await this.loadCode()
+        if (code === null) return
+        const settings = await loadGameData(this.project)
+        // The game's code creates its actors as it runs: in an empty world. Then come the
+        // actors placed on the maps, whose classes exist once the code has run.
+        resetWorld()
+        const game = await importGame(code)
+        linkBoxes(game.types)
+        placeActors(game.types)
+        this.run(game.config, screenSize(settings))
+      })
     } catch (err) {
       this.say(`The game could not start:\n\n${describe(err)}`, true)
     } finally {
@@ -140,6 +156,7 @@ export class Player {
         : h('p', {}, 'Write ', h('code', {}, ENTRY), ' on the Mac, push it, then sync here.')
     resetWorld()
     setMaps(16, [], [])
+    setBoxes({})
     this.run(noGame, NO_GAME_SIZE, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
   }
 
@@ -166,71 +183,14 @@ export class Player {
     return this.project.storage
   }
 
-  /** Every tileset of the game (tiles/), for the maps. */
-  private async loadTilesets(): Promise<TilesetData[]> {
-    const names = (await this.project.listBoard()).filter(isTileset)
-    return Promise.all(
-      names.map(async (name) => {
-        const sprite = await this.project.loadSprite(name)
-        return { name: tilesetName(name), sheet: toCanvas(sprite.frames[0]) }
-      }),
-    )
-  }
-
-  /** Every map of the game (maps/): the whole world. */
-  private async loadMaps() {
-    return Promise.all((await this.project.listMaps()).map((name) => this.project.loadMap(name)))
-  }
-
-  /** Every sprite of the game, as saved, for the engine's `sprite()`. */
-  private async loadSprites(): Promise<SpriteData[]> {
-    const names = await this.project.listSprites()
-    return Promise.all(
-      names.map(async (name) => {
-        try {
-          return toSpriteData(await this.project.loadSprite(name))
-        } catch (err) {
-          throw new Error(`The sprite "${name}" could not be read: ${describe(err)}`)
-        }
-      }),
-    )
-  }
-
-  /** Every font of the game (fonts/), for the engine's `font()`. */
-  private async loadFonts(): Promise<FontData[]> {
-    const names = await this.project.listFonts()
-    return Promise.all(
-      names.map(async (name) => {
-        try {
-          return toFontData(name, await this.project.loadFont(name))
-        } catch (err) {
-          throw new Error(`The font "${name}" could not be read: ${describe(err)}`)
-        }
-      }),
-    )
-  }
-
   /** Returns game.js, or null after explaining why there is none. */
   private async loadCode(): Promise<string | null> {
-    if (this.storage.kind === 'server') {
-      const res = await fetch('/__lucarne/build', { method: 'POST' })
-      if (!res.ok) throw new Error((await res.text()) || `Error ${res.status}`)
-      const result = (await res.json()) as { ok: boolean; error?: string; missing?: boolean }
-      if (result.missing) {
-        this.showNoGame()
-        return null
-      }
-      if (!result.ok) {
-        this.say(`The game's code does not build:\n\n${result.error ?? ''}`, true)
-        return null
-      }
-    }
-    const code = await readText(this.storage, GAME_FILE)
-    if (code === null) {
-      if (this.storage.kind === 'server') this.say('game.js is missing from the game folder.')
-      else this.showNoGame()
-    }
-    return code
+    const got = await fetchGameCode(this.storage)
+    if ('code' in got) return got.code
+    if ('error' in got) this.say(`The game's code does not build:\n\n${got.error}`, true)
+    else if (this.storage.kind === 'server' && got.built) this.say('game.js is missing from the game folder.')
+    else this.showNoGame()
+    return null
   }
 
   private onKey(e: KeyboardEvent) {
@@ -316,6 +276,80 @@ export class Player {
   }
 }
 
+/**
+ * game.js, rebuilt from code/ first on Mac (on iPad, the file synced from GitHub), or why
+ * there is none: no code yet (`built` when the build said it was fine and the file is
+ * still missing), or the error that stops it from building.
+ */
+export async function fetchGameCode(storage: Storage): Promise<{ code: string } | { error: string } | { missing: true; built: boolean }> {
+  let built = false
+  if (storage.kind === 'server') {
+    const res = await fetch('/__lucarne/build', { method: 'POST' })
+    if (!res.ok) throw new Error((await res.text()) || `Error ${res.status}`)
+    const result = (await res.json()) as { ok: boolean; error?: string; missing?: boolean }
+    if (result.missing) return { missing: true, built: false }
+    if (!result.ok) return { error: result.error ?? '' }
+    built = true
+  }
+  const code = await readText(storage, GAME_FILE)
+  return code === null ? { missing: true, built } : { code }
+}
+
+/** Hands the engine every sprite, font, tileset, box and map of the game, as saved.
+ * Returns the game's settings. */
+export async function loadGameData(project: Project) {
+  const settings = await project.loadSettings()
+  setSprites(await loadSprites(project))
+  setFonts(await loadFonts(project))
+  setMaps(settings.tileSize, await loadTilesets(project), await loadMaps(project))
+  setBoxes(Object.fromEntries(await project.loadActors()))
+  return settings
+}
+
+/** Every tileset of the game (tiles/), for the maps. */
+async function loadTilesets(project: Project): Promise<TilesetData[]> {
+  const names = (await project.listBoard()).filter(isTileset)
+  return Promise.all(
+    names.map(async (name) => {
+      const sprite = await project.loadSprite(name)
+      return { name: tilesetName(name), sheet: toCanvas(sprite.frames[0]), solid: sprite.meta.solid }
+    }),
+  )
+}
+
+/** Every map of the game (maps/): the whole world. */
+async function loadMaps(project: Project) {
+  return Promise.all((await project.listMaps()).map((name) => project.loadMap(name)))
+}
+
+/** Every sprite of the game, as saved, for the engine's `sprite()`. */
+async function loadSprites(project: Project): Promise<SpriteData[]> {
+  const names = await project.listSprites()
+  return Promise.all(
+    names.map(async (name) => {
+      try {
+        return toSpriteData(await project.loadSprite(name))
+      } catch (err) {
+        throw new Error(`The sprite "${name}" could not be read: ${describe(err)}`)
+      }
+    }),
+  )
+}
+
+/** Every font of the game (fonts/), for the engine's `font()`. */
+async function loadFonts(project: Project): Promise<FontData[]> {
+  const names = await project.listFonts()
+  return Promise.all(
+    names.map(async (name) => {
+      try {
+        return toFontData(name, await project.loadFont(name))
+      } catch (err) {
+        throw new Error(`The font "${name}" could not be read: ${describe(err)}`)
+      }
+    }),
+  )
+}
+
 function toCanvas(bmp: Bitmap) {
   const canvas = new OffscreenCanvas(bmp.width, bmp.height)
   canvas.getContext('2d')!.putImageData(toImageData(bmp), 0, 0)
@@ -344,9 +378,9 @@ function toFontData(name: string, font: { sheet: Bitmap; meta: FontMeta }): Font
  * mode. Everything works with the page hidden: the game only moves when told to.
  *
  *   lucarne.step(60, ['right'])   // one second with "right" held, then shows the result
- *   lucarne.things()              // [{ type: 'Hero', x: 267, y: 120, facing: 'east', … }]
+ *   lucarne.actors()              // [{ type: 'Hero', x: 267, y: 120, box: { x, y, width, height }, … }]
  *   lucarne.picture()             // the frame at game resolution, as a PNG data URL
- *   lucarne.ui()                  // the text on screen, and the modal thing in charge
+ *   lucarne.ui()                  // the text on screen, and the modal actor in charge
  *   lucarne.camera()              // { x, y, map }: where the camera is, and in which map
  *   lucarne.timings()             // milliseconds per update, per drawing, per frame
  */
@@ -359,7 +393,7 @@ function installHandle(player: Player) {
   ;(window as unknown as { lucarne: unknown }).lucarne = {
     step(count = 1, buttons: Button[] = []) {
       runner().step(count, buttons)
-      return { ticks: time.ticks, things: describeThings() }
+      return { ticks: time.ticks, actors: describeActors() }
     },
     pause() {
       runner().pause()
@@ -367,10 +401,10 @@ function installHandle(player: Player) {
     resume() {
       runner().resume()
     },
-    things: describeThings,
+    actors: describeActors,
     camera: () => ({ x: camera.x, y: camera.y, map: cameraMapName() }),
     ui() {
-      const modal = modalThing()
+      const modal = modalActor()
       return { modal: modal ? modal.constructor.name : null, text: writtenText().map((t) => t.text) }
     },
     timings: () => ({ ...runner().timings }),
@@ -394,25 +428,35 @@ function installHandle(player: Player) {
   }
 }
 
-/** Each thing's type, position and own simple fields (numbers, text, booleans). */
-function describeThings() {
-  return worldThings()
+/** Each actor's type, position and own simple fields (numbers, text, booleans), and its box
+ * where it is in the world, to check walls without a picture. */
+function describeActors() {
+  const round = (v: number) => Math.round(v * 1000) / 1000
+  return worldActors()
     .filter((t) => !t.removed)
     .map((t) => {
       const out: Record<string, unknown> = { type: t.constructor.name }
       for (const [k, v] of Object.entries(t)) {
-        if (['number', 'string', 'boolean'].includes(typeof v)) out[k] = typeof v === 'number' ? Math.round(v * 1000) / 1000 : v
+        if (['number', 'string', 'boolean'].includes(typeof v)) out[k] = typeof v === 'number' ? round(v) : v
+      }
+      if (t.box) {
+        const { x, y, width, height } = t.box
+        out.box = { x: round(t.x + x), y: round(t.y + y), width, height }
       }
       return out
     })
 }
 
-async function importGame(code: string): Promise<GameConfig> {
+/**
+ * Runs game.js: its top-level code runs (creating its actors), and gives the game it
+ * declares and the actor classes it exports (to place on maps).
+ */
+export async function importGame(code: string): Promise<{ config: GameConfig; types: Map<string, ActorType> }> {
   ;(globalThis as { __lucarne?: unknown }).__lucarne = engine
   const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))
-  let mod: { default?: unknown }
+  let mod: Record<string, unknown>
   try {
-    mod = (await import(/* @vite-ignore */ url)) as { default?: unknown }
+    mod = (await import(/* @vite-ignore */ url)) as Record<string, unknown>
   } finally {
     URL.revokeObjectURL(url)
   }
@@ -420,10 +464,10 @@ async function importGame(code: string): Promise<GameConfig> {
   if (!config || typeof config !== 'object') {
     throw new Error(`${ENTRY} must end with \`export default game({ … })\`.`)
   }
-  return config as GameConfig
+  return { config: config as GameConfig, types: actorTypes(mod) }
 }
 
-function describe(err: unknown) {
+export function describe(err: unknown) {
   if (err instanceof Error) return `${err.name === 'Error' ? '' : `${err.name}: `}${err.message}`
   return String(err)
 }

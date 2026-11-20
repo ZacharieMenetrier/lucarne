@@ -2,7 +2,7 @@
 // It is itself a small Lucarne game, drawn with the engine's own `screen` and `input`.
 // The arrows make the cat look around; the action key sends a shooting star.
 
-import { Thing, game, input, screen } from '../../runtime/index'
+import { Actor, game, input, screen } from '../../runtime/index'
 
 const C = {
   ink: '#1a1c2c',
@@ -107,7 +107,7 @@ function disc(cx: number, cy: number, r: number, color: (x: number, y: number) =
 }
 
 /** What moves in the scene: the cat's eyes, the shooting stars. */
-class Night extends Thing {
+class Night extends Actor {
   update() {
     tick++
     if (input.x !== 0) lookTarget = Math.sign(input.x)

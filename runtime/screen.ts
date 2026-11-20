@@ -4,12 +4,12 @@
 // largest whole number that fits (the runner picks it, never the game).
 //
 // Positions are rounded to the display's pixels, not to game pixels: whole numbers put
-// things on the game's pixel grid, fractions move them smoothly between its pixels. The
+// actors on the game's pixel grid, fractions move them smoothly between its pixels. The
 // art itself is never resampled: a sprite's pixels are always whole squares.
 //
 // The screen is drawn on only while the world draws (see world.ts): in the game's `draw`
-// (the background, through the camera), in a thing's `draw` (around the thing: (0, 0) is
-// where it is) and in a thing's `drawUI` (on the screen itself, over everything).
+// (the background, through the camera), in an actor's `draw` (around the actor: (0, 0) is
+// where it is) and in an actor's `drawUI` (on the screen itself, over everything).
 
 import { font as gameFont, type TextOptions } from './fonts'
 import type { Sprite } from './sprites'
@@ -18,7 +18,7 @@ import { time } from './time'
 let ctx: CanvasRenderingContext2D | null = null
 /** Display pixels per game pixel. */
 let scale = 1
-/** Where (0, 0) is, in display pixels: set by the world for each thing it draws. */
+/** Where (0, 0) is, in display pixels: set by the world for each actor it draws. */
 let originX = 0
 let originY = 0
 /** What is being drawn, or null outside drawing (the screen cannot be used then). */
@@ -26,6 +26,16 @@ let phase: 'world' | 'ui' | null = null
 /** The text written on the frame being drawn: what `lucarne.ui()` reports. */
 let written: { text: string; x: number; y: number }[] = []
 let lastWritten: { text: string; x: number; y: number }[] = []
+/** The sprites' frames drawn while the editor watches (see `spriteFramesOf`), else null. */
+let frames: SpriteFrame[] | null = null
+
+/** A sprite's whole frame as drawn, transparent margins included, in game pixels. */
+export interface SpriteFrame {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 function check() {
   if (!phase) throw new Error("The screen can only be drawn on in draw(), drawUI() or the game's draw().")
@@ -67,7 +77,9 @@ export const screen = {
     const flipX = options.flipX ?? false
     const { width: w, height: h } = s
     // Mirrored, the origin pixel stays under (x, y): it moves to the other side of the frame.
-    const left = px(x, originX) - (flipX ? w - 1 - s.origin.x : s.origin.x) * scale
+    const ox = flipX ? w - 1 - s.origin.x : s.origin.x
+    frames?.push({ x: x - ox, y: y - s.origin.y, width: w, height: h })
+    const left = px(x, originX) - ox * scale
     const top = px(y, originY) - s.origin.y * scale
     if (!flipX) {
       c.drawImage(s.sheet, frame * w, 0, w, h, left, top, w * scale, h * scale)
@@ -191,6 +203,20 @@ export function endDraw() {
 export function setOrigin(x: number, y: number) {
   originX = x
   originY = y
+}
+
+/**
+ * Runs `draw` and returns the frames of the sprites it drew, where (0, 0) is: the editor
+ * snaps an actor to the grid by the frame of its sprite (see editor/src/actortypes.ts).
+ */
+export function spriteFramesOf(draw: () => void): SpriteFrame[] {
+  frames = []
+  try {
+    draw()
+    return frames
+  } finally {
+    frames = null
+  }
 }
 
 /** Display pixels per game pixel. */

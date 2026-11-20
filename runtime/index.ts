@@ -1,8 +1,8 @@
 // Lucarne's runtime: what a game's code imports.
 //
-//   import { game, Thing, camera, screen, sprite, input } from 'lucarne'
+//   import { game, Actor, camera, screen, sprite, input } from 'lucarne'
 //
-//   class Hero extends Thing {
+//   class Hero extends Actor {
 //     update() { this.move(input.x, input.y) }          // 60 times per second
 //     draw() { screen.sprite(sprite('hero'), 0, 0) }   // around itself
 //   }
@@ -13,7 +13,8 @@
 // `code/main.ts` must export the game as its default export.
 
 export { game, type GameConfig } from './game'
-export { Thing, camera } from './world'
+export { Actor, camera } from './world'
+export { type Box } from './collision'
 export { map, mapAt, type MapRect } from './maps'
 export { input, type Button } from './input'
 export { screen, type SpriteOptions } from './screen'

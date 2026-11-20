@@ -1,10 +1,12 @@
 // The game folder as the editor sees it: the settings, the palette, the sprites, the
-// tilesets, the maps and the fonts.
+// tilesets, the actors' boxes, the maps and the fonts.
 
+import { ACTORS_FILE, parseActors, serializeActors } from './actors'
 import { Bitmap, resized } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
 import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
+import type { Box } from '../../runtime/collision'
 import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
 import { parseMap, serializeMap, type GameMap } from './map'
 import { decodePng, encodePng } from './png'
@@ -17,7 +19,9 @@ import {
   tilesetName,
   defaultMeta,
   parseMeta,
+  parseTileBoxes,
   serializeMeta,
+  serializeTileBoxes,
   splitSheet,
   type Sprite,
 } from './sprite'
@@ -128,10 +132,14 @@ export class Project {
   /** A sprite, or a tileset ("tiles/<name>": one frame, cut in tiles by the game). */
   async loadSprite(name: string): Promise<Sprite> {
     if (isTileset(name)) {
-      const png = await this.storage.read(`${TILES_DIR}/${tilesetName(name)}.png`)
+      const base = `${TILES_DIR}/${tilesetName(name)}`
+      const [png, json] = await Promise.all([this.storage.read(`${base}.png`), readText(this.storage, `${base}.json`)])
       if (!png) throw new Error(`Tileset not found: ${tilesetName(name)}`)
       const sheet = widenTileset(await decodePng(png), this.settings.tileSize)
-      return { name, meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] }
+      const meta = defaultMeta(sheet.width, sheet.height)
+      const solid = json === null ? [] : parseTileBoxes(json, this.settings.tileSize)
+      if (solid.length) meta.solid = solid
+      return { name, meta, frames: [sheet] }
     }
     const [png, json] = await Promise.all([
       this.storage.read(`${SPRITES_DIR}/${name}.png`),
@@ -146,7 +154,12 @@ export class Project {
 
   async saveSprite(sprite: Sprite) {
     if (isTileset(sprite.name)) {
-      await this.storage.write(`${TILES_DIR}/${tilesetName(sprite.name)}.png`, await encodePng(sprite.frames[0]))
+      const base = `${TILES_DIR}/${tilesetName(sprite.name)}`
+      await this.storage.write(`${base}.png`, await encodePng(sprite.frames[0]))
+      // The JSON only says which tiles are solid: none, no file.
+      const solid = sprite.meta.solid ?? []
+      if (solid.length) await writeText(this.storage, `${base}.json`, serializeTileBoxes(solid))
+      else await this.storage.remove(`${base}.json`)
       return
     }
     const png = await encodePng(composeSheet(sprite))
@@ -180,9 +193,30 @@ export class Project {
   }
 
   async deleteSprite(name: string) {
-    if (isTileset(name)) return this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.png`)
+    if (isTileset(name)) {
+      await this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.png`)
+      await this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.json`)
+      return
+    }
     await this.storage.remove(`${SPRITES_DIR}/${name}.png`)
     await this.storage.remove(`${SPRITES_DIR}/${name}.json`)
+  }
+
+  /** The actors' boxes, by class name (none when actors.json is missing). */
+  async loadActors(): Promise<Map<string, Box>> {
+    const text = await readText(this.storage, ACTORS_FILE)
+    if (text === null) return new Map()
+    try {
+      return parseActors(text)
+    } catch (err) {
+      throw new Error(`${ACTORS_FILE} could not be read: ${(err as Error).message}`)
+    }
+  }
+
+  /** Saves the actors' boxes; with none, there is no file. */
+  async saveActors(boxes: ReadonlyMap<string, Box>) {
+    if (boxes.size) await writeText(this.storage, ACTORS_FILE, serializeActors(boxes))
+    else await this.storage.remove(ACTORS_FILE)
   }
 
   /** Map names: maps/<name>.json. */

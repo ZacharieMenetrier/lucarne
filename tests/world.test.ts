@@ -44,7 +44,7 @@ describe('map files', () => {
   it('keep their tiles in place in the world when reframed', () => {
     const m = newMap('a', 0, 0, 2, 2)
     m.cells[3] = { tileset: 't', col: 0, row: 0 }
-    const r = reframe(m, 1, 1, 3, 3)
+    const r = reframe(m, 1, 1, 3, 3, 16)
     expect(cellAt(r, 1, 1)).toEqual({ tileset: 't', col: 0, row: 0 })
     expect(r.cells.filter(Boolean).length).toBe(1)
   })
@@ -153,5 +153,259 @@ describe('world editor', () => {
     expect(w.renameTileset('old', 'new')).toEqual(['a'])
     expect(w.mapsUsing('new')).toEqual(['a'])
     expect(w.mapsUsing('old')).toEqual([])
+  })
+})
+
+describe('actors on maps', () => {
+  it('are saved after the cells, one line each, and read back', () => {
+    const m = newMap('town', 0, 0, 2, 1)
+    m.actors.push({ type: 'Villager', x: 8, y: 16 }, { type: 'Chest', x: 24, y: 8 })
+    const text = serializeMap(m)
+    expect(text).toContain(
+      ['  "cells": [', '    null, null', '  ],', '  "actors": [', '    { "type": "Villager", "x": 8, "y": 16 },', '    { "type": "Chest", "x": 24, "y": 8 }', '  ]', '}'].join('\n'),
+    )
+    expect(parseMap('town', text)).toEqual(m)
+    // A map without actors has no "actors".
+    expect(serializeMap(newMap('a', 0, 0, 1, 1))).not.toContain('actors')
+  })
+
+  it('leave out broken actors when read', () => {
+    const m = parseMap('a', '{ "width": 2, "height": 1, "actors": [{ "type": "A", "x": 1, "y": 2 }, { "x": 1, "y": 2 }, { "type": "B", "x": -4, "y": 2 }, null] }')
+    expect(m.actors).toEqual([{ type: 'A', x: 1, y: 2 }])
+  })
+
+  it('stay in place in the world when a map is reframed, and the ones left outside go', () => {
+    const m = newMap('a', 0, 0, 4, 2)
+    m.actors.push({ type: 'A', x: 40, y: 16 }, { type: 'B', x: 8, y: 16 })
+    const r = reframe(m, 2, 0, 2, 2, 16)
+    expect(r.actors).toEqual([{ type: 'A', x: 8, y: 16 }])
+  })
+
+  it('are placed on the half tile under the pointer, standing on it', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    w.addMap(newMap('b', 4, 0, 4, 2))
+    const edited: string[] = []
+    w.onEdit = (n) => edited.push(n)
+    w.setActorType('Villager')
+    expect([w.mode, w.tool]).toEqual(['actors', 'place'])
+    w.down({ x: 21, y: 3 })
+    w.up({ x: 21, y: 3 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'Villager', x: 24, y: 8 }])
+    // In the second map: from its own top left. The new one is the selection.
+    w.down({ x: 70, y: 20 })
+    w.up({ x: 70, y: 20 })
+    expect(w.maps.get('b')!.actors).toEqual([{ type: 'Villager', x: 8, y: 24 }])
+    expect([...w.selection]).toEqual(w.maps.get('b')!.actors)
+    expect(edited).toEqual(['a', 'b'])
+    w.undo()
+    expect(w.maps.get('b')!.actors).toEqual([])
+  })
+
+  it('belong to a mode: tiles are painted under them, and each mode keeps its last tool', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    w.maps.get('a')!.actors.push({ type: 'A', x: 8, y: 16 })
+    w.setBrush({ tileset: 't', col: 0, row: 0, w: 1, h: 1 })
+    expect(w.mode).toBe('tiles')
+    w.down(at(0, 0))
+    w.up(at(0, 0))
+    expect(cellAt(w.maps.get('a')!, 0, 0)).toEqual({ tileset: 't', col: 0, row: 0 })
+    expect(w.selection.size).toBe(0)
+    w.setTool('eraser')
+    w.setMode('actors')
+    expect(w.tool).toBe('select')
+    w.setMode('maps')
+    expect(w.tool).toBe('move')
+    w.setMode('tiles')
+    expect(w.tool).toBe('eraser')
+  })
+
+  it('are dragged together, into another map too, in one undo', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    w.addMap(newMap('b', 4, 0, 4, 2))
+    const a = { type: 'A', x: 24, y: 16 }
+    const b = { type: 'B', x: 40, y: 16 }
+    w.maps.get('a')!.actors.push(a, b)
+    w.setMode('actors')
+    w.down({ x: 28, y: 10 })
+    w.up({ x: 28, y: 10 })
+    w.shift = true
+    w.down({ x: 42, y: 10 })
+    w.up({ x: 42, y: 10 })
+    w.shift = false
+    expect(w.selection).toEqual(new Set([a, b]))
+    // Grabbed by A's picture (a tile above its feet), moved 16 pixels right: still in a.
+    w.down({ x: 28, y: 10 })
+    w.move({ x: 44, y: 10 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'A', x: 40, y: 16 }, { type: 'B', x: 56, y: 16 }])
+    // 48 pixels right: both cross into b.
+    w.move({ x: 76, y: 10 })
+    // Further right, B would leave every map: neither moves.
+    w.move({ x: 120, y: 10 })
+    w.up({ x: 120, y: 10 })
+    expect(w.maps.get('a')!.actors).toEqual([])
+    expect(w.maps.get('b')!.actors).toEqual([{ type: 'A', x: 8, y: 16 }, { type: 'B', x: 24, y: 16 }])
+    w.undo()
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'A', x: 24, y: 16 }, { type: 'B', x: 40, y: 16 }])
+    expect(w.maps.get('b')!.actors).toEqual([])
+    w.redo()
+    expect(w.maps.get('b')!.actors).toHaveLength(2)
+  })
+
+  it('are hit by their picture, the one in front first, and deleted', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    w.actorBounds = (type) => (type === 'Tall' ? { x: -4, y: -30, w: 8, h: 30 } : null)
+    const tall = { type: 'Tall', x: 16, y: 32 }
+    const small = { type: 'A', x: 16, y: 16 }
+    w.maps.get('a')!.actors.push(tall, small)
+    // Where both are, the lower one (Tall's feet are lower) is in front, as in the game.
+    expect(w.actorAt({ x: 17, y: 10 })).toBe(tall)
+    expect(w.actorAt({ x: 10, y: 10 })).toBe(small)
+    expect(w.actorAt({ x: 40, y: 20 })).toBe(null)
+    w.setMode('actors')
+    w.down({ x: 17, y: 20 })
+    w.up({ x: 17, y: 20 })
+    w.deleteSelection()
+    expect(w.maps.get('a')!.actors).toEqual([small])
+    w.undo()
+    expect(w.maps.get('a')!.actors).toHaveLength(2)
+  })
+
+  it('are selected with a box, Shift adding to the selection', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 2))
+    const [a, b, c] = [8, 40, 100].map((x) => ({ type: 'A', x, y: 16 }))
+    w.maps.get('a')!.actors.push(a, b, c)
+    w.setMode('actors')
+    w.down({ x: 0, y: 30 })
+    w.move({ x: 34, y: 5 })
+    expect(w.selectBox).toEqual({ x: 0, y: 5, w: 34, h: 25 })
+    w.up({ x: 34, y: 5 })
+    expect(w.selection).toEqual(new Set([a, b]))
+    w.shift = true
+    w.down({ x: 120, y: 30 })
+    w.move({ x: 95, y: 5 })
+    w.up({ x: 95, y: 5 })
+    expect(w.selection).toEqual(new Set([a, b, c]))
+    // A click on the ground clears it.
+    w.shift = false
+    w.down({ x: 60, y: 30 })
+    w.up({ x: 60, y: 30 })
+    expect(w.selection.size).toBe(0)
+  })
+
+  it('are nudged, copied, pasted and duplicated', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 4))
+    w.addMap(newMap('b', 8, 0, 8, 4))
+    w.maps.get('a')!.actors.push({ type: 'A', x: 16, y: 32 }, { type: 'B', x: 32, y: 48 })
+    w.setMode('actors')
+    w.selectAll()
+    w.nudge(8, -8)
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'A', x: 24, y: 24 }, { type: 'B', x: 40, y: 40 }])
+    w.copy()
+    // At the pointer, in the other map, keeping their places to each other.
+    w.move({ x: 160, y: 16 })
+    w.paste()
+    expect(w.maps.get('b')!.actors).toEqual([{ type: 'A', x: 32, y: 16 }, { type: 'B', x: 48, y: 32 }])
+    expect(w.selection).toEqual(new Set(w.maps.get('b')!.actors))
+    // Duplicated: one step aside, and selected.
+    w.leave()
+    w.duplicate()
+    expect(w.maps.get('b')!.actors.slice(2)).toEqual([{ type: 'A', x: 40, y: 24 }, { type: 'B', x: 56, y: 40 }])
+    expect(w.selection.size).toBe(2)
+    w.undo()
+    expect(w.maps.get('b')!.actors).toHaveLength(2)
+  })
+
+  it('snap to half tiles by the frame of their sprite, whatever their feet', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 4))
+    // A 16 × 16 sprite with its origin at (7, 14): the feet are not on any grid line.
+    w.actorFrame = (type) => (type === 'Hero' ? { x: -7, y: -14, w: 16, h: 16 } : type === 'Boss' ? { x: -16, y: -31, w: 32, h: 32 } : null)
+    w.setMode('actors')
+    w.setActorType('Hero')
+    // The pointer holds the frame by the middle: near a cell's middle, it fills that cell.
+    w.down({ x: 40, y: 24 })
+    w.up({ x: 40, y: 24 })
+    w.down({ x: 42, y: 26 })
+    w.up({ x: 42, y: 26 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'Hero', x: 39, y: 30 }, { type: 'Hero', x: 39, y: 30 }])
+    // Its frame on half tiles, wherever the pointer holds it.
+    w.setActorType('Boss')
+    w.down({ x: 70, y: 30 })
+    w.up({ x: 70, y: 30 })
+    expect(w.maps.get('a')!.actors[2]).toEqual({ type: 'Boss', x: 72, y: 47 })
+    // Dragged, the actor held snaps by its frame, and the others keep their places to it.
+    w.setTool('select')
+    w.selectAll()
+    w.down({ x: 40, y: 25 })
+    w.move({ x: 61, y: 30 })
+    w.up({ x: 61, y: 30 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'Hero', x: 63, y: 38 }, { type: 'Hero', x: 63, y: 38 }, { type: 'Boss', x: 96, y: 55 }])
+    // Pasted: the pointer holds the top one, as when placing it.
+    w.selection = new Set([w.maps.get('a')!.actors[0]])
+    w.copy()
+    w.move({ x: 10, y: 50 })
+    w.paste()
+    expect(w.maps.get('a')!.actors[3]).toEqual({ type: 'Hero', x: 7, y: 54 })
+  })
+
+  it('go anywhere by the pixel with snapping off', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 4))
+    w.actorFrame = (type) => (type === 'Hero' ? { x: -7, y: -14, w: 16, h: 16 } : null)
+    w.snap = false
+    w.setMode('actors')
+    w.setActorType('Hero')
+    w.down({ x: 33.4, y: 17 })
+    w.up({ x: 33.4, y: 17 })
+    w.setActorType('Spawner')
+    w.down({ x: 13, y: 17.6 })
+    w.up({ x: 13, y: 17.6 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'Hero', x: 32, y: 23 }, { type: 'Spawner', x: 13, y: 18 }])
+    w.setTool('select')
+    w.down({ x: 34, y: 18 })
+    w.move({ x: 37, y: 19 })
+    w.up({ x: 37, y: 19 })
+    expect(w.maps.get('a')!.actors[0]).toEqual({ type: 'Hero', x: 35, y: 24 })
+  })
+
+  it('with no sprite, have their feet on half tiles', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 4))
+    w.setMode('actors')
+    w.setActorType('Spawner')
+    w.down({ x: 13, y: 17 })
+    w.up({ x: 13, y: 17 })
+    expect(w.maps.get('a')!.actors).toEqual([{ type: 'Spawner', x: 16, y: 24 }])
+  })
+
+  it('count by class, and every one of a class can be selected', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    w.addMap(newMap('b', 4, 0, 4, 2))
+    w.maps.get('a')!.actors.push({ type: 'Chest', x: 8, y: 16 }, { type: 'A', x: 24, y: 16 })
+    w.maps.get('b')!.actors.push({ type: 'Chest', x: 8, y: 16 })
+    expect(w.countOf('Chest')).toBe(2)
+    w.selectAllOf('Chest')
+    expect(w.mode).toBe('actors')
+    expect([...w.selection].map((t) => t.type)).toEqual(['Chest', 'Chest'])
+  })
+
+  it('go nowhere outside the maps, and need a class picked first', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 4, 2))
+    const said: string[] = []
+    w.onMessage = (t) => said.push(t)
+    w.setTool('place')
+    w.down({ x: 8, y: 8 })
+    w.setActorType('A')
+    w.down({ x: 200, y: 8 })
+    expect(said).toEqual(['Pick an actor in the Actors panel first', 'Actors go inside a map'])
+    expect(w.maps.get('a')!.actors).toEqual([])
   })
 })

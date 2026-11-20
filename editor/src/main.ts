@@ -1,3 +1,4 @@
+import { ActorsPage } from './actorspage'
 import { App } from './app'
 import { Project } from './project'
 import { isTileset } from './sprite'
@@ -11,6 +12,8 @@ async function main() {
   await project.load()
   const app = new App(project)
   await app.start()
+  const actors = new ActorsPage(project, app)
+  await actors.load()
   const world = new WorldPage(project, app)
   await world.load()
   buildSettingsPage(storage, () => app.refreshSync(), {

@@ -5,14 +5,14 @@ under "Later". Two details settled while building it: the Tile tool's key is B (
 pencil's), and a block of tiles dragged on a map repeats whole, on a grid of its own size.
 
 The v1 is deliberately small: tilesets drawn in the editor, maps painted by hand with their
-tiles, all sitting in one world, and the engine drawing them under the things. Everything
+tiles, all sitting in one world, and the engine drawing them under the actors. Everything
 else waits (see "Later").
 
 ## One world
 
 The whole game sits in one world, the way every sprite sits on one board: each map has its
 place in it, and every map is loaded when the game starts. So there is no current map to
-choose and nothing to switch: things live in world coordinates, and a door is
+choose and nothing to switch: actors live in world coordinates, and a door is
 `hero.place(x, y)` to a spot in another map (a house's inside is a map placed anywhere,
 away from the town).
 
@@ -33,7 +33,7 @@ The settings of the whole game move to one file at the root of the game folder:
   written by the editor (on the settings page), never typed.
 - Why not in the code: the editor needs these settings to paint maps and to show the
   screen's size, and reading them from the code would mean running the game (which creates
-  its things), and would break painting whenever the code does not build.
+  its actors), and would break painting whenever the code does not build.
 - `tileSize` cannot be changed once a map exists: every map would be cut differently. The
   settings page says so instead of offering it.
 - The resolution cannot grow beyond the smallest map (see "Maps"): the settings page names
@@ -83,16 +83,16 @@ The settings of the whole game move to one file at the root of the game folder:
 ### In the game
 
 - The engine draws the maps itself, through the camera, after `game({ draw })` and under
-  the things. It draws only the tiles on screen (about 25 × 15 at 384 × 216 with 16 px
+  the actors. It draws only the tiles on screen (about 25 × 15 at 384 × 216 with 16 px
   tiles), with no pre-drawn picture of a map, so a tile can change at any time.
-- The camera stays inside the map that holds the thing it follows (the map under the
-  thing's position), and stops at its edges.
-- When that thing enters another map (walking into a map that touches, or placed through a
+- The camera stays inside the map that holds the actor it follows (the map under the
+  actor's position), and stops at its edges.
+- When that actor enters another map (walking into a map that touches, or placed through a
   door), the camera snaps to the new map at once, with no slide, and stays inside it.
 - Outside every map, and in a game with no map, the camera follows as today. A camera the
   game moves itself (`camera.x`, `camera.y`) goes where it is told.
 - Tiles are drawn on the game's pixel grid like everything else, so the map scrolls as
-  smoothly as the things.
+  smoothly as the actors.
 
 ## World editor
 
@@ -133,7 +133,7 @@ its place, at the same scale, like the board shows every sprite.
   - `tileset.ts` / `map.ts`: the formats, with no DOM, tested in `tests/` like `sprite.ts`.
   - `world.ts`: the world screen's state and tools, with no DOM, tested with vitest like
     `editor.ts`; its view and input next to it. (`runtime/world.ts` is the game's world
-    of things: a different file in a different folder.)
+    of actors: a different file in a different folder.)
   - `project.ts`: reads and writes `game.json`, `tiles/` and `maps/`.
   - `play.ts`: loads the tilesets and the maps before the game's code runs, like sprites.
   - `github.ts`: syncs `game.json`, `tiles/*` and `maps/*`.
@@ -146,7 +146,7 @@ its place, at the same scale, like the board shows every sprite.
 2. Tilesets: `tiles/`, New tileset, the tile grid on the board, resizing by whole tiles,
    renaming and deleting, sync.
 3. Maps in the engine: the format, drawing the visible tiles, the camera staying in the
-   map of the thing it follows and snapping between maps. Tested with map files written
+   map of the actor it follows and snapping between maps. Tested with map files written
    by hand before the world screen exists.
 4. The world screen: New map, moving and resizing maps, the tileset panel, the tile tool,
    eraser, eyedropper, the screen frame, undo.
@@ -158,8 +158,10 @@ Each step is checked on a throwaway game (`npm run dev -- "$TMPDIR/lucarne-test-
 
 - **v2**: a small picture-in-picture of the map on the board, which redraws as a tileset is
   drawn, to see a tile change in place.
-- Collisions: solid tiles, and boxes on things.
-- Props on the map (trees, rocks, houses), sorted by `y` with the things.
+- Collisions: done (solid tiles, boxes drawn on the Actors page, actors solid to each other).
+  Next: zones that are touched without blocking (coins, doors), trying an actor alone on
+  the Actors page.
+- Props on the map (trees, rocks, houses), sorted by `y` with the actors.
 - The code reading and changing tiles (hoed soil, an opened door).
 - How the code finds places in the world (where a door leads, where the hero starts):
   the user has ideas for it.
