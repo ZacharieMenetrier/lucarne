@@ -14,6 +14,7 @@
 
 export { game, type GameConfig } from './game'
 export { Thing, camera } from './world'
+export { map, mapAt, type MapRect } from './maps'
 export { input, type Button } from './input'
 export { screen, type SpriteOptions } from './screen'
 export { sprite, type Sprite } from './sprites'

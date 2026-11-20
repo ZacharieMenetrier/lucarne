@@ -42,9 +42,9 @@ export class World {
   readonly maps = new Map<string, GameMap>()
   tool: WorldTool = 'tile'
   brush: Brush | null = null
-  /** The game's tile size and resolution (game.json). */
+  /** The game's tile size, and its screen in tiles (game.json). */
   tileSize = 16
-  screen = { width: 320, height: 180 }
+  screen = { columns: 20, rows: 11 }
   /** The map last touched: drawn on top, its corners highlighted. */
   active: string | null = null
   /** Pointer position, in world pixels. */
@@ -70,9 +70,9 @@ export class World {
   // -------------------------------------------------------------------------
   // Geometry
 
-  /** The smallest map: one screen, in whole cells. Smaller, the maps around would show. */
+  /** The smallest map: exactly one screen, in cells. Smaller, the maps around would show. */
   get minCells() {
-    return { w: Math.ceil(this.screen.width / this.tileSize), h: Math.ceil(this.screen.height / this.tileSize) }
+    return { w: this.screen.columns, h: this.screen.rows }
   }
 
   /** A map's place and size, in cells. */

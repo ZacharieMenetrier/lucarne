@@ -121,7 +121,7 @@ export class WorldPage {
       if (page !== 'world') return
       // Settings and tilesets may have changed on the other pages.
       this.world.tileSize = this.project.settings.tileSize
-      this.world.screen = { width: this.project.settings.width, height: this.project.settings.height }
+      this.world.screen = { columns: this.project.settings.columns, rows: this.project.settings.rows }
       this.view.invalidate()
       this.renderPickers()
       this.world.emit()
@@ -132,8 +132,7 @@ export class WorldPage {
 
   /** Every map's size, in game pixels (the resolution cannot grow beyond the smallest). */
   get mapSizes() {
-    const t = this.world.tileSize
-    return [...this.world.maps.values()].map((m) => ({ name: m.name, width: m.width * t, height: m.height * t }))
+    return [...this.world.maps.values()].map((m) => ({ name: m.name, width: m.width, height: m.height }))
   }
 
   private tilesetBitmap(name: string) {

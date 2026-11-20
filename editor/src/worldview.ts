@@ -149,8 +149,8 @@ export class WorldView extends Viewport {
     // One screen of the game around the pointer, kept inside the map as the camera is.
     if (hv && under && tool !== 'move') {
       const r = world.rectOf(under)!
-      const sw = world.screen.width
-      const sh = world.screen.height
+      const sw = world.screen.columns * world.tileSize
+      const sh = world.screen.rows * world.tileSize
       const sx = Math.max(r.x, Math.min(hv.x - sw / 2, r.x + r.w - sw))
       const sy = Math.max(r.y, Math.min(hv.y - sh / 2, r.y + r.h - sh))
       const dash = 4 * dpr

@@ -5,7 +5,7 @@
 // the engine through globalThis.__lucarne (see server/build.mjs).
 
 import * as engine from '../../runtime/index'
-import type { GameConfig, GameSettings } from '../../runtime/game'
+import { screenSize, type GameConfig } from '../../runtime/game'
 import { setMaps, type TilesetData } from '../../runtime/maps'
 import { setFonts, type FontData } from '../../runtime/fonts'
 import type { Button } from '../../runtime/input'
@@ -110,7 +110,7 @@ export class Player {
       setMaps(settings.tileSize, await this.loadTilesets(), await this.loadMaps())
       // The game's code creates its things as it runs: in an empty world.
       resetWorld()
-      this.run(await importGame(code), settings)
+      this.run(await importGame(code), screenSize(settings))
     } catch (err) {
       this.say(`The game could not start:\n\n${describe(err)}`, true)
     } finally {
@@ -119,7 +119,7 @@ export class Player {
     }
   }
 
-  private run(config: GameConfig, size: Pick<GameSettings, 'width' | 'height'>, caption?: HTMLElement) {
+  private run(config: GameConfig, size: { width: number; height: number }, caption?: HTMLElement) {
     this.runner = new Runner(config, this.canvas, (err) => {
       this.runner = null
       this.renderBar()

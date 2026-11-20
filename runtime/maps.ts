@@ -3,7 +3,8 @@
 // The whole game sits in one world: each map has its place in it, and every map is there
 // from the start. The engine draws them itself, under the things, and the camera stays
 // inside the map that holds the thing it follows (see world.ts). Nothing to write in the
-// game's code: a door to another map is `hero.place(x, y)`.
+// game's code to see them: a door to another map is `hero.place(x, y)`, and `map(name)` or
+// `mapAt(x, y)` say where a map is (to place a thing in it, or keep it inside).
 //
 // The editor loads every tileset and map before the game's code runs.
 
@@ -59,6 +60,16 @@ export function mapAt(x: number, y: number): MapRect | null {
   const cy = Math.floor(y / size)
   const m = maps.find((m) => cx >= m.x && cy >= m.y && cx < m.x + m.width && cy < m.y + m.height)
   return m ? rectOf(m) : null
+}
+
+/**
+ * A map's place in the world (game pixels), by its name (its file name, without `.json`):
+ * where to put the hero, or the edges to keep it in. Throws if the game has no such map.
+ */
+export function map(name: string): MapRect {
+  const m = maps.find((m) => m.name === name)
+  if (!m) throw new Error(`No map named "${name}" in maps/`)
+  return rectOf(m)
 }
 
 function rectOf(m: MapData): MapRect {

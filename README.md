@@ -46,7 +46,7 @@ editor asks which version to keep. On Mac with `lucarne dev`, use git in the gam
 
 ```
 my-game/
-  game.json          { "width": 384, "height": 216, "tileSize": 16 }   // every one optional
+  game.json          { "columns": 20, "rows": 11, "tileSize": 16 }   // every one optional
   palette.json       ["#1a1c2c", "#5d275d", …]
   board.json         where each sprite sits on the editor's board, and its color
   sprites/hero.png   sheet: the animation frames side by side, left to right
@@ -91,10 +91,14 @@ export default game({
 ```
 
 The game's code says what it does; `game.json` says what it is, and the editor writes it
-(**Settings**, in the menu). `width` and `height` are the game's resolution (320 × 180
-unless set): every display shows exactly that much of the world. The engine scales it up by the largest whole number that fits (×5 for
-384 × 216 on a 1080p screen, ×10 on 4K) and fills the rest with black bars. The game never
-chooses the scale, and never needs to know it.
+(**Settings**, in the menu). `columns` and `rows` are the screen, in tiles (20 × 11 unless
+set): with 16-pixel tiles, the game's resolution is 320 × 176. Counted in tiles, the screen
+always holds whole tiles, so the smallest map is exactly one screen. Every display shows
+exactly that much of the world: the engine scales it up by the largest whole number that
+fits (×6 for 320 × 176 on a 1080p screen, ×12 on 4K) and fills the rest with black bars.
+The game never chooses the scale, and never needs to know it (`screen.width` and
+`screen.height` give the resolution in game pixels). An older `game.json` with `width` and
+`height` in pixels still works: the screen becomes the whole tiles that fit in it.
 
 ### Things
 
@@ -157,7 +161,11 @@ nothing to write in the code. A door to another map is `hero.place(x, y)`.
   cannot change once a map or a tileset exists (64 at most).
 - A tileset is always 8 tiles wide and grows only in rows. A narrower one (made elsewhere)
   gets empty columns on its right when the editor opens it.
-- A map is never smaller than the screen, and maps never overlap (they may touch).
+- A map is never smaller than the screen (its `columns` × `rows`), and maps never overlap
+  (they may touch).
+- `map('town')` says where a map is, in game pixels: `{ name, x, y, width, height }`
+  (to start the hero in it, or keep it inside). `mapAt(x, y)` gives the map under a point,
+  or null between maps.
 - The camera stays inside the map of the thing it follows, and stops at its edges. When
   that thing goes into another map, the camera snaps to it at once: the maps around the one
   shown never appear. Outside every map, the camera follows freely.

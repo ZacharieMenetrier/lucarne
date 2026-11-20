@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Font, setFonts } from '../runtime/fonts'
+import { parseSettings, screenSize, serializeSettings, settingsError } from '../runtime/game'
 import { input } from '../runtime/input'
-import { setMaps, type MapData } from '../runtime/maps'
+import { map as mapRect, mapAt, setMaps, type MapData } from '../runtime/maps'
 import { Runner } from '../runtime/runner'
 import { attachScreen, screen, writtenText } from '../runtime/screen'
 import { Sprite, setSprites, sprite } from '../runtime/sprites'
@@ -69,6 +70,28 @@ beforeEach(() => {
   resetWorld()
   setSprites([data])
   setMaps(16, [], [])
+})
+
+describe('settings', () => {
+  it('count the screen in tiles: 20 × 11 of 16 pixels unless set', () => {
+    const s = parseSettings(null)
+    expect(s).toEqual({ columns: 20, rows: 11, tileSize: 16 })
+    expect(screenSize(s)).toEqual({ width: 320, height: 176 })
+    expect(parseSettings(serializeSettings({ columns: 24, rows: 13, tileSize: 8 }))).toEqual({ columns: 24, rows: 13, tileSize: 8 })
+  })
+
+  it('read an older game.json in pixels as the whole tiles that fit', () => {
+    expect(parseSettings('{ "width": 384, "height": 216, "tileSize": 16 }')).toEqual({ columns: 24, rows: 13, tileSize: 16 })
+    expect(parseSettings('{ "width": 8, "height": 400 }')).toEqual({ columns: 1, rows: 25, tileSize: 16 })
+  })
+
+  it('keep wrong values to their default, and the screen within 4096 pixels', () => {
+    expect(parseSettings('{ "columns": 2.5, "rows": "9", "tileSize": 3 }')).toEqual({ columns: 20, rows: 11, tileSize: 16 })
+    expect(parseSettings('{ "columns": 256, "rows": 256, "tileSize": 64 }')).toEqual({ columns: 64, rows: 64, tileSize: 64 })
+    expect(settingsError({ columns: 20, rows: 11, tileSize: 16 })).toBe(null)
+    expect(settingsError({ columns: 0, rows: 11, tileSize: 16 })).toMatch(/^Columns/)
+    expect(settingsError({ columns: 100, rows: 11, tileSize: 64 })).toMatch(/6400 × 704/)
+  })
 })
 
 describe('sprites', () => {
@@ -352,6 +375,14 @@ describe('maps', () => {
     r.start()
     expect([camera.x, camera.y]).toEqual([0, 0])
     r.stop()
+  })
+
+  it('tell the game where a map is, in game pixels', () => {
+    setMaps(16, [], [map('a', -5, -5, 20, 12), map('b', 15, -5, 20, 12)])
+    expect(mapRect('a')).toEqual({ name: 'a', x: -80, y: -80, width: 320, height: 192 })
+    expect(mapAt(250, 0)?.name).toBe('b')
+    expect(mapAt(-81, 0)).toBe(null)
+    expect(() => mapRect('nowhere')).toThrow('No map named "nowhere"')
   })
 
   it('let the camera follow freely between maps', () => {

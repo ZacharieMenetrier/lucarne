@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { cellAt, newMap, parseMap, reframe, serializeMap } from '../editor/src/map'
 import { World } from '../editor/src/world'
 
-/** A world of 16 px tiles for a 64 × 32 screen: maps are at least 4 × 2 cells. */
+/** A world of 16 px tiles for a 4 × 2 tiles screen: maps are at least 4 × 2 cells. */
 function world() {
   const w = new World()
   w.tileSize = 16
-  w.screen = { width: 64, height: 32 }
+  w.screen = { columns: 4, rows: 2 }
   return w
 }
 

@@ -11,7 +11,7 @@ import {
   testConnection,
   type GitHubSettings,
 } from './github'
-import { DEFAULT_SETTINGS, SETTING_LIMITS, type GameSettings } from '../../runtime/game'
+import { DEFAULT_SETTINGS, SETTING_LIMITS, screenSize, settingsError, type GameSettings } from '../../runtime/game'
 import { createMenu, onPage } from './menu'
 import type { Storage } from './storage'
 
@@ -20,7 +20,7 @@ const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
 /** The game's settings, as the page reads and writes them. */
 export interface GameSettingsAccess {
   settings(): GameSettings
-  /** Every map's size, in game pixels. */
+  /** Every map's size, in tiles. */
   maps(): { name: string; width: number; height: number }[]
   /** The tilesets' names. */
   tilesets(): string[]
@@ -146,8 +146,8 @@ export function buildSettingsPage(storage: Storage, onSaved: () => void, game: G
 }
 
 /**
- * The game's settings: its resolution and its tile size (game.json). Maps are never smaller
- * than the screen, so the resolution cannot grow beyond the smallest map; and the tile size
+ * The game's settings: its screen, in tiles, and its tile size (game.json). Maps are never
+ * smaller than the screen, so the screen cannot grow beyond the smallest map; and the tile size
  * cannot change once a map exists, since every map would be cut differently.
  */
 function buildGameForm(game: GameSettingsAccess) {
@@ -155,10 +155,16 @@ function buildGameForm(game: GameSettingsAccess) {
     const { min, max } = SETTING_LIMITS[name]
     return h('input', { type: 'number', name, min, max, inputMode: 'numeric' })
   }
-  const width = number('width')
-  const height = number('height')
+  const columns = number('columns')
+  const rows = number('rows')
   const tileSize = number('tileSize')
   const tileNote = h('small', {})
+  const pixels = h('small', {})
+  /** The screen in pixels, under the fields, as they are typed. */
+  const showPixels = () => {
+    const s = read()
+    pixels.textContent = settingsError(s) ? '' : `${screenSize(s).width} × ${screenSize(s).height} game pixels.`
+  }
   const status = h('p', { className: 'settings-status', role: 'status' })
   const save = h('button', { type: 'submit', className: 'primary' }, 'Save')
   const setStatus = (text: string, kind: 'ok' | 'error' | '' = '') => {
@@ -167,9 +173,10 @@ function buildGameForm(game: GameSettingsAccess) {
   }
   const fill = () => {
     const s = game.settings()
-    width.value = String(s.width)
-    height.value = String(s.height)
+    columns.value = String(s.columns)
+    rows.value = String(s.rows)
     tileSize.value = String(s.tileSize)
+    showPixels()
     // Tilesets are drawn tile by tile, 8 tiles wide, and maps are counted in tiles: once
     // either exists, another size would cut them wrong.
     const maps = game.maps().length > 0
@@ -180,15 +187,13 @@ function buildGameForm(game: GameSettingsAccess) {
       : `Tilesets are cut in squares of this size (${DEFAULT_SETTINGS.tileSize} unless set).`
     setStatus('')
   }
-  const read = (): GameSettings => ({ width: Number(width.value), height: Number(height.value), tileSize: Number(tileSize.value) })
+  function read(): GameSettings {
+    return { columns: Number(columns.value), rows: Number(rows.value), tileSize: Number(tileSize.value) }
+  }
   const check = (s: GameSettings) => {
-    for (const key of ['width', 'height', 'tileSize'] as const) {
-      const { min, max } = SETTING_LIMITS[key]
-      if (!Number.isInteger(s[key]) || s[key] < min || s[key] > max) {
-        return `${key === 'tileSize' ? 'Tile size' : key === 'width' ? 'Width' : 'Height'}: a whole number of pixels between ${min} and ${max}.`
-      }
-    }
-    const small = game.maps().filter((m) => m.width < s.width || m.height < s.height).map((m) => `“${m.name}”`)
+    const err = settingsError(s)
+    if (err) return err
+    const small = game.maps().filter((m) => m.width < s.columns || m.height < s.rows).map((m) => `“${m.name}”`)
     if (small.length) {
       return `A map is never smaller than the screen: make ${small.join(', ')} bigger in the world editor first.`
     }
@@ -198,12 +203,14 @@ function buildGameForm(game: GameSettingsAccess) {
     h('h2', {}, 'Game'),
     h('p', { className: 'muted' }, 'What the game is, saved in game.json in the game folder.'),
     h('div', { className: 'settings-row' },
-      h('label', {}, 'Width', width, h('small', {}, 'Of the screen, in game pixels.')),
-      h('label', {}, 'Height', height, h('small', {}, 'Every display shows exactly this much, scaled up.'))),
+      h('label', {}, 'Columns', columns, h('small', {}, 'Of the screen, in tiles.')),
+      h('label', {}, 'Rows', rows, h('small', {}, 'Every display shows exactly this much, scaled up.'))),
+    pixels,
     h('label', {}, 'Tile size', tileSize, tileNote),
     h('div', { className: 'settings-actions' }, save),
     status,
   )
+  form.addEventListener('input', showPixels)
   form.addEventListener('submit', (e) => {
     e.preventDefault()
     const s = read()

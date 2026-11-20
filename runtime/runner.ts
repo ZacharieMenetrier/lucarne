@@ -7,7 +7,7 @@
 // `fit`), and the canvas gets the display's own pixels. What is left around is the
 // editor's black bars.
 
-import { DEFAULT_SETTINGS, TICK_RATE, type GameConfig, type GameSettings } from './game'
+import { DEFAULT_SETTINGS, TICK_RATE, screenSize, type GameConfig } from './game'
 import { forceInput, listenInput, sampleInput, type Button } from './input'
 import { attachScreen } from './screen'
 import { resetTime, tickTime } from './time'
@@ -54,8 +54,8 @@ export class Runner {
     readonly canvas: HTMLCanvasElement,
     /** Called when the game's code throws; the game is stopped. */
     private readonly onError: (err: unknown) => void,
-    /** The game's resolution, from game.json. */
-    size: Pick<GameSettings, 'width' | 'height'> = DEFAULT_SETTINGS,
+    /** The game's resolution, in game pixels (`screenSize` of game.json's settings). */
+    size: { width: number; height: number } = screenSize(DEFAULT_SETTINGS),
   ) {
     this.width = size.width
     this.height = size.height
