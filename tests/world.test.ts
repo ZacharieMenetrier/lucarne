@@ -354,6 +354,32 @@ describe('actors on maps', () => {
     expect(w.maps.get('a')!.actors[3]).toEqual({ type: 'Hero', x: 7, y: 54 })
   })
 
+  it('are removed by the Eraser, a whole stroke undone at once', () => {
+    const w = world()
+    w.addMap(newMap('a', 0, 0, 8, 2))
+    w.addMap(newMap('b', 8, 0, 8, 2))
+    const [a, b, c] = [8, 40, 100].map((x) => ({ type: 'A', x, y: 16 }))
+    const d = { type: 'A', x: 12, y: 16 } // 140 in the world
+    w.maps.get('a')!.actors.push(a, b, c)
+    w.maps.get('b')!.actors.push(d)
+    w.setMode('actors')
+    w.selectAll()
+    w.setTool('remove')
+    // A click on the ground removes nothing; a stroke, every actor it crosses, in any map.
+    w.down({ x: 60, y: 30 })
+    w.up({ x: 60, y: 30 })
+    expect(w.canUndo).toBe(false)
+    w.down({ x: 8, y: 10 })
+    w.move({ x: 140, y: 10 })
+    w.up({ x: 140, y: 10 })
+    expect(w.maps.get('a')!.actors).toEqual([])
+    expect(w.maps.get('b')!.actors).toEqual([])
+    expect(w.selection.size).toBe(0)
+    w.undo()
+    expect(w.maps.get('a')!.actors).toEqual([a, b, c])
+    expect(w.maps.get('b')!.actors).toEqual([d])
+  })
+
   it('go anywhere by the pixel with snapping off', () => {
     const w = world()
     w.addMap(newMap('a', 0, 0, 8, 4))

@@ -27,6 +27,7 @@ const TOOLS: Record<WorldTool, { label: string; key: string; icon: string }> = {
   picker: { label: 'Eyedropper', key: 'I', icon: 'picker' },
   select: { label: 'Select', key: 'V', icon: 'pointer' },
   place: { label: 'Place', key: 'P', icon: 'add' },
+  remove: { label: 'Eraser', key: 'E', icon: 'eraser' },
   move: { label: 'Move and resize', key: 'V', icon: 'move' },
 }
 /** Where the page keeps the mode it was in (for this browser). */
@@ -393,14 +394,15 @@ export class WorldPage {
       if (e.altKey || e.shiftKey) return
       const mode = MODES.find((m) => m.key === e.key)
       const tool = (MODE_TOOLS[w.mode] as WorldTool[]).find((t) => TOOLS[t].key.toLowerCase() === k)
-        // A key of another mode's tool (B for the pencil) goes there; V means this mode's.
+        // A key of another mode's tool (B for the pencil) goes there; V means this mode's,
+        // and E, this mode's eraser (the tiles' one from the Maps mode).
         ?? (Object.keys(TOOLS) as WorldTool[]).find((t) => TOOLS[t].key.toLowerCase() === k && k !== 'v')
       if (mode) this.setMode(mode.id)
       else if (tool) this.setTool(tool)
       else if ((e.key === 'Delete' || e.key === 'Backspace') && w.mode === 'actors') w.deleteSelection()
       else if (e.key === '0') this.view.fit()
       else if (e.key === 'Escape') {
-        if (w.mode === 'actors' && w.tool === 'place') w.setTool('select')
+        if (w.mode === 'actors' && w.tool !== 'select') w.setTool('select')
         else if (w.mode === 'actors' && w.selection.size) {
           w.selection = new Set()
           w.emit()

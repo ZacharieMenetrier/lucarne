@@ -238,6 +238,8 @@ export class Villager extends Actor {
   nudge it by half a tile (a pixel with snapping off; Shift: a whole tile).
   ⌘C, ⌘X and ⌘V copy, cut and paste (at the pointer, or beside the copied actors), ⌘D
   duplicates, Delete removes. Undo covers it all.
+- Eraser (E): a click removes the actor under the pointer, and a stroke every actor it
+  crosses; one undo brings the whole stroke back. Esc goes back to Select.
 - When the game starts, the engine creates every placed actor with `new Villager(x, y)`,
   map by map (by name), after the actors the code creates at its top level and before
   `start()`. From then on it is an actor like any other: it moves however its `update()`

@@ -138,6 +138,12 @@ export class WorldView extends Viewport {
         const p = world.placed(t)
         if (p) this.outline(world.actorRect(p), ink.cursor)
       }
+      // The Eraser: the actor a click would remove.
+      if (hv && tool === 'remove') {
+        const hit = world.actorAt(hv)
+        const p = hit && world.placed(hit)
+        if (p) this.outline(world.actorRect(p), ink.cursor)
+      }
       const box = world.selectBox
       if (box) {
         ctx.fillStyle = 'rgba(65, 166, 246, 0.12)'

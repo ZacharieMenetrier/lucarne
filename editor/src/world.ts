@@ -22,12 +22,12 @@ import { History } from './history'
 import { cellAt, cloneMap, insideMap, reframe, renameTileset, setCell, tilesetsOf, type GameMap, type Placement, type Tile } from './map'
 
 export type WorldMode = 'tiles' | 'actors' | 'maps'
-export type WorldTool = 'tile' | 'eraser' | 'picker' | 'select' | 'place' | 'move'
+export type WorldTool = 'tile' | 'eraser' | 'picker' | 'select' | 'place' | 'remove' | 'move'
 
 /** The tools of each mode, in the order the toolbar shows them; the first is its default. */
 export const MODE_TOOLS: Record<WorldMode, WorldTool[]> = {
   tiles: ['tile', 'eraser', 'picker'],
-  actors: ['select', 'place'],
+  actors: ['select', 'place', 'remove'],
   maps: ['move'],
 }
 
@@ -74,6 +74,8 @@ type Drag =
   /** The selected actors being dragged, from where each was (world pixels). Every map
    * they have been in keeps its state from before the drag. */
   | { kind: 'actors'; start: Point; from: Map<Placement, Point>; befores: Map<string, GameMap>; held: Placement }
+  /** The Eraser of actors going over the maps, removing every actor it passes over. */
+  | { kind: 'remove'; last: Point; befores: Map<string, GameMap> }
   /** A box drawn to select the actors it touches, added to `base` (Shift held). */
   | { kind: 'box'; start: Point; end: Point; base: Set<Placement> }
 
@@ -583,6 +585,11 @@ export class World {
       this.add([{ type: this.actorType, ...at }])
       return
     }
+    if (this.tool === 'remove') {
+      this.drag = { kind: 'remove', last: { x: p.x, y: p.y }, befores: new Map() }
+      this.removeAt(p, this.drag.befores)
+      return
+    }
     const hit = this.actorAt(p)
     if (!hit) {
       const base = this.shift ? new Set(this.selection) : new Set<Placement>()
@@ -598,6 +605,17 @@ export class World {
     if (!this.selection.has(hit)) this.selection = new Set([hit])
     this.active = this.placed(hit)!.map
     this.drag = { kind: 'actors', start: { x: p.x, y: p.y }, from: this.selectedFrom(), befores: new Map(), held: hit }
+  }
+
+  /** Removes the actor in front under a point (Eraser), keeping its map as it was before. */
+  private removeAt(p: Point, befores: Map<string, GameMap>) {
+    const hit = this.actorAt(p)
+    if (!hit) return
+    const name = this.placed(hit)!.map
+    const m = this.maps.get(name)!
+    if (!befores.has(name)) befores.set(name, cloneMap(m))
+    m.actors = m.actors.filter((t) => t !== hit)
+    this.selection.delete(hit)
   }
 
   /** Shift held (set by the page): adds to the selection instead of replacing it. */
@@ -631,6 +649,12 @@ export class World {
       const delta = { x: to.x - from.x, y: to.y - from.y }
       // Outside every map: they wait at their last place inside.
       this.moveActors(d.from, delta, d.befores)
+      return this.emit()
+    }
+    if (d.kind === 'remove') {
+      // Every pixel on the way: a quick stroke misses nothing it crosses.
+      for (const q of linePoints(Math.round(d.last.x), Math.round(d.last.y), Math.round(p.x), Math.round(p.y))) this.removeAt(q, d.befores)
+      d.last = { x: p.x, y: p.y }
       return this.emit()
     }
     if (d.kind === 'box') {
@@ -672,7 +696,8 @@ export class World {
     const d = this.drag
     this.drag = null
     if (!d) return
-    if (d.kind === 'actors') {
+    if (d.kind === 'actors' || d.kind === 'remove') {
+      // A whole stroke of the Eraser is one change: one undo brings it all back.
       this.record(d.befores)
       return this.emit()
     }
