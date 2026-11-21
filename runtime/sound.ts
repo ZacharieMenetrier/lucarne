@@ -13,7 +13,8 @@
 // second of the recording repeated would come back like a rhythm (chosen by ear).
 //
 // A song (songs/<name>.json) is a tempo and tracks; a track is one instrument and its notes,
-// on a fixed grid of sixteenth notes. It ends with the bar of its last note, and loops.
+// on a fixed grid of sixteenth notes, never two of the same pitch at once. It ends with the
+// bar of its last note, and loops.
 //
 // This file has no imports: the script that prepares the built-in instruments runs it with
 // plain Node.
@@ -106,7 +107,7 @@ export function parseSong(text: string): Song {
       if (!Number.isInteger(length) || length < 1) throw new Error(`a note of "${track.instrument}" has a bad length: ${JSON.stringify(n)}`)
       notes.push({ step, pitch, length })
     }
-    tracks.push({ instrument: track.instrument, notes: sortNotes(notes) })
+    tracks.push({ instrument: track.instrument, notes: untangle(notes) })
   }
   return { tempo, tracks }
 }
@@ -115,10 +116,32 @@ export function sortNotes(notes: Note[]): Note[] {
   return notes.sort((a, b) => a.step - b.step || (a.pitch ?? 0) - (b.pitch ?? 0))
 }
 
+/**
+ * A track never covers itself: two of its notes of the same pitch never overlap. When one
+ * starts while the same pitch still sounds, the earlier one stops there, as a string struck
+ * again starts over; two at the same step are one (the last). Drum hits: one per step.
+ * Changes `notes` in place, sorted, and returns it.
+ */
+export function untangle(notes: Note[]): Note[] {
+  sortNotes(notes)
+  const last = new Map<number | null, Note>()
+  const kept: Note[] = []
+  for (const n of notes) {
+    const before = last.get(n.pitch)
+    if (before && before.step === n.step) kept.splice(kept.indexOf(before), 1)
+    else if (before && noteEnd(before) > n.step) before.length = n.step - before.step
+    last.set(n.pitch, n)
+    kept.push(n)
+  }
+  notes.length = 0
+  notes.push(...kept)
+  return notes
+}
+
 /** The song file: one track per line, the tempo only when it is not the default. */
 export function serializeSong(song: Song): string {
   const note = (n: Note) => (n.pitch === null ? `[${n.step}]` : `[${n.step}, "${noteName(n.pitch)}", ${n.length}]`)
-  const tracks = song.tracks.map((t) => `    { "instrument": ${JSON.stringify(t.instrument)}, "notes": [${sortNotes([...t.notes]).map(note).join(', ')}] }`)
+  const tracks = song.tracks.map((t) => `    { "instrument": ${JSON.stringify(t.instrument)}, "notes": [${untangle(t.notes.map((n) => ({ ...n }))).map(note).join(', ')}] }`)
   const lines = ['{']
   if (song.tempo !== DEFAULT_TEMPO) lines.push(`  "tempo": ${song.tempo},`)
   lines.push(tracks.length ? `  "tracks": [\n${tracks.join(',\n')}\n  ]` : '  "tracks": []', '}')

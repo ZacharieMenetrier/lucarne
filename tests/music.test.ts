@@ -103,3 +103,24 @@ describe('music editor', () => {
     expect(other.tracks.length).toBe(1)
   })
 })
+
+describe('notes of one track never overlap', () => {
+  it('cuts the earlier note when one is placed over it, once the gesture ends', () => {
+    const { ed, song } = editor()
+    ed.place(0, 72, 8)
+    ed.begin()
+    const n = ed.place(4, 72, 2)!
+    expect(song.tracks[0].notes[0].length).toBe(8)
+    ed.resize(n, 3)
+    ed.end()
+    expect(song.tracks[0].notes.map((x) => [x.step, x.length])).toEqual([[0, 4], [4, 3]])
+  })
+
+  it('keeps the note moved onto another', () => {
+    const { ed, song } = editor()
+    ed.place(0, 72, 2)
+    const moved = ed.place(4, 74, 3)!
+    ed.move([moved], new Map([[moved, { step: 4, pitch: 74 }]]), -4, -2)
+    expect(song.tracks[0].notes.map((x) => [x.step, x.pitch, x.length])).toEqual([[0, 72, 3]])
+  })
+})

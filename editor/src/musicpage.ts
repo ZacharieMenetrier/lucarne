@@ -4,7 +4,8 @@
 //
 // The song is one grid: time from left to right, in sixteenths (a line at every bar), the
 // notes from bottom to top (a line at every octave). Every track is on it: the one selected
-// in front, in its color, the others dimmed behind. A drum has no pitch: its track is a row
+// filled with its color, the others as thin outlines of theirs, over it, so that no note
+// hides another (they are not edited there: a track is picked in the list). A drum has no pitch: its track is a row
 // of its own, under the notes. The ruler on top shows the bars, and where playing starts.
 // Under the grid, the tempo and Play: the song loops while it is painted, and a note plays
 // as it is placed.
@@ -1009,27 +1010,35 @@ export class MusicPage {
       }
     }
 
-    // The other tracks behind, dimmed; the selected one in front.
-    const order = song.tracks.map((_, i) => i).filter((i) => i !== ed.track)
-    if (song.tracks[ed.track]) order.push(ed.track)
-    for (const i of order) {
-      const t = song.tracks[i]
-      if (this.instruments.isDrum(t.instrument)) continue
-      const front = i === ed.track
-      for (const n of t.notes) {
-        if (n.pitch === null || noteEnd(n) < first || n.step > last) continue
+    // The selected track, solid; then the others over it, as thin outlines of their color:
+    // nothing hides anything, and the one edited stays the one filled.
+    const pitched = (i: number) => !!song.tracks[i] && !this.instruments.isDrum(song.tracks[i].instrument)
+    const visible = (n: Note) => n.pitch !== null && noteEnd(n) >= first && n.step <= last
+    if (pitched(ed.track)) {
+      for (const n of song.tracks[ed.track].notes) {
+        if (!visible(n)) continue
         const x = X(n.step) + 1
-        const y = Y(n.pitch) + 1
-        const w = n.length * SW - 2
-        ctx.fillStyle = front ? trackColor(i) : withAlpha(trackColor(i), 0.28)
-        ctx.fillRect(x, y, Math.max(2, w), ROW - 2)
-        if (front && ed.selection.has(n)) {
+        const y = Y(n.pitch!) + 1
+        const w = Math.max(2, n.length * SW - 2)
+        ctx.fillStyle = trackColor(ed.track)
+        ctx.fillRect(x, y, w, ROW - 2)
+        if (ed.selection.has(n)) {
           ctx.strokeStyle = '#fff'
           ctx.lineWidth = 2 * px
-          ctx.strokeRect(x - px, y - px, Math.max(2, w) + 2 * px, ROW - 2 + 2 * px)
+          ctx.strokeRect(x - px, y - px, w + 2 * px, ROW - 2 + 2 * px)
         }
       }
     }
+    ctx.lineWidth = px
+    song.tracks.forEach((t, i) => {
+      if (i === ed.track || !pitched(i)) return
+      ctx.strokeStyle = trackColor(i)
+      for (const n of t.notes) {
+        if (!visible(n)) continue
+        const w = Math.max(2, n.length * SW - 2)
+        ctx.strokeRect(X(n.step) + 1 + px / 2, Y(n.pitch!) + 1 + px / 2, w - px, ROW - 2 - px)
+      }
+    })
     ctx.restore()
 
     // --- The drums' rows.

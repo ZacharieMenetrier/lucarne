@@ -188,3 +188,10 @@ describe('importing a recording', () => {
     expect(noteName(Math.round(69 + 12 * Math.log2(detectPitch(d, RATE) / 440)))).toBe('C5')
   })
 })
+
+describe('a track never covers itself', () => {
+  it('cuts a note where the same pitch starts again, and keeps one of two on the same step', () => {
+    const song = parseSong(JSON.stringify({ tracks: [{ instrument: 'harp', notes: [[0, 'G2', 7], [6, 'G2', 7], [6, 'D3', 4], [12, 'G2', 2], [12, 'G2', 5], [3], [3]] }] }))
+    expect(song.tracks[0].notes.map((n) => [n.step, n.pitch, n.length])).toEqual([[0, 43, 6], [3, null, 1], [6, 43, 6], [6, 50, 4], [12, 43, 5]])
+  })
+})

@@ -408,7 +408,10 @@ is painted with, like the palette) and the **songs** (like the sprites).
   notes from bottom to top (a line at every octave, its C named). A note starts and lasts a
   whole number of sixteenths. There is no key and no scale: every note is there.
 - **A track is one instrument**, and so one color. Every track is on the grid: the selected
-  one in front, the others dimmed. Several notes at once on a track are a chord. A drum
+  one filled, the others as thin outlines over it, so no note hides another (they are edited
+  by picking their track in the list). Several notes at once on a track are a chord, but a
+  track never covers itself: when a note starts while the same pitch still sounds there,
+  the earlier one stops, as a string struck again starts over. A drum
   (an instrument without a note) has no pitch: its track is a row of hits, under the notes.
 - **The pencil** places a note of the length last used (drag to make it longer), drags a note
   by its body to move it, by its end to lengthen it. On a drum's row, a click places or

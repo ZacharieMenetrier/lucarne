@@ -6,7 +6,7 @@
 // one row of hits, under the notes.
 
 import { History } from './history'
-import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, sortNotes, type Note, type Song } from '../../runtime/sound'
+import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, untangle, type Note, type Song } from '../../runtime/sound'
 
 export type MusicTool = 'pencil' | 'eraser' | 'select'
 
@@ -92,7 +92,10 @@ export class MusicEditor {
     const before = this.before
     this.before = null
     if (!this.song || !this.name || before === null) return
-    for (const t of this.song.tracks) sortNotes(t.notes)
+    // A track never covers itself (runtime/sound.ts): settled once the change is done, so a
+    // note dragged over another does not cut it on the way.
+    for (const t of this.song.tracks) untangle(t.notes)
+    for (const n of [...this.selection]) if (!this.song.tracks[this.track]?.notes.includes(n)) this.selection.delete(n)
     const after = serializeSong(this.song)
     if (after !== before) {
       if (!this.histories.has(this.name)) this.histories.set(this.name, new History())
@@ -238,6 +241,12 @@ export class MusicEditor {
         const f = from.get(n)!
         n.step = f.step + ds
         if (f.pitch !== null) n.pitch = f.pitch + dp
+      }
+      // Last in the track: dropped on another note, the one moved is the one kept.
+      const t = this.current
+      if (t) {
+        const moved = new Set(notes)
+        t.notes = [...t.notes.filter((n) => !moved.has(n)), ...t.notes.filter((n) => moved.has(n))]
       }
     })
   }
