@@ -2,7 +2,7 @@
 
 A pixel art game engine where you draw, compose, code and play in one place.
 
-For now: the **pixel art editor** and the **world editor**.
+For now: the **pixel art editor**, the **world editor** and the **music editor**.
 
 Every sprite of the game sits on one board, at the same scale, so you can check
 that they look consistent and draw on any of them directly. In the same way, every map of
@@ -37,7 +37,7 @@ The token stays in the browser, on that device only.
 
 When the editor works from the browser's storage, a sync button shows in the top bar.
 It compares `game.json`, `palette.json`, `board.json`, `sprites/*`, `tiles/*`, `maps/*`,
-`actors/*.json` and `fonts/*` on the device, on GitHub, and
+`actors/*.json`, `fonts/*`, `instruments/*` and `songs/*` on the device, on GitHub, and
 as they were at the last sync: changes on one side follow that side, changes sent to
 GitHub go out as one commit. A file (or sprite) changed on both sides is a conflict: the
 editor asks which version to keep. On Mac with `lucarne dev`, use git in the game folder.
@@ -61,6 +61,9 @@ my-game/
   fonts/name.license.txt   the font's license, when it has one
   actors/hero.ts     an actor: its code (TypeScript), a class that extends Actor (see "Actors")
   actors/hero.json   its values set in the editor, its box among them, only when it has some
+  instruments/lute.wav   an instrument of the game's own: one note, as it plays (16 kHz, 8-bit)
+  instruments/lute.json  { "note": "C4" }, the note it was recorded at; none: a drum
+  songs/town.json    a song: its tempo and its tracks of notes (see "Music")
   code/main.ts       the rest of the game's code, optional: the game itself, helpers
   game.js            built from actors/ and code/ by `lucarne dev`: commit it, never edit it
 ```
@@ -394,6 +397,61 @@ themselves when done. They draw their box with the game's sprite named `panel` i
 one, and the menu's cursor with `cursor`. Their text color is `color`:
 `spawn(Dialogue, { pages, color: '#1a1c2c' })`.
 
+### Music
+
+Songs are notes, played by recorded instruments: no synthesis, no effects, no settings.
+The **Music** page (after World) makes them. It works like the pixel editor: the tools on the
+left (pencil, eraser, select), the song in the middle, and on the right the **tracks** (what
+is painted with, like the palette) and the **songs** (like the sprites).
+
+- **The grid** is time from left to right, in sixteenth notes (a line at every bar), and the
+  notes from bottom to top (a line at every octave, its C named). A note starts and lasts a
+  whole number of sixteenths. There is no key and no scale: every note is there.
+- **A track is one instrument**, and so one color. Every track is on the grid: the selected
+  one in front, the others dimmed. Several notes at once on a track are a chord. A drum
+  (an instrument without a note) has no pitch: its track is a row of hits, under the notes.
+- **The pencil** places a note of the length last used (drag to make it longer), drags a note
+  by its body to move it, by its end to lengthen it. On a drum's row, a click places or
+  takes away a hit. **Select** draws a box: the arrows move the notes (⇧: a bar, an octave),
+  ⌘C, ⌘X, ⌘V (where playing starts), ⌘D, Delete. A click on a note's name plays it.
+- **The song loops** while it is painted (Space, or Play under the grid), and a note plays as
+  it is placed. The ruler on top shows the bars; a click on it sets where playing starts.
+  A song ends with the bar of its last note: it grows as it is painted. Its only setting is
+  its **tempo**, in beats per minute (120 unless set).
+
+```json
+{
+  "tempo": 90,
+  "tracks": [
+    { "instrument": "harp", "notes": [[0, "C5", 4], [4, "E5", 2], [6, "G5", 2]] },
+    { "instrument": "bass-drum", "notes": [[0], [8]] }
+  ]
+}
+```
+
+A note is `[step, pitch, length]` in sixteenths, `[step]` on a drum. The tempo is written
+only when it is not 120.
+
+**An instrument is the recording of one note.** The engine plays it, and does nothing else:
+
+1. A note plays the recording from its start, faster or slower for its pitch.
+2. When the note ends, it fades out in a tenth of a second.
+3. If the note lasts longer than the recording, its last 5 waves repeat: a steady tone.
+
+Every instrument plays at 16 kHz, 8-bit: the sound's own pixels. The engine has twenty,
+usable by name in every game (`runtime/instruments/`, from the University of Iowa's
+Musical Instrument Samples and VSCO 2 Community Edition, see `SOURCES.md`): winds (flute,
+alto-flute, oboe, bassoon, horn, trumpet, organ), strings (violin, viola, cello,
+cello-pizzicato, harp), struck (bells, marimba) and drums (bass-drum, tenor-drum, snare,
+tambourine, triangle, claves). **Import an instrument…** (in the menu, or in the instrument
+list) turns any recording of one note into one of the game's (`instruments/<name>.wav`):
+it starts at the note, is cut before the player stops (a held sound, whose end then
+repeats) or once it has died out (a strike, a pluck), is tuned exactly to its note, and is
+stored at 16 kHz, 8-bit. Its `.json` holds that note; without one, it is a drum. A game's
+instrument with the name of a built-in one replaces it in that game.
+
+How a game plays its music comes later.
+
 ### Driving a game from a script
 
 `?play` at the end of the editor's address opens straight into the game. In play mode,
@@ -475,7 +533,9 @@ npm run build        # installable static version, in dist/
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
 (`runner.ts`), the world, its actors and the camera (`world.ts`: `spawn`, the actor files,
 smooth motion between updates), variables and how a value is checked (`values.ts`), walls (`collision.ts`), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
-`fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), and the
+`fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), songs and
+instruments (`sound.ts`: the song format, how a note plays, importing a recording; the
+built-in instruments in `instruments/`, made by `scripts/instruments.mjs`), and the
 game's settings (`game.ts`, read from `game.json`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
@@ -494,6 +554,8 @@ Editor code lives in `editor/src/`:
 - `actors.ts`: actor files (`actors/<name>.json`), where a value comes from, and their history — no DOM, tested in `tests/actors.test.ts`
 - `actortypes.ts`, `actorspage.ts`: the game's actors as its code declares them, drawn by their own code, and the Actors page
 - `inspector.ts`: the variables of an actor, to set (the Actors page and the world page)
+- `music.ts`: the Music page's song, tracks, tools and history — no DOM, tested in `tests/music.test.ts`
+- `musicpage.ts`, `musicplayer.ts`, `instruments.ts`: the Music page, playing a song in a loop, the instruments and their import
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)
