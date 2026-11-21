@@ -4,24 +4,26 @@
 import { h } from './dialog'
 import { icon } from './icons'
 
-export type Page = 'editor' | 'actors' | 'world' | 'settings'
+export type Page = 'editor' | 'actors' | 'world' | 'music' | 'settings'
 
-const PAGES: Record<Page, string> = { editor: '', actors: '#actors', world: '#world', settings: '#settings' }
+const PAGES: Record<Page, string> = { editor: '', actors: '#actors', world: '#world', music: '#music', settings: '#settings' }
 
 /**
  * The engine's editors, in the switch at the left of every top bar, in the order a game is
- * made: the pixels, the actors made of them, the world they are placed in.
+ * made: the pixels, the actors made of them, the world they are placed in, its music.
  */
 const EDITORS: { page: Page; label: string; title: string }[] = [
   { page: 'editor', label: 'Pixels', title: 'Pixel art editor: sprites and tilesets' },
   { page: 'actors', label: 'Actors', title: 'Actors: the box and the values of each actor' },
   { page: 'world', label: 'World', title: 'World editor: maps and actors' },
+  { page: 'music', label: 'Music', title: 'Music: songs, played by instruments' },
 ]
 
 export function currentPage(): Page {
   if (location.hash === PAGES.settings) return 'settings'
   if (location.hash === PAGES.world) return 'world'
   if (location.hash === PAGES.actors) return 'actors'
+  if (location.hash === PAGES.music) return 'music'
   return 'editor'
 }
 
@@ -103,7 +105,7 @@ export function createMenu(actions: MenuAction[] = []): HTMLElement {
 }
 
 /**
- * The switch between the editors (Pixels | Actors | World), next to the menu: going from one to the
+ * The switch between the editors (Pixels | Actors | World | Music), next to the menu: going from one to the
  * other is what is done most, so it is always in view. On another page (settings), neither
  * is lit, and either one goes back.
  */

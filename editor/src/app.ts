@@ -1258,7 +1258,7 @@ async function resolveConflicts(conflicts: Conflict[]): Promise<Map<string, Side
         label)
     list.append(
       h('div', { className: 'conflict' },
-        h('div', { className: 'conflict-name' }, c.group.replace(/^sprites\//, ''), h('small', {}, `${c.group.startsWith('sprites/') ? 'Sprite · ' : ''}${what}`)),
+        h('div', { className: 'conflict-name' }, c.group.replace(/^(sprites|instruments)\//, ''), h('small', {}, `${c.group.startsWith('sprites/') ? 'Sprite · ' : c.group.startsWith('instruments/') ? 'Instrument · ' : ''}${what}`)),
         h('div', { className: 'segmented' }, option('local', 'This device'), option('remote', 'GitHub'))),
     )
   }

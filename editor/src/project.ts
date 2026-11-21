@@ -1,5 +1,5 @@
 // The game folder as the editor sees it: the settings, the palette, the sprites, the
-// tilesets, the actor files' values, the maps and the fonts.
+// tilesets, the actor files' values, the maps, the fonts, the instruments and the songs.
 
 import { ACTORS_DIR, parseActorFile, serializeActorFile, type Values } from './actors'
 import { Bitmap, resized } from './bitmap'
@@ -8,6 +8,7 @@ import { isHex } from './color'
 import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
 import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
 import { parseMap, serializeMap, type GameMap } from './map'
+import { decodeWav, encodeWav, noteName, noteNumber, parseSong, serializeSong, type Song } from '../../runtime/sound'
 import { decodePng, encodePng } from './png'
 import {
   NAME_RE,
@@ -42,6 +43,8 @@ const FONTS_DIR = 'fonts'
 const SETTINGS_FILE = 'game.json'
 const TILES_DIR = 'tiles'
 const MAPS_DIR = 'maps'
+const INSTRUMENTS_DIR = 'instruments'
+const SONGS_DIR = 'songs'
 
 export function parsePalette(text: string): string[] {
   const raw = JSON.parse(text) as unknown
@@ -252,6 +255,73 @@ export class Project {
   async deleteMap(name: string) {
     await this.storage.remove(`${MAPS_DIR}/${name}.json`)
   }
+
+  /** The game's own instruments: instruments/<name>.wav (its .json, when it has a note). */
+  async listInstruments(): Promise<string[]> {
+    return (await this.storage.list(INSTRUMENTS_DIR))
+      .map((f) => /^(.+)\.wav$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+  }
+
+  /** A game's instrument: its recording, and its note (none: a drum). */
+  async loadInstrument(name: string): Promise<{ data: Float32Array; note: number | null }> {
+    const [wav, json] = await Promise.all([
+      this.storage.read(`${INSTRUMENTS_DIR}/${name}.wav`),
+      readText(this.storage, `${INSTRUMENTS_DIR}/${name}.json`),
+    ])
+    if (!wav) throw new Error(`Instrument not found: ${name}`)
+    return { data: decodeWav(wav).data, note: json === null ? null : parseInstrumentFile(json) }
+  }
+
+  /** Saves an instrument as it plays; with no note, there is no .json. */
+  async saveInstrument(name: string, data: Float32Array, note: number | null, license: string | null = null) {
+    await this.storage.write(`${INSTRUMENTS_DIR}/${name}.wav`, encodeWav(data))
+    await this.setInstrumentNote(name, note)
+    if (license !== null) await writeText(this.storage, `${INSTRUMENTS_DIR}/${name}.license.txt`, license)
+  }
+
+  async setInstrumentNote(name: string, note: number | null) {
+    const path = `${INSTRUMENTS_DIR}/${name}.json`
+    if (note === null) await this.storage.remove(path)
+    else await writeText(this.storage, path, `{ "note": "${noteName(note)}" }\n`)
+  }
+
+  async deleteInstrument(name: string) {
+    for (const ext of ['wav', 'json', 'license.txt']) await this.storage.remove(`${INSTRUMENTS_DIR}/${name}.${ext}`)
+  }
+
+  /** Song names: songs/<name>.json. */
+  async listSongs(): Promise<string[]> {
+    return (await this.storage.list(SONGS_DIR))
+      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+  }
+
+  async loadSong(name: string): Promise<Song> {
+    const text = await readText(this.storage, `${SONGS_DIR}/${name}.json`)
+    if (text === null) throw new Error(`Song not found: ${name}`)
+    try {
+      return parseSong(text)
+    } catch (err) {
+      throw new Error(`The song "${name}" could not be read: ${(err as Error).message}`)
+    }
+  }
+
+  async saveSong(name: string, song: Song) {
+    await writeText(this.storage, `${SONGS_DIR}/${name}.json`, serializeSong(song))
+  }
+
+  async deleteSong(name: string) {
+    await this.storage.remove(`${SONGS_DIR}/${name}.json`)
+  }
+}
+
+/** An instrument's .json: `{ "note": "C5" }`. */
+export function parseInstrumentFile(text: string): number | null {
+  const raw = JSON.parse(text) as { note?: unknown }
+  return typeof raw?.note === 'string' ? noteNumber(raw.note) : null
 }
 
 /** A tileset narrower than TILESET_COLUMNS tiles (made elsewhere, or before the rule) gets

@@ -58,13 +58,15 @@ export function isEditorFile(path: string) {
     /^tiles\/[^/]+\.(png|json)$/.test(path) ||
     /^maps\/[^/]+\.json$/.test(path) ||
     /^actors\/[^/]+\.json$/.test(path) ||
-    /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path)
+    /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path) ||
+    /^instruments\/[^/]+\.(wav|json|license\.txt)$/.test(path) ||
+    /^songs\/[^/]+\.json$/.test(path)
   )
 }
 
-/** Files that belong together: a sprite's (a tileset's, a font's) files are one choice in a conflict. */
+/** Files that belong together: a sprite's (a tileset's, a font's, an instrument's) files are one choice in a conflict. */
 export function groupOf(path: string) {
-  const m = /^(sprites|tiles|fonts)\/(.+?)\.(png|json|license\.txt)$/.exec(path)
+  const m = /^(sprites|tiles|fonts|instruments)\/(.+?)\.(png|wav|json|license\.txt)$/.exec(path)
   return m ? `${m[1]}/${m[2]}` : path
 }
 
@@ -247,6 +249,8 @@ export async function syncWithGitHub(
     ...(await storage.list('tiles')).map((n) => `tiles/${n}`),
     ...(await storage.list('maps')).map((n) => `maps/${n}`),
     ...(await storage.list('actors')).map((n) => `actors/${n}`),
+    ...(await storage.list('instruments')).map((n) => `instruments/${n}`),
+    ...(await storage.list('songs')).map((n) => `songs/${n}`),
   ].filter(isEditorFile)
   for (const path of localPaths) {
     const data = await storage.read(path)

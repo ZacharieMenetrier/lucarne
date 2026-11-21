@@ -40,6 +40,12 @@ describe('sync helpers', () => {
     expect(groupOf('sprites/hero.json')).toBe('sprites/hero')
     expect(groupOf('tiles/outdoor.json')).toBe('tiles/outdoor')
     expect(groupOf('board.json')).toBe('board.json')
+    expect(isEditorFile('instruments/flute.wav')).toBe(true)
+    expect(isEditorFile('instruments/flute.license.txt')).toBe(true)
+    expect(isEditorFile('songs/town.json')).toBe(true)
+    expect(isEditorFile('songs/town.wav')).toBe(false)
+    expect(groupOf('instruments/flute.json')).toBe('instruments/flute')
+    expect(groupOf('instruments/flute.wav')).toBe('instruments/flute')
   })
 
   it('normalizes the folder', () => {

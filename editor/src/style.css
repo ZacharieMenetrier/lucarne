@@ -1918,3 +1918,200 @@ body[data-page='settings'] #settings-page {
 .view-controls button.icon[hidden] {
   display: none;
 }
+
+/* --- Music page ------------------------------------------------------------------ */
+
+/* Like the Pixels page: the tools on the left, the song in the middle with its transport
+   under it (as the animation panel is under the board), the tracks and the songs on the right. */
+#music-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+body[data-page='music'] #music-page {
+  display: flex;
+}
+.music-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) 240px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'tools stage side'
+    'tools transport side';
+}
+.music-body > .world-tools {
+  grid-area: tools;
+}
+.music-body > .world-side {
+  grid-area: side;
+}
+.music-stage {
+  grid-area: stage;
+  position: relative;
+  overflow: hidden;
+  background: var(--stage-bg);
+}
+.music-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.music-canvas[hidden],
+.music-empty[hidden],
+.music-tracks[hidden] {
+  display: none;
+}
+.music-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+}
+.music-empty p {
+  margin: 0;
+}
+.music-transport {
+  grid-area: transport;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.music-tempo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.music-tempo input {
+  width: 64px;
+  padding: 3px 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.music-play {
+  width: 40px;
+}
+.music-play.active {
+  color: var(--accent);
+}
+.music-length {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* The tracks on top, as tall as they are (up to most of the panel); the songs get the rest. */
+.music-tracks {
+  flex: 0 1 auto;
+  max-height: 60%;
+}
+.music-songs {
+  flex: 1;
+}
+.music-tracks .world-list,
+.music-songs .world-list {
+  min-height: 0;
+}
+.music-tracks .muted,
+.music-songs .muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.track-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 9px;
+  border-radius: 3px;
+  background: var(--c);
+}
+.sprite-item > .track-swatch:first-child {
+  width: 14px;
+}
+.track-kind {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sprite-label.missing {
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+/* The instrument picker: every instrument a button, its name, with a small Listen next to it. */
+dialog.instrument-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+.instrument-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+}
+.instrument-list h3 {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.instrument-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+.instrument-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.instrument-item:hover {
+  border-color: #4a4a5a;
+}
+.instrument-item.active {
+  border-color: var(--accent);
+}
+.instrument-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instrument-name small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.instrument-listen {
+  flex: none;
+  background: transparent;
+  border-color: transparent;
+}
+.instrument-listen:hover:not(:disabled) {
+  background: var(--panel-2);
+}
