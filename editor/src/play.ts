@@ -1,8 +1,8 @@
 // Play mode: the game takes over the window, with a thin bar to pause or stop it.
 //
 // The game's code is game.js, in the game folder. On Mac, the local server rebuilds it
-// from code/ just before playing; on iPad, it is the file synced from GitHub. It gets
-// the engine through globalThis.__lucarne (see server/build.mjs).
+// from actors/ and code/ just before playing; on iPad, it is the file synced from GitHub.
+// It gets the engine through globalThis.__lucarne (see server/build.mjs).
 
 import * as engine from '../../runtime/index'
 import { screenSize, type GameConfig } from '../../runtime/game'
@@ -13,7 +13,7 @@ import { Runner } from '../../runtime/runner'
 import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { time } from '../../runtime/time'
-import { camera, cameraMapName, drawWorld, linkBoxes, modalActor, placeActors, resetWorld, actorTypes, setBoxes, worldActors, type ActorType } from '../../runtime/world'
+import { actorName, camera, cameraMapName, drawWorld, modalActor, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
 import type { FontMeta } from './font'
 import { h } from './dialog'
@@ -26,7 +26,7 @@ import { composeSheet, isTileset, tilesetName, type Sprite } from './sprite'
 import { readText, type Storage } from './storage'
 
 const GAME_FILE = 'game.js'
-const ENTRY = 'code/main.ts'
+const MAIN = 'code/main.ts'
 /** Space between the screen and its caption (see .play-screen in style.css). */
 const CAPTION_GAP = 20
 
@@ -119,13 +119,12 @@ export class Player {
         const code = await this.loadCode()
         if (code === null) return
         const settings = await loadGameData(this.project)
-        // The game's code creates its actors as it runs: in an empty world. Then come the
+        // The game's code spawns its actors as it runs: in an empty world. Then come the
         // actors placed on the maps, whose classes exist once the code has run.
         resetWorld()
-        const game = await importGame(code)
-        linkBoxes(game.types)
-        placeActors(game.types)
-        this.run(game.config, screenSize(settings))
+        const config = await importGame(code)
+        placeActors()
+        this.run(config, screenSize(settings))
       })
     } catch (err) {
       this.say(`The game could not start:\n\n${describe(err)}`, true)
@@ -152,11 +151,11 @@ export class Player {
   private showNoGame() {
     const hint =
       this.storage.kind === 'server'
-        ? h('p', {}, 'Write ', h('code', {}, ENTRY), ' in the game folder, then press ▶ again.')
-        : h('p', {}, 'Write ', h('code', {}, ENTRY), ' on the Mac, push it, then sync here.')
+        ? h('p', {}, 'Write an actor in ', h('code', {}, 'actors/'), ' in the game folder, then press ▶ again.')
+        : h('p', {}, 'Write an actor in ', h('code', {}, 'actors/'), ' on the Mac, push it, then sync here.')
     resetWorld()
     setMaps(16, [], [])
-    setBoxes({})
+    setActorFiles({})
     this.run(noGame, NO_GAME_SIZE, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
   }
 
@@ -295,14 +294,14 @@ export async function fetchGameCode(storage: Storage): Promise<{ code: string } 
   return code === null ? { missing: true, built } : { code }
 }
 
-/** Hands the engine every sprite, font, tileset, box and map of the game, as saved.
- * Returns the game's settings. */
+/** Hands the engine every sprite, font, tileset, actor file and map of the game, as saved,
+ * before its code runs. Returns the game's settings. */
 export async function loadGameData(project: Project) {
   const settings = await project.loadSettings()
   setSprites(await loadSprites(project))
   setFonts(await loadFonts(project))
   setMaps(settings.tileSize, await loadTilesets(project), await loadMaps(project))
-  setBoxes(Object.fromEntries(await project.loadActors()))
+  setActorFiles(Object.fromEntries(await project.loadActorFiles()))
   return settings
 }
 
@@ -378,7 +377,7 @@ function toFontData(name: string, font: { sheet: Bitmap; meta: FontMeta }): Font
  * mode. Everything works with the page hidden: the game only moves when told to.
  *
  *   lucarne.step(60, ['right'])   // one second with "right" held, then shows the result
- *   lucarne.actors()              // [{ type: 'Hero', x: 267, y: 120, box: { x, y, width, height }, … }]
+ *   lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, box: { x, y, width, height }, … }]
  *   lucarne.picture()             // the frame at game resolution, as a PNG data URL
  *   lucarne.ui()                  // the text on screen, and the modal actor in charge
  *   lucarne.camera()              // { x, y, map }: where the camera is, and in which map
@@ -428,16 +427,18 @@ function installHandle(player: Player) {
   }
 }
 
-/** Each actor's type, position and own simple fields (numbers, text, booleans), and its box
- * where it is in the world, to check walls without a picture. */
+/** Each actor's name (its file's, or its class's), position and own simple fields as they
+ * are now (numbers, text, booleans, lists of text), and its box where it is in the world, to
+ * check walls without a picture. */
 function describeActors() {
   const round = (v: number) => Math.round(v * 1000) / 1000
   return worldActors()
     .filter((t) => !t.removed)
     .map((t) => {
-      const out: Record<string, unknown> = { type: t.constructor.name }
+      const out: Record<string, unknown> = { actor: actorName(t.constructor) ?? t.constructor.name }
       for (const [k, v] of Object.entries(t)) {
         if (['number', 'string', 'boolean'].includes(typeof v)) out[k] = typeof v === 'number' ? round(v) : v
+        else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[k] = v
       }
       if (t.box) {
         const { x, y, width, height } = t.box
@@ -448,10 +449,10 @@ function describeActors() {
 }
 
 /**
- * Runs game.js: its top-level code runs (creating its actors), and gives the game it
- * declares and the actor classes it exports (to place on maps).
+ * Runs game.js: it registers the actor files (see `actorClasses`), its top-level code runs
+ * (spawning its actors), and it gives the game code/main.ts declares.
  */
-export async function importGame(code: string): Promise<{ config: GameConfig; types: Map<string, ActorType> }> {
+export async function importGame(code: string): Promise<GameConfig> {
   ;(globalThis as { __lucarne?: unknown }).__lucarne = engine
   const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))
   let mod: Record<string, unknown>
@@ -462,9 +463,9 @@ export async function importGame(code: string): Promise<{ config: GameConfig; ty
   }
   const config = mod.default
   if (!config || typeof config !== 'object') {
-    throw new Error(`${ENTRY} must end with \`export default game({ … })\`.`)
+    throw new Error(`${MAIN} must end with \`export default game({ … })\`.`)
   }
-  return { config: config as GameConfig, types: actorTypes(mod) }
+  return config as GameConfig
 }
 
 export function describe(err: unknown) {

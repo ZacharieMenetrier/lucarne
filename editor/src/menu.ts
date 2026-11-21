@@ -14,7 +14,7 @@ const PAGES: Record<Page, string> = { editor: '', actors: '#actors', world: '#wo
  */
 const EDITORS: { page: Page; label: string; title: string }[] = [
   { page: 'editor', label: 'Pixels', title: 'Pixel art editor: sprites and tilesets' },
-  { page: 'actors', label: 'Actors', title: 'Actors: the body of each class of actors' },
+  { page: 'actors', label: 'Actors', title: 'Actors: the box and the values of each actor' },
   { page: 'world', label: 'World', title: 'World editor: maps and actors' },
 ]
 

@@ -9,7 +9,8 @@
 //       …
 //     ],
 //     "actors": [
-//       { "type": "Villager", "x": 40, "y": 96 },  one line per actor
+//       { "actor": "villager", "x": 40, "y": 96 },  one line per actor
+//       { "actor": "villager", "x": 72, "y": 96, "lines": ["Nice weather."] },
 //       …
 //     ]
 //   }
@@ -18,11 +19,14 @@
 // by its column and row in that tileset. null is an empty cell. "tilesets" lists only the
 // tilesets the map uses.
 //
-// An actor is the name its class is exported under from code/main.ts, and where its feet
-// are, in game pixels from the map's top left corner: actors move with their map. A map
-// without actors has no "actors".
+// An actor is its name (actors/<name>.ts), where its feet are, in game pixels from the
+// map's top left corner (actors move with their map), and the values set for this one
+// alone: every other field is one of its variables (see runtime/values.ts). They are
+// checked against the actor's code when the game starts, not here: the editor reads maps
+// even when the code does not build. A map without actors has no "actors".
 
 import type { MapData, Placement, Tile } from '../../runtime/maps'
+import { inlineJson } from './actors'
 
 export type { Placement, Tile }
 export type GameMap = MapData
@@ -50,9 +54,10 @@ export function parseMap(name: string, text: string): GameMap {
   // A broken actor is left out; one outside the map too (it could never be selected).
   const actors = Array.isArray(raw.actors) ? raw.actors : []
   for (const t of actors as Record<string, unknown>[]) {
-    if (!t || typeof t.type !== 'string' || !t.type || typeof t.x !== 'number' || typeof t.y !== 'number') continue
+    if (!t || typeof t.actor !== 'string' || !t.actor || typeof t.x !== 'number' || typeof t.y !== 'number') continue
     if (!insideMap(map, t.x, t.y)) continue
-    map.actors.push({ type: t.type, x: t.x, y: t.y })
+    const { actor, x, y, ...values } = t
+    map.actors.push({ actor, x, y, values })
   }
   return map
 }
@@ -85,11 +90,22 @@ export function serializeMap(map: GameMap): string {
     rows.join(',\n'),
     map.actors.length ? '  ],' : '  ]',
     ...(map.actors.length
-      ? ['  "actors": [', map.actors.map((t) => `    { "type": ${JSON.stringify(t.type)}, "x": ${t.x}, "y": ${t.y} }`).join(',\n'), '  ]']
+      ? ['  "actors": [', map.actors.map(serializePlacement).join(',\n'), '  ]']
       : []),
     '}',
     '',
   ].join('\n')
+}
+
+/** One placed actor, on one line: its name, its feet, then its own values by name. */
+function serializePlacement(t: Placement) {
+  const values = Object.keys(t.values).sort().map((k) => `, ${JSON.stringify(k)}: ${inlineJson(t.values[k])}`)
+  return `    { "actor": ${JSON.stringify(t.actor)}, "x": ${t.x}, "y": ${t.y}${values.join('')} }`
+}
+
+/** A placed actor's copy, sharing nothing with it. */
+export function clonePlacement(t: Placement): Placement {
+  return { actor: t.actor, x: t.x, y: t.y, values: structuredClone(t.values) }
 }
 
 /** The tilesets a map uses, sorted. */
@@ -100,7 +116,7 @@ export function tilesetsOf(map: GameMap): string[] {
 }
 
 export function cloneMap(map: GameMap): GameMap {
-  return { ...map, cells: map.cells.map((c) => (c ? { ...c } : null)), actors: map.actors.map((t) => ({ ...t })) }
+  return { ...map, cells: map.cells.map((c) => (c ? { ...c } : null)), actors: map.actors.map(clonePlacement) }
 }
 
 /** The cell at a world cell, or undefined outside the map. */
@@ -140,7 +156,7 @@ export function reframe(map: GameMap, x: number, y: number, width: number, heigh
   const dx = (map.x - x) * tileSize
   const dy = (map.y - y) * tileSize
   for (const t of map.actors) {
-    const moved = { type: t.type, x: t.x + dx, y: t.y + dy }
+    const moved = { ...clonePlacement(t), x: t.x + dx, y: t.y + dy }
     if (insideMap(out, moved.x, moved.y, tileSize)) out.actors.push(moved)
   }
   return out

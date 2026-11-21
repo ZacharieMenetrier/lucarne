@@ -1,19 +1,17 @@
 // Lucarne's runtime: what a game's code imports.
 //
-//   import { game, Actor, camera, screen, sprite, input } from 'lucarne'
+//   import { Actor, camera, input, screen, sprite } from 'lucarne'
 //
-//   class Hero extends Actor {
-//     update() { this.move(input.x, input.y) }          // 60 times per second
+//   export default class Hero extends Actor {          // actors/hero.ts
+//     create() { camera.follow(this) }
+//     update() { this.move(input.x, input.y) }         // 60 times per second
 //     draw() { screen.sprite(sprite('hero'), 0, 0) }   // around itself
 //   }
 //
-//   camera.follow(new Hero(160, 90))
-//   export default game({ draw() { screen.clear('#1a1c2c') } })
-//
-// `code/main.ts` must export the game as its default export.
+// code/main.ts, when there is one, exports the game: `export default game({ … })`.
 
 export { game, type GameConfig } from './game'
-export { Actor, camera } from './world'
+export { Actor, camera, spawn, type Values } from './world'
 export { type Box } from './collision'
 export { map, mapAt, type MapRect } from './maps'
 export { input, type Button } from './input'
@@ -22,3 +20,5 @@ export { sprite, type Sprite } from './sprites'
 export { font, type Font, type TextOptions } from './fonts'
 export { Dialogue, Menu } from './ui'
 export { time } from './time'
+// For game.js only (see server/build.mjs): it registers the actor files.
+export { registerActors } from './world'

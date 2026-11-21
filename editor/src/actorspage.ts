@@ -1,15 +1,21 @@
-// The Actors page (#actors), between Pixels and World: what each class of actors is in the
-// world, beyond its code. For now, its box: picked in the list on the right, the actor is
-// drawn large on the pixel grid, by its own `draw()`, its feet marked with a cross, and a
-// drag over it draws its box. Boxes are saved in actors.json, by class name (see actors.ts).
+// The Actors page (#actors), between Pixels and World: what each actor is for every actor
+// of its kind, beyond its code. On the left, the game's actors (its actor files); in the
+// middle, the one picked, drawn large on the pixel grid by its own `draw()`, its feet marked
+// with a cross; on the right, its variables, the box first. Selecting the box shows it on
+// the actor, with handles: drag an edge or a corner to resize it, its inside to move it,
+// anywhere else to draw a new one. Otherwise the box is not drawn and a drag does nothing:
+// a stray touch on the iPad cannot redraw it. What is set here is saved in
+// actors/<name>.json (see actors.ts).
 //
-// It is a page of its own rather than a mode of the World page: an actor's body is the
-// same wherever it is placed, so it is drawn on the actor, not checked on a map.
+// It is a page of its own rather than a mode of the World page: what an actor is, is the
+// same wherever it is placed, so it is drawn on the actor, not checked on a map. What one
+// placed actor does differently is set on the World page.
 
 import type { App } from './app'
-import { ActorBoxes, boxFromDrag, type Cell } from './actors'
+import { ActorFiles, boxFromDrag, boxHandle, boxWhenOn, dragBox, fileLayers, resolve, staleNames, type Cell, type Handle } from './actors'
 import { actorThumb, loadActorKinds, type ActorKind, type ActorKinds } from './actortypes'
 import { h, toast } from './dialog'
+import { Inspector } from './inspector'
 import { createEditorSwitch, createMenu, currentPage, goTo, onPage } from './menu'
 import { isPlaying } from './play'
 import type { Project } from './project'
@@ -22,6 +28,14 @@ const MARGIN = 6
 const GRID_FROM = 6
 /** The box, red like the walls of tilesets, seen through. */
 const BOX_FILL = 'rgba(255, 77, 109, 0.4)'
+/** How far from an edge of the box still holds it, and the size of its handles, in screen pixels (CSS). */
+const REACH = 8
+const HANDLE = 7
+/** The cursor over each part of the box. */
+const CURSORS: Record<Handle, string> = {
+  move: 'move', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
+}
 
 /** The part of the actor's surroundings shown, in game pixels relative to its feet. */
 interface Region {
@@ -32,26 +46,32 @@ interface Region {
 }
 
 export class ActorsPage {
-  private readonly model = new ActorBoxes()
+  /** Every actor file's values: the world page reads them too, as they are edited. */
+  readonly files = new ActorFiles()
   private readonly root: HTMLElement
   private readonly canvas: HTMLCanvasElement
   private readonly status: HTMLElement
   private readonly list: HTMLElement
   private readonly search: HTMLInputElement
-  private readonly info: HTMLElement
-  private readonly remove: HTMLButtonElement
+  private readonly variables: HTMLElement
+  private readonly inspector = new Inspector()
   private kinds: ActorKinds | null = null
-  /** The class shown. */
+  /** The actor shown. */
   private selected: string | null = null
+  /** The actor whose variables the inspector shows, to keep its box selected when read again. */
+  private shown: string | null = null
   private region: Region = { x: -8, y: -16, w: 16, h: 20 }
   /** Screen pixels per game pixel, and where the region's top left is on the canvas. */
   private scale = 1
   private ox = 0
   private oy = 0
-  /** The box being drawn, while the pointer is down. */
-  private drag: { from: Cell; box: Box } | null = null
+  /** The box being drawn, moved or resized, while the pointer is down. */
+  private drag: { handle: Handle | null; from: { x: number; y: number }; start: Box | null; box: Box; moved: boolean } | null = null
   private reading = false
-  private dirty = false
+  /** Actor files changed and not saved yet. */
+  private readonly pending = new Set<string>()
+  /** A value other than the box was saved: the pictures may have changed. */
+  private redraw = false
   private timer = 0
   private chain: Promise<void> = Promise.resolve()
 
@@ -62,13 +82,9 @@ export class ActorsPage {
     this.canvas = h('canvas', { className: 'world-canvas actors-canvas' })
     this.status = h('span', { className: 'save-status', 'data-status': 'saved' }, 'Saved')
     this.list = h('div', { className: 'world-list' })
-    this.info = h('p', { className: 'muted actors-info' })
-    this.remove = h('button', {
-      type: 'button',
-      className: 'small',
-      title: 'Remove the box (Delete)',
-      onclick: () => this.removeBox(),
-    }, 'Remove box')
+    this.variables = h('section', { className: 'actors-variables' },
+      h('div', { className: 'panel-head' }, h('h2', {}, 'Variables')),
+      this.inspector.root)
     this.search = h('input', {
       type: 'search',
       className: 'world-search',
@@ -93,21 +109,30 @@ export class ActorsPage {
         this.status,
         h('button', { type: 'button', className: 'run-game', title: 'Play the game (⌘↵)', html: `${icon('play')}<span>Play</span>`, onclick: () => this.app.play() })),
       h('div', { className: 'actors-body' },
-        h('main', { className: 'world-stage' }, this.canvas),
-        h('aside', { className: 'world-side' },
+        h('aside', { className: 'world-side actors-list' },
           h('section', { className: 'world-actors' },
             h('div', { className: 'panel-head' }, h('h2', {}, 'Actors')),
             this.search,
-            this.list),
-          h('section', { className: 'actors-box' },
-            h('div', { className: 'panel-head' }, h('h2', {}, 'Box')),
-            this.info,
-            this.remove))))
+            this.list)),
+        h('main', { className: 'world-stage' }, this.canvas),
+        h('aside', { className: 'world-side' }, this.variables)))
     document.body.append(this.root)
 
-    this.model.onEdit = () => {
+    this.files.onEdit = (name) => {
+      this.pending.add(name)
       this.schedule()
-      this.renderInfo()
+      this.renderSide()
+      this.frame()
+      this.fit()
+    }
+    this.inspector.onSet = (name, value) => {
+      if (!this.selected) return
+      this.files.set(this.selected, name, value)
+      // The box does not change the picture: no need to run the code again.
+      if (name !== 'box') this.redraw = true
+    }
+    this.inspector.onSelect = () => {
+      this.drag = null
       this.draw()
     }
     new ResizeObserver(() => this.fit()).observe(this.canvas)
@@ -120,26 +145,27 @@ export class ActorsPage {
       await this.flush()
     }
     window.addEventListener('beforeunload', (e) => {
-      if (this.dirty) e.preventDefault()
+      if (this.pending.size) e.preventDefault()
     })
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void this.flush()
     })
-    // The code is written in another app: coming back may bring new classes or pictures.
+    // The code is written in another app: coming back may bring new actors or pictures.
     window.addEventListener('focus', () => {
       if (currentPage() === 'actors') void this.readActors()
     })
   }
 
-  /** Reads actors.json, then follows the page. */
+  /** Reads the actor files, then follows the page. */
   async load() {
     try {
-      for (const [name, box] of await this.project.loadActors()) this.model.boxes.set(name, box)
+      for (const [name, values] of await this.project.loadActorFiles()) this.files.files.set(name, values)
     } catch (err) {
       toast((err as Error).message)
     }
     onPage((page) => {
-      if (page !== 'actors') return
+      // Leaving the page saves: the world page and the game read the files.
+      if (page !== 'actors') return void this.flush()
       this.fit()
       void this.readActors()
     })
@@ -148,24 +174,32 @@ export class ActorsPage {
   // --- Saving ---------------------------------------------------------------
 
   private schedule() {
-    this.dirty = true
     this.setStatus('pending')
     clearTimeout(this.timer)
     this.timer = window.setTimeout(() => void this.flush(), 400)
   }
 
-  /** Saves actors.json, right away, if it changed. */
+  /** Saves the actor files changed, right away. */
   flush(): Promise<void> {
     clearTimeout(this.timer)
-    if (!this.dirty) return this.chain
-    this.dirty = false
+    if (!this.pending.size) return this.chain
+    const names = [...this.pending]
+    this.pending.clear()
+    const redraw = this.redraw
+    this.redraw = false
     this.setStatus('saving')
     this.chain = this.chain
-      .then(() => this.project.saveActors(this.model.boxes))
+      .then(async () => {
+        for (const name of names) await this.project.saveActorFile(name, this.files.values(name))
+      })
       .then(
-        () => this.setStatus(this.dirty ? 'pending' : 'saved'),
+        () => {
+          this.setStatus(this.pending.size ? 'pending' : 'saved')
+          // A variable may change how the actor looks: draw it again, as saved.
+          if (redraw && currentPage() === 'actors') void this.readActors()
+        },
         (err: Error) => {
-          this.dirty = true
+          for (const name of names) this.pending.add(name)
           this.setStatus('error')
           toast(`Could not save: ${err.message}`)
         },
@@ -178,14 +212,15 @@ export class ActorsPage {
     this.status.textContent = { saved: 'Saved', pending: 'Edited', saving: 'Saving…', error: 'Error' }[s]
   }
 
-  // --- The classes ----------------------------------------------------------
+  // --- The actors -----------------------------------------------------------
 
-  /** Runs the game's code to know its classes of actors and draw them. */
+  /** Runs the game's code to know its actors and draw them. */
   private async readActors() {
     if (this.reading) return
     this.reading = true
     try {
       await this.app.saveSprites()
+      await this.flush()
       const kinds = await loadActorKinds(this.project)
       if (!kinds) return
       this.kinds = kinds
@@ -209,11 +244,15 @@ export class ActorsPage {
   }
 
   private select(name: string | null) {
+    // Another actor: its box is not selected. The same one, read again (coming back to the
+    // app, after a save), keeps it.
+    if (name !== this.shown) this.inspector.select(null)
+    this.shown = name
     this.selected = name
     this.drag = null
     for (const el of this.list.querySelectorAll<HTMLElement>('.sprite-item')) el.classList.toggle('active', el.dataset.name === name)
     this.frame()
-    this.renderInfo()
+    this.renderSide()
     this.fit()
   }
 
@@ -223,7 +262,7 @@ export class ActorsPage {
     this.list.replaceChildren()
     if (!k) return
     if ('missing' in k) {
-      this.list.append(note('The game has no code yet. Write ', h('code', {}, 'code/main.ts'), ' and export a class that extends Actor: it appears here.'))
+      this.list.append(note('The game has no actors yet. Write ', h('code', {}, 'actors/hero.ts'), ', a class that extends Actor as its default export: it appears here.'))
       return
     }
     if ('error' in k) {
@@ -231,16 +270,16 @@ export class ActorsPage {
       return
     }
     if (!k.kinds.length) {
-      this.list.append(note('Export a class that extends Actor from ', h('code', {}, 'code/main.ts'), ' to give it a box here.'))
+      this.list.append(note('Write ', h('code', {}, 'actors/hero.ts'), ', a class that extends Actor as its default export: it appears here.'))
       return
     }
     for (const kind of k.kinds) {
       this.list.append(
-        h('div', { className: 'sprite-row', 'data-row': kind.name.toLowerCase() },
+        h('div', { className: 'sprite-row', 'data-row': kind.name },
           h('button', {
             className: 'sprite-item',
             'data-name': kind.name,
-            title: kind.error ? `${kind.name} could not be drawn: ${kind.error}` : kind.name,
+            title: kind.error ? `${kind.name}: ${kind.error}` : kind.name,
             onclick: () => this.select(kind.name),
           }, actorThumb(kind.picture), h('span', { className: 'sprite-label' }, kind.name))),
       )
@@ -253,17 +292,46 @@ export class ActorsPage {
     for (const row of this.list.querySelectorAll<HTMLElement>('[data-row]')) row.hidden = !row.dataset.row!.includes(q)
   }
 
-  private renderInfo() {
-    const name = this.selected
-    const box = name ? this.model.get(name) : null
-    this.remove.hidden = !box
-    if (!name) this.info.textContent = 'Pick an actor to draw its box.'
-    else if (box) this.info.textContent = `${box.width} × ${box.height} pixels, its top left at (${box.x}, ${box.y}) from the feet. Walls and the other actors' boxes stop it. Drag on it to draw it again.`
-    else this.info.textContent = `${name} has no box: it goes through everything, and nothing bumps into it. Drag on it to draw one.`
+  // --- Its values -------------------------------------------------------------
+
+  /** The box as the game will see it (null: none). */
+  private box(): Box | null {
+    const kind = this.kind()
+    const variable = kind?.variables.find((v) => v.name === 'box')
+    if (!kind || !variable) return null
+    return resolve('box', variable.value, fileLayers(kind, this.files)).value as Box | null
   }
 
-  private removeBox() {
-    if (this.selected) this.model.set(this.selected, null)
+  /** Is the box selected in the inspector: drawn on the actor, to edit there? */
+  private editing() {
+    return this.inspector.selected === 'box' && !!this.kind()
+  }
+
+  /** Sets the box in this actor's file (null: none), or clears it (undefined): inherited. */
+  private setBox(box: Box | null | undefined) {
+    if (this.selected) this.files.set(this.selected, 'box', box)
+  }
+
+  /** The right panel: the variables, the box first, as the game will see them. */
+  private renderSide() {
+    const kind = this.kind()
+    // Shown even with an error, when the code ran: the error may be a value to fix here.
+    this.variables.hidden = !kind || (kind.error !== undefined && !kind.variables.length)
+    if (!kind) return this.inspector.show([])
+    const stale = staleNames(this.files.values(kind.name), kind.variables)
+    if (!kind.variables.length && !stale.length) {
+      this.inspector.show([])
+      this.inspector.root.replaceChildren(h('p', { className: 'muted actors-info' }, 'No variables'))
+      return
+    }
+    const layers = fileLayers(kind, this.files)
+    this.inspector.show(kind.variables.map((variable) => {
+      const r = resolve(variable.name, variable.value, layers)
+      const row = { variable, value: r.value, from: r.from, own: r.from === kind.name }
+      if (variable.kind !== 'box') return row
+      const inherited = resolve('box', variable.value, layers.slice(0, -1)).value as Box | null
+      return { ...row, whenOn: boxWhenOn(inherited, kind.picture) }
+    }), stale)
   }
 
   // --- The actor, large -----------------------------------------------------
@@ -271,7 +339,7 @@ export class ActorsPage {
   /** Chooses what is shown: the actor's picture, its box and its feet, with room around. */
   private frame() {
     const p = this.kind()?.picture
-    const box = this.selected ? this.model.get(this.selected) : null
+    const box = this.box()
     let x0 = 0, y0 = 0, x1 = 1, y1 = 1
     const add = (x: number, y: number, w: number, hh: number) => {
       x0 = Math.min(x0, x)
@@ -301,22 +369,41 @@ export class ActorsPage {
     this.draw()
   }
 
-  /** The pixel under the pointer, relative to the feet, kept inside the region. */
-  private cellAt(e: PointerEvent): Cell {
+  /** The point under the pointer, in game pixels (fractional) relative to the feet. */
+  private pointAt(e: PointerEvent) {
     const rect = this.canvas.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
+    return {
+      x: ((e.clientX - rect.left) * dpr - this.ox) / this.scale + this.region.x,
+      y: ((e.clientY - rect.top) * dpr - this.oy) / this.scale + this.region.y,
+    }
+  }
+
+  /** The pixel under the pointer, relative to the feet, kept inside the region. */
+  private cellAt(e: PointerEvent): Cell {
+    const p = this.pointAt(e)
     const r = this.region
-    const x = Math.floor(((e.clientX - rect.left) * dpr - this.ox) / this.scale) + r.x
-    const y = Math.floor(((e.clientY - rect.top) * dpr - this.oy) / this.scale) + r.y
-    return { x: Math.max(r.x, Math.min(r.x + r.w - 1, x)), y: Math.max(r.y, Math.min(r.y + r.h - 1, y)) }
+    return { x: Math.max(r.x, Math.min(r.x + r.w - 1, Math.floor(p.x))), y: Math.max(r.y, Math.min(r.y + r.h - 1, Math.floor(p.y))) }
+  }
+
+  /** The part of the box under the pointer, if it is being edited. */
+  private handleAt(e: PointerEvent): Handle | null {
+    const box = this.box()
+    if (!box) return null
+    const reach = (REACH * (window.devicePixelRatio || 1)) / this.scale
+    return boxHandle(box, this.pointAt(e), reach)
   }
 
   private bindPointer() {
     const c = this.canvas
     c.addEventListener('pointerdown', (e) => {
-      if (!this.selected || e.button !== 0) return
-      const from = this.cellAt(e)
-      this.drag = { from, box: boxFromDrag(from, from) }
+      if (e.button !== 0) return
+      // A tap on the actor leaves the row being worked on.
+      if (!this.editing()) return this.inspector.select(null)
+      const handle = this.handleAt(e)
+      const start = this.box()
+      const from = handle ? this.pointAt(e) : this.cellAt(e)
+      this.drag = { handle, from, start, box: handle && start ? start : boxFromDrag(from, from), moved: false }
       try {
         c.setPointerCapture(e.pointerId)
       } catch {
@@ -325,14 +412,25 @@ export class ActorsPage {
       this.draw()
     })
     c.addEventListener('pointermove', (e) => {
-      if (!this.drag) return
-      this.drag.box = boxFromDrag(this.drag.from, this.cellAt(e))
+      const d = this.drag
+      if (!d) {
+        const handle = this.editing() ? this.handleAt(e) : null
+        c.style.cursor = handle ? CURSORS[handle] : ''
+        return
+      }
+      d.moved = true
+      if (d.handle && d.start) {
+        const p = this.pointAt(e)
+        d.box = dragBox(d.start, d.handle, p.x - d.from.x, p.y - d.from.y)
+      } else d.box = boxFromDrag(d.from, this.cellAt(e))
       this.draw()
     })
     c.addEventListener('pointerup', () => {
       const d = this.drag
       this.drag = null
-      if (d && this.selected) this.model.set(this.selected, d.box)
+      // A tap away from the box, without a drag, leaves it rather than drawing a 1 × 1 box.
+      if (d && !d.handle && !d.moved) this.inspector.select(null)
+      else if (d) this.setBox(d.box)
       this.draw()
     })
     c.addEventListener('pointercancel', () => {
@@ -347,19 +445,28 @@ export class ActorsPage {
       if (currentPage() !== 'actors' || isPlaying() || target.closest('input, select, textarea, dialog')) return
       const k = e.key.toLowerCase()
       if (e.metaKey || e.ctrlKey) {
-        if (k === 'z') e.shiftKey ? this.model.redo() : this.model.undo()
-        else if (k === 'y') this.model.redo()
+        if (k === 'z') e.shiftKey ? this.files.redo() : this.files.undo()
+        else if (k === 'y') this.files.redo()
         else if (k === 's') void this.flush()
         else return
-      } else if (e.key === 'Delete' || e.key === 'Backspace') this.removeBox()
-      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') this.step(e.key === 'ArrowUp' ? -1 : 1)
+      } else if (this.editing()) {
+        // The box selected: the keys edit it, as on the canvas.
+        const box = this.box()
+        const n = e.shiftKey ? 10 : 1
+        const arrows: Record<string, [number, number]> = { ArrowLeft: [-n, 0], ArrowRight: [n, 0], ArrowUp: [0, -n], ArrowDown: [0, n] }
+        if (e.key === 'Escape') this.inspector.select(null)
+        else if (e.key === 'Delete' || e.key === 'Backspace') this.setBox(undefined)
+        else if (arrows[e.key] && box) this.setBox(dragBox(box, 'move', ...arrows[e.key]))
+        else return
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') this.step(e.key === 'ArrowUp' ? -1 : 1)
+      else if (e.key === 'Escape' && this.inspector.selected) this.inspector.select(null)
       else if (e.key === 'Escape') goTo('editor')
       else return
       e.preventDefault()
     })
   }
 
-  /** The previous or next class in the list (among those the search shows). */
+  /** The previous or next actor in the list (among those the search shows). */
   private step(d: number) {
     const names = [...this.list.querySelectorAll<HTMLElement>('[data-row]:not([hidden]) .sprite-item')].map((el) => el.dataset.name!)
     if (!names.length) return
@@ -377,9 +484,11 @@ export class ActorsPage {
     const Y = (y: number) => this.oy + (y - r.y) * s
     const dpr = window.devicePixelRatio || 1
     const lw = Math.max(1, Math.round(dpr))
+    // Drawing a box only while it is selected: the crosshair says so.
+    this.canvas.classList.toggle('editing', this.editing())
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, W, H)
-    if (!this.selected) return
+    if (!this.kind()) return
 
     ctx.fillStyle = this.app.view.boardColor
     ctx.fillRect(X(r.x), Y(r.y), r.w * s, r.h * s)
@@ -392,7 +501,7 @@ export class ActorsPage {
       for (let y = r.y + 1; y < r.y + r.h; y++) ctx.fillRect(X(r.x), Y(y), r.w * s, lw)
     }
 
-    const box = this.drag?.box ?? this.model.get(this.selected)
+    const box = this.editing() ? (this.drag?.box ?? this.box()) : null
     if (box) {
       const bx = X(box.x), by = Y(box.y), bw = box.width * s, bh = box.height * s
       ctx.fillStyle = BOX_FILL
@@ -402,6 +511,18 @@ export class ActorsPage {
       for (const [color, inset] of [['#000', 0], ['#fff', lw]] as const) {
         ctx.strokeStyle = color
         ctx.strokeRect(bx + lw / 2 + inset, by + lw / 2 + inset, bw - lw - 2 * inset, bh - lw - 2 * inset)
+      }
+      // Handles at the corners and the middle of the edges, white with a dark edge.
+      const hs = Math.round(HANDLE * dpr)
+      for (const hx of [bx, bx + bw / 2, bx + bw]) {
+        for (const hy of [by, by + bh / 2, by + bh]) {
+          if (hx === bx + bw / 2 && hy === by + bh / 2) continue
+          const x = Math.round(hx - hs / 2), y = Math.round(hy - hs / 2)
+          ctx.fillStyle = '#000'
+          ctx.fillRect(x - lw, y - lw, hs + 2 * lw, hs + 2 * lw)
+          ctx.fillStyle = '#fff'
+          ctx.fillRect(x, y, hs, hs)
+        }
       }
     }
 

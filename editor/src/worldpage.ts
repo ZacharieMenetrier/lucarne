@@ -1,10 +1,16 @@
-// The world editor's page (#world): the whole world, every map at its place, and three
-// modes, chosen with the switch on top of the tools: Maps (move and resize the maps, the
-// list of maps), Tiles (stamp tiles, picked in the tilesets: they are drawn on the board,
-// with the pixel editor) and Actors (place the game's actors, picked in their list).
-// The mode sets both the tools and the panel; the page remembers it.
+// The world editor's page (#world): the whole world, every map at its place, and two
+// modes, chosen with the switch on top of the tools: Maps (arrange the world) and Tiles
+// (stamp tiles, picked in the tilesets: they are drawn on the board, with the pixel
+// editor). The mode sets both the tools and the panel; the page remembers it.
+//
+// The Maps panel reads from the top down, like the Tiles one: what can be added (the
+// game's actors, to place), what is there (each map, its actors listed under it, an actor
+// that draws nothing too), and what is selected (its values). A click on a row selects
+// that map or actor whatever the tool: the tool only says what a click on the maps does.
 
 import type { App } from './app'
+import { fileLayers, resolve, sameValue, staleNames, type ActorFiles } from './actors'
+import { Inspector, type Row } from './inspector'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { icon } from './icons'
 import { attachInput } from './input'
@@ -12,14 +18,13 @@ import { newMap } from './map'
 import { createActionsMenu, createEditorSwitch, createMenu, currentPage, goTo, onPage } from './menu'
 import type { Project } from './project'
 import { NAME_RE, isTileset, tilesetKey, tilesetName } from './sprite'
-import { actorThumb, loadActorKinds, type ActorKinds, type ActorPicture } from './actortypes'
+import { actorThumb, loadActorKinds, type ActorKind, type ActorKinds, type ActorPicture } from './actortypes'
 import { MODE_TOOLS, World, modeOf, type WorldMode, type WorldTool } from './world'
 import { WorldView } from './worldview'
 
 const MODES: { id: WorldMode; label: string; key: string; icon: string }[] = [
   { id: 'maps', label: 'Maps', key: '1', icon: 'map' },
   { id: 'tiles', label: 'Tiles', key: '2', icon: 'grid' },
-  { id: 'actors', label: 'Actors', key: '3', icon: 'actor' },
 ]
 const TOOLS: Record<WorldTool, { label: string; key: string; icon: string }> = {
   tile: { label: 'Tile', key: 'B', icon: 'pencil' },
@@ -28,7 +33,7 @@ const TOOLS: Record<WorldTool, { label: string; key: string; icon: string }> = {
   select: { label: 'Select', key: 'V', icon: 'pointer' },
   place: { label: 'Place', key: 'P', icon: 'add' },
   remove: { label: 'Eraser', key: 'E', icon: 'eraser' },
-  move: { label: 'Move and resize', key: 'V', icon: 'move' },
+  move: { label: 'Move map', key: 'M', icon: 'move' },
 }
 /** Where the page keeps the mode it was in (for this browser). */
 const MODE_KEY = 'lucarne.world.mode'
@@ -47,8 +52,18 @@ export class WorldPage {
   private readonly mapsPanel: HTMLElement
   private readonly actorList: HTMLElement
   private readonly actorSearch: HTMLInputElement
-  /** The game's classes of actors, as its code was when last read. */
+  /** The actors selected on the maps: what they are, and their values. */
+  private readonly selectedPanel: HTMLElement
+  private readonly selectedTitle: HTMLElement
+  private readonly selectedInfo: HTMLElement
+  /** The maps folded in the list: their actors are not listed. */
+  private readonly folded = new Set<string>()
+  /** What the list of maps shows, to build it again only when that changes. */
+  private treeKey = ''
+  private readonly inspector = new Inspector()
+  /** The game's actors, as its code was when last read. */
   private kinds: ActorKinds | null = null
+  private byName = new Map<string, ActorKind>()
   private pictures = new Map<string, ActorPicture | null>()
   /** Chooses the tileset shown in the panel. */
   private readonly tilesetSelect: HTMLSelectElement
@@ -64,6 +79,8 @@ export class WorldPage {
   constructor(
     private readonly project: Project,
     private readonly app: App,
+    /** The actor files' values, as the Actors page edits them: what placed actors inherit. */
+    private readonly files: ActorFiles,
   ) {
     const canvas = h('canvas', { className: 'world-canvas' })
     this.status = h('span', { className: 'save-status', 'data-status': 'saved' }, 'Saved')
@@ -146,15 +163,20 @@ export class WorldPage {
           this.mapsPanel = h('section', { className: 'world-maps', hidden: true },
             h('div', { className: 'panel-head' }, h('h2', {}, 'Maps'),
               h('button', { type: 'button', className: 'small icon-btn', title: 'New map', 'aria-label': 'New map', html: icon('add'), onclick: () => void this.newMap() })),
-            this.mapList))))
+            this.mapList),
+          this.selectedPanel = h('section', { className: 'world-selected', hidden: true },
+            h('div', { className: 'panel-head' }, this.selectedTitle = h('h2', {})),
+            this.selectedInfo = h('p', { className: 'muted actors-info' }),
+            this.inspector.root))))
     document.body.append(this.root)
 
-    this.view = new WorldView(canvas, this.world, (name) => this.tilesetBitmap(name), () => this.app.view.boardColor, (type) => this.pictureOf(type))
-    this.world.actorBounds = (type) => {
-      const p = this.pictures.get(type)
+    this.view = new WorldView(canvas, this.world, (name) => this.tilesetBitmap(name), () => this.app.view.boardColor, (actor) => this.pictureOf(actor))
+    this.world.actorBounds = (actor) => {
+      const p = this.pictures.get(actor)
       return p ? { x: p.x, y: p.y, w: p.w, h: p.h } : null
     }
-    this.world.actorFrame = (type) => this.pictures.get(type)?.frame ?? null
+    this.world.actorFrame = (actor) => this.pictures.get(actor)?.frame ?? null
+    this.inspector.onSet = (name, value) => this.world.setValue(name, value)
     this.world.onEdit = (name) => this.schedule(name)
     this.world.onMessage = toast
     this.world.subscribe(() => this.render())
@@ -167,29 +189,33 @@ export class WorldPage {
       for (const name of this.world.renameTileset(from, to)) this.pending.add(name)
       await this.flush()
     }
-    app.beforePlay = () => this.flush()
+    const before = app.beforePlay
+    app.beforePlay = async () => {
+      await before()
+      await this.flush()
+    }
     window.addEventListener('beforeunload', (e) => {
       if (this.pending.size) e.preventDefault()
     })
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void this.flush()
     })
-    // The code is written in another app: coming back may bring new classes or pictures.
+    // The code is written in another app: coming back may bring new actors or pictures.
     window.addEventListener('focus', () => {
       if (currentPage() === 'world') void this.readActors()
     })
   }
 
-  /** A class's picture: undefined when the code has no such class (or does not run). */
-  private pictureOf(type: string) {
+  /** An actor's picture: undefined when the game has no such actor (or its code does not run). */
+  private pictureOf(actor: string) {
     // Not read yet: no picture, but not missing either (a red frame would flash).
     if (!this.kinds) return null
-    return this.pictures.has(type) ? this.pictures.get(type)! : undefined
+    return this.pictures.has(actor) ? this.pictures.get(actor)! : undefined
   }
 
   private reading = false
 
-  /** Runs the game's code to know its classes of actors and draw them. */
+  /** Runs the game's code to know its actors and draw them. */
   private async readActors() {
     if (this.reading) return
     this.reading = true
@@ -198,11 +224,15 @@ export class WorldPage {
       const kinds = await loadActorKinds(this.project)
       if (!kinds) return
       this.kinds = kinds
-      this.pictures = new Map('kinds' in kinds ? kinds.kinds.map((k) => [k.name, k.picture]) : [])
+      this.byName = new Map('kinds' in kinds ? kinds.kinds.map((k) => [k.name, k]) : [])
+      this.pictures = new Map([...this.byName].map(([name, k]) => [name, k.picture]))
+      // The list of maps shows their pictures: built again with them.
+      this.treeKey = ''
       this.renderActors()
       this.world.emit()
     } catch (err) {
       this.kinds = { error: (err as Error).message }
+      this.byName = new Map()
       this.renderActors()
     } finally {
       this.reading = false
@@ -327,8 +357,14 @@ export class WorldPage {
       { label: 'Cancel', value: 'cancel' },
       { label: 'Rename', value: 'ok', kind: 'primary' },
     ], () => this.nameError(input.value.trim(), from))
-    const to = input.value.trim()
-    if (res !== 'ok' || to === from || !this.world.maps.has(from)) return
+    if (res === 'ok') await this.renameMapTo(from, input.value.trim())
+  }
+
+  /** Renames a map, in the game folder too (an invalid name is said, and nothing changes). */
+  private async renameMapTo(from: string, to: string) {
+    if (to === from || !this.world.maps.has(from)) return
+    const error = this.nameError(to, from)
+    if (error) return toast(error)
     await this.flush()
     try {
       await this.project.saveMap({ ...this.world.maps.get(from)!, name: to })
@@ -366,7 +402,7 @@ export class WorldPage {
         return
       }
       if (e.metaKey || e.ctrlKey) {
-        const actors = this.world.mode === 'actors'
+        const actors = this.world.mode === 'maps'
         if (actors && k === 'c') this.world.copy()
         else if (actors && k === 'x') {
           this.world.copy()
@@ -382,7 +418,7 @@ export class WorldPage {
         return
       }
       const w = this.world
-      if (e.key.startsWith('Arrow') && w.mode === 'actors' && w.selection.size && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      if (e.key.startsWith('Arrow') && w.mode === 'maps' && w.selection.size && !e.altKey && !e.metaKey && !e.ctrlKey) {
         // The step they snap to, or a pixel with snapping off; with Shift, a whole tile.
         const d = e.shiftKey ? w.tileSize : w.snap ? w.actorStep : 1
         const dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0
@@ -399,14 +435,16 @@ export class WorldPage {
         ?? (Object.keys(TOOLS) as WorldTool[]).find((t) => TOOLS[t].key.toLowerCase() === k && k !== 'v')
       if (mode) this.setMode(mode.id)
       else if (tool) this.setTool(tool)
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && w.mode === 'actors') w.deleteSelection()
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && w.mode === 'maps') {
+        // A map selected is deleted as from its menu: asked first, it is a file.
+        if (w.selectedMap) void this.deleteMap(w.selectedMap)
+        else w.deleteSelection()
+      }
       else if (e.key === '0') this.view.fit()
       else if (e.key === 'Escape') {
-        if (w.mode === 'actors' && w.tool !== 'select') w.setTool('select')
-        else if (w.mode === 'actors' && w.selection.size) {
-          w.selection = new Set()
-          w.emit()
-        } else goTo('editor')
+        if (w.mode === 'maps' && w.tool !== 'select') w.setTool('select')
+        else if (w.mode === 'maps' && (w.selection.size || w.selectedMap)) w.deselect()
+        else goTo('editor')
       } else return
       e.preventDefault()
     })
@@ -430,8 +468,8 @@ export class WorldPage {
   }
 
   private render() {
-    // Only actors snap: the toggle shows in Actors mode.
-    this.snapButton.hidden = this.world.mode !== 'actors'
+    // Only actors snap: the toggle shows in Maps mode.
+    this.snapButton.hidden = this.world.mode !== 'maps'
     this.snapButton.classList.toggle('active', this.world.snap)
     this.snapButton.setAttribute('aria-pressed', String(this.world.snap))
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-world-tool]')) {
@@ -446,7 +484,7 @@ export class WorldPage {
       el.classList.toggle('active', on)
       el.setAttribute('aria-checked', String(on))
     }
-    const panels: [HTMLElement, WorldMode][] = [[this.tilesetsPanel, 'tiles'], [this.actorsPanel, 'actors'], [this.mapsPanel, 'maps']]
+    const panels: [HTMLElement, WorldMode][] = [[this.tilesetsPanel, 'tiles'], [this.actorsPanel, 'maps'], [this.mapsPanel, 'maps']]
     for (const [panel, m] of panels) {
       if (panel.hidden !== (m !== mode)) {
         panel.hidden = m !== mode
@@ -454,16 +492,15 @@ export class WorldPage {
       }
     }
     for (const el of this.actorList.querySelectorAll<HTMLElement>('.sprite-item')) {
-      el.classList.toggle('active', mode === 'actors' && el.dataset.name === this.world.actorType)
+      el.classList.toggle('active', mode === 'maps' && this.world.tool === 'place' && el.dataset.name === this.world.placing)
     }
     for (const el of this.actorList.querySelectorAll<HTMLElement>('[data-count]')) {
       const n = this.world.countOf(el.dataset.count!)
       el.textContent = n ? String(n) : ''
       el.hidden = n === 0
     }
-    for (const el of this.mapList.querySelectorAll<HTMLElement>('.sprite-item')) {
-      el.classList.toggle('active', el.dataset.name === this.world.active)
-    }
+    this.renderTree()
+    this.renderSelected()
     // Tiles picked from another tileset (eyedropper on the map): show that one.
     const b = this.world.brush
     if (b && b.tileset !== this.shown && this.view.sheet(b.tileset)) {
@@ -475,31 +512,129 @@ export class WorldPage {
   }
 
   private renderMaps() {
-    this.mapList.replaceChildren()
-    for (const name of [...this.world.maps.keys()].sort()) {
-      const menu = createActionsMenu(`Options for ${name}`, [
-        { label: 'Rename', run: () => void this.renameMap(name) },
-        { label: 'Delete', run: () => void this.deleteMap(name), danger: true },
-      ])
-      this.mapList.append(
-        h('div', { className: 'sprite-row' },
-          h('button', {
-            className: 'sprite-item',
-            'data-name': name,
-            onclick: () => {
-              this.world.active = name
-              this.view.focus(name)
-              this.world.emit()
-            },
-          }, h('span', { className: 'sprite-label' }, name)),
-          menu.el),
-      )
-    }
-    if (!this.world.maps.size) this.mapList.append(h('p', { className: 'muted' }, 'No maps yet: + makes one.'))
+    this.treeKey = ''
     this.render()
   }
 
-  /** Shows the classes whose name holds what is typed in the search field. */
+  /**
+   * The list of maps, each with its actors under it (unless folded), in the order the game
+   * draws them. Built again only when what it lists changes; the selection is marked on
+   * every render.
+   */
+  private renderTree() {
+    const w = this.world
+    const names = [...w.maps.keys()].sort()
+    const key = names.map((n) => `${n}${this.folded.has(n) ? '-' : '+'}:${w.maps.get(n)!.actors.map((t) => t.actor).join(',')}`).join('|')
+    if (key !== this.treeKey) {
+      this.treeKey = key
+      this.mapList.replaceChildren()
+      for (const name of names) {
+        const map = w.maps.get(name)!
+        const folded = this.folded.has(name)
+        const menu = createActionsMenu(`Options for ${name}`, [
+          { label: 'Rename', run: () => void this.renameMap(name) },
+          { label: 'Delete', run: () => void this.deleteMap(name), danger: true },
+        ])
+        this.mapList.append(
+          h('div', { className: 'tree-row tree-map', 'data-map': name },
+            h('button', {
+              type: 'button',
+              className: `tree-fold${folded ? ' folded' : ''}`,
+              title: folded ? 'Show its actors' : 'Hide its actors',
+              'aria-label': folded ? `Show the actors of ${name}` : `Hide the actors of ${name}`,
+              'aria-expanded': String(!folded),
+              hidden: !map.actors.length,
+              html: icon('expand'),
+              onclick: () => {
+                if (folded) this.folded.delete(name)
+                else this.folded.add(name)
+                this.render()
+              },
+            }),
+            h('button', {
+              type: 'button',
+              className: 'tree-item',
+              onclick: () => {
+                w.selectMap(name)
+                this.view.reveal(name)
+              },
+            }, h('span', { className: 'tree-label' }, name),
+              h('span', { className: 'tree-count muted' }, folded && map.actors.length ? String(map.actors.length) : '')),
+            menu.el))
+        if (folded) continue
+        map.actors.forEach((t, i) => {
+          this.mapList.append(
+            h('button', {
+              type: 'button',
+              className: 'tree-row tree-item tree-actor',
+              'data-map': name,
+              'data-index': String(i),
+              onclick: () => {
+                const placement = w.maps.get(name)?.actors[i]
+                if (!placement) return
+                // Shift adds to the selection, as on the maps.
+                const base = w.shift ? [...w.selection] : []
+                w.select(base.includes(placement) ? base.filter((x) => x !== placement) : [...base, placement])
+                w.active = name
+                this.view.reveal(name)
+              },
+            }, actorThumb(this.pictures.get(t.actor) ?? null), h('span', { className: 'tree-label' }, t.actor)))
+        })
+      }
+      if (!w.maps.size) this.mapList.append(h('p', { className: 'muted' }, 'No maps yet: + makes one.'))
+    }
+    for (const el of this.mapList.querySelectorAll<HTMLElement>('.tree-map')) {
+      el.classList.toggle('active', el.dataset.map === w.selectedMap)
+    }
+    for (const el of this.mapList.querySelectorAll<HTMLElement>('.tree-actor')) {
+      const t = w.maps.get(el.dataset.map!)?.actors[Number(el.dataset.index)]
+      el.classList.toggle('active', !!t && w.selection.has(t))
+    }
+  }
+
+  /**
+   * The inspector of the actors selected: their variables, as the game will see them, each
+   * set here for these actors alone. Several actors are edited together when they are of the
+   * same kind; a value they do not share shows as differing.
+   */
+  private renderSelected() {
+    const w = this.world
+    const placed = [...w.selection]
+    // Only actors: a map has nothing to set here (it is renamed from its menu in the list,
+    // resized by its corners), so selecting one shows no panel.
+    this.selectedPanel.hidden = w.mode !== 'maps' || !placed.length
+    if (this.selectedPanel.hidden) return
+    const names = new Set(placed.map((t) => t.actor))
+    const name = placed[0].actor
+    const kind = this.byName.get(name)
+    const count = placed.length > 1 ? `${placed.length} ${names.size > 1 ? 'actors' : `${name}s`}` : name
+    this.selectedTitle.textContent = count
+    this.selectedTitle.title = `A value set here is for ${placed.length > 1 ? 'these alone' : 'this one alone'}; the others come from actors/${name}.json or the code.`
+    const info = (text: string) => {
+      this.selectedInfo.textContent = text
+      this.inspector.show([])
+    }
+    if (names.size > 1) return info('Of several kinds: select one kind to set values.')
+    if (!kind) return info(`The game has no actors/${name}.ts.`)
+    if (kind.error) return info(kind.error)
+    const variables = kind.variables.filter((v) => v.kind !== 'box')
+    const stale = [...new Set(placed.flatMap((t) => staleNames(t.values, kind.variables)))].sort()
+    if (!variables.length && !stale.length) return info('No variables')
+    this.selectedInfo.textContent = ''
+    const files = fileLayers(kind, this.files)
+    this.inspector.show(variables.map((variable): Row => {
+      const each = placed.map((t) => resolve(variable.name, variable.value, [...files, { from: 'here', values: t.values }]))
+      return {
+        variable,
+        value: each[0].value,
+        from: each[0].from,
+        own: each.some((r) => r.from === 'here'),
+        mixed: each.some((r) => !sameValue(r.value, each[0].value)),
+      }
+    }), stale)
+  }
+
+  /** Shows the actors whose name holds what is typed in the search field. */
   private filterActors() {
     const q = this.actorSearch.value.trim().toLowerCase()
     for (const row of this.actorList.querySelectorAll<HTMLElement>('[data-row]')) row.hidden = !row.dataset.row!.includes(q)
@@ -515,14 +650,14 @@ export class WorldPage {
     saveMode(this.world.mode)
   }
 
-  /** The game's classes of actors, to pick the one to place. */
+  /** The game's actors, to pick the one to place. */
   private renderActors() {
     const k = this.kinds
     const note = (...text: (string | Node)[]) => h('p', { className: 'muted' }, ...text)
     this.actorList.replaceChildren()
     if (!k) return
     if ('missing' in k) {
-      this.actorList.append(note('The game has no code yet. Write ', h('code', {}, 'code/main.ts'), ' and export a class that extends Actor: it appears here.'))
+      this.actorList.append(note('The game has no actors yet. Write ', h('code', {}, 'actors/hero.ts'), ', a class that extends Actor as its default export: it appears here.'))
       return
     }
     if ('error' in k) {
@@ -530,18 +665,18 @@ export class WorldPage {
       return
     }
     if (!k.kinds.length) {
-      this.actorList.append(note('Export a class that extends Actor from ', h('code', {}, 'code/main.ts'), ' to place it on the maps.'))
+      this.actorList.append(note('Write ', h('code', {}, 'actors/hero.ts'), ', a class that extends Actor as its default export, to place it on the maps.'))
       return
     }
     for (const kind of k.kinds) {
       const thumb = actorThumb(kind.picture)
       this.actorList.append(
-        h('div', { className: 'sprite-row', 'data-row': kind.name.toLowerCase() },
+        h('div', { className: 'sprite-row', 'data-row': kind.name },
           h('button', {
             className: 'sprite-item',
             'data-name': kind.name,
-            title: kind.error ? `${kind.name} could not be drawn: ${kind.error}` : `Place ${kind.name} (P)`,
-            onclick: () => this.world.setActorType(kind.name),
+            title: kind.error ? `${kind.name}: ${kind.error}` : `Place ${kind.name} (P)`,
+            onclick: () => this.world.setPlacing(kind.name),
           }, thumb, h('span', { className: 'sprite-label' }, kind.name)),
           // How many are placed: a click selects them all, to find them or move them.
           h('button', {
@@ -664,6 +799,8 @@ export class WorldPage {
 function readMode(): WorldMode {
   try {
     const m = localStorage.getItem(MODE_KEY)
+    // The Actors mode is part of Maps now.
+    if (m === 'actors') return 'maps'
     if (m && MODES.some((x) => x.id === m)) return m as WorldMode
   } catch {
     // Private window, or storage blocked: the default mode.

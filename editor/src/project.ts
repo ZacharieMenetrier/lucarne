@@ -1,12 +1,11 @@
 // The game folder as the editor sees it: the settings, the palette, the sprites, the
-// tilesets, the actors' boxes, the maps and the fonts.
+// tilesets, the actor files' values, the maps and the fonts.
 
-import { ACTORS_FILE, parseActors, serializeActors } from './actors'
+import { ACTORS_DIR, parseActorFile, serializeActorFile, type Values } from './actors'
 import { Bitmap, resized } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
 import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
-import type { Box } from '../../runtime/collision'
 import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
 import { parseMap, serializeMap, type GameMap } from './map'
 import { decodePng, encodePng } from './png'
@@ -202,21 +201,30 @@ export class Project {
     await this.storage.remove(`${SPRITES_DIR}/${name}.json`)
   }
 
-  /** The actors' boxes, by class name (none when actors.json is missing). */
-  async loadActors(): Promise<Map<string, Box>> {
-    const text = await readText(this.storage, ACTORS_FILE)
-    if (text === null) return new Map()
-    try {
-      return parseActors(text)
-    } catch (err) {
-      throw new Error(`${ACTORS_FILE} could not be read: ${(err as Error).message}`)
+  /** The values of every actor file (actors/<name>.json), by actor name. */
+  async loadActorFiles(): Promise<Map<string, Values>> {
+    const names = (await this.storage.list(ACTORS_DIR))
+      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+    const out = new Map<string, Values>()
+    for (const name of names) {
+      const text = await readText(this.storage, `${ACTORS_DIR}/${name}.json`)
+      if (text === null) continue
+      try {
+        out.set(name, parseActorFile(text))
+      } catch (err) {
+        throw new Error(`${ACTORS_DIR}/${name}.json could not be read: ${(err as Error).message}`)
+      }
     }
+    return out
   }
 
-  /** Saves the actors' boxes; with none, there is no file. */
-  async saveActors(boxes: ReadonlyMap<string, Box>) {
-    if (boxes.size) await writeText(this.storage, ACTORS_FILE, serializeActors(boxes))
-    else await this.storage.remove(ACTORS_FILE)
+  /** Saves an actor's file; with no value set, there is no file. */
+  async saveActorFile(name: string, values: Values) {
+    const path = `${ACTORS_DIR}/${name}.json`
+    if (Object.keys(values).length) await writeText(this.storage, path, serializeActorFile(values))
+    else await this.storage.remove(path)
   }
 
   /** Map names: maps/<name>.json. */

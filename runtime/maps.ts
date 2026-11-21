@@ -7,7 +7,8 @@
 // `mapAt(x, y)` say where a map is (to place an actor in it, or keep it inside).
 //
 // A map also says which actors stand in it when the game starts (see `placeActors` in
-// world.ts): the game's code says what a villager is, the map says where each one starts.
+// world.ts): actors/villager.ts says what a villager is, the map says where each one
+// starts, and what this one does differently (its values).
 //
 // The editor loads every tileset and map before the game's code runs.
 
@@ -21,14 +22,15 @@ export interface Tile {
 }
 
 /**
- * An actor placed on a map: the name its class is exported under from `code/main.ts`, and
- * where it starts (its feet), in game pixels from the map's top left corner. Placed actors
- * move with their map.
+ * An actor placed on a map: its name (its file in actors/), where it starts (its feet), in
+ * game pixels from the map's top left corner, and the values set for this one alone (see
+ * values.ts). Placed actors move with their map.
  */
 export interface Placement {
-  type: string
+  actor: string
   x: number
   y: number
+  values: Record<string, unknown>
 }
 
 /** A map as the editor hands it to the engine. Positions and sizes are in cells. */
@@ -147,10 +149,10 @@ export function map(name: string): MapRect {
  * Every actor placed on the maps, in the world (game pixels): map by map, by name, then in
  * each map's order. The same order every time, so updates run in the same order too.
  */
-export function placements(): { map: string; type: string; x: number; y: number }[] {
+export function placements(): (Placement & { map: string })[] {
   return [...maps]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .flatMap((m) => m.actors.map((t) => ({ map: m.name, type: t.type, x: m.x * size + t.x, y: m.y * size + t.y })))
+    .flatMap((m) => m.actors.map((t) => ({ ...t, map: m.name, x: m.x * size + t.x, y: m.y * size + t.y })))
 }
 
 function rectOf(m: MapData): MapRect {

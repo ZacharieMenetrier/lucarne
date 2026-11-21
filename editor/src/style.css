@@ -1123,25 +1123,206 @@ body[data-page='world'] #world-page,
 body[data-page='actors'] #actors-page {
   display: flex;
 }
-/* The Actors page: the actor large, and the list of classes with its box on the right. */
+/* The Actors page: the actors on the left, the one picked large in the middle, its box and
+   its variables on the right. */
 .actors-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 240px;
+  grid-template-columns: 220px 1fr 260px;
+}
+.world-side.actors-list {
+  border-left: 0;
+  border-right: 1px solid var(--line);
+}
+.actors-variables {
+  flex: 1;
+  overflow-y: auto;
+}
+.actors-variables[hidden] {
+  display: none;
 }
 .actors-canvas {
-  cursor: var(--crosshair), default;
+  cursor: default;
 }
-.actors-box {
-  gap: 8px;
+.actors-canvas.editing {
+  cursor: var(--crosshair), crosshair;
 }
 .actors-info {
   margin: 0;
   font-size: 12px;
 }
-.actors-box button[hidden] {
+/* The inspector: one row per variable, its name then its field. A value set here has its
+   name in bold and ↺ next to it, nothing else. The row being worked on is lit softly.
+   Fields have no border until hovered or typed in: the values, not the lines, show. */
+/* Rows run edge to edge of the panel (its 10px padding): the tint is a band, not a card. */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -10px;
+}
+.inspector-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px;
+  transition: background-color 0.12s;
+}
+.inspector-row:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.inspector-row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 22px;
+}
+.inspector-head > label:first-child {
+  font-size: 12px;
+  font-weight: 400;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: default;
+}
+.inspector-row.own .inspector-head > label:first-child {
+  font-weight: 700;
+}
+.inspector-row.invalid .inspector-head > label:first-child {
+  color: var(--danger);
+}
+.inspector-row.stale .inspector-head > label:first-child {
+  text-decoration: line-through;
+}
+.inspector-stale {
+  display: contents;
+}
+/* ↺ fits the name's line, right after the name. */
+.inspector button.inspector-reset {
+  width: 22px;
+  height: 22px;
+  margin: -2px 0;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.inspector button.inspector-reset:hover {
+  background: var(--line);
+  color: var(--text);
+}
+.inspector-reset svg {
+  width: 14px;
+  height: 14px;
+}
+.inspector-reset[hidden] {
   display: none;
+}
+/* A switch: on is accent, its knob to the right. */
+input[type='checkbox'].switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border: 0;
+  border-radius: 9px;
+  background: var(--line);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+input[type='checkbox'].switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background-color 0.15s;
+}
+input[type='checkbox'].switch:checked {
+  background: var(--accent);
+}
+input[type='checkbox'].switch:checked::before {
+  transform: translateX(12px);
+  background: #fff;
+}
+input[type='checkbox'].switch:indeterminate::before {
+  transform: translateX(6px);
+}
+/* The box: on its name's line what it is and its switch, then X Y W H, each its letter
+   inside the field. Off, the numbers go. */
+.inspector-solid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.inspector-box {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.inspector-row.no-box .inspector-box {
+  display: none;
+}
+.inspector-box-field {
+  position: relative;
+  display: block;
+}
+.inspector-box-field span {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.inspector .inspector-box-field input[type='text'] {
+  padding: 5px 4px 5px 17px;
+  font-variant-numeric: tabular-nums;
+}
+/* Fields keep the 16px of every input: smaller, Safari on iPad zooms in on them. */
+.inspector input[type='text'],
+.inspector textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border-color: transparent;
+  background: var(--bg);
+  transition: border-color 0.12s;
+}
+.inspector input[type='text']:hover:not(:disabled),
+.inspector textarea:hover {
+  border-color: var(--line);
+}
+.inspector input[type='text']:focus,
+.inspector textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.inspector textarea {
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 6px;
+  resize: vertical;
+  line-height: 1.4;
+}
+.world-selected {
+  flex: 0 1 auto;
+  max-height: 45%;
+  overflow-y: auto;
+  gap: 8px;
 }
 .world-body {
   flex: 1;
@@ -1204,13 +1385,20 @@ body[data-page='actors'] #actors-page {
   flex: 0 1 auto;
 }
 .world-actors {
-  flex: 1;
+  flex: 0 1 auto;
+  max-height: 35%;
   gap: 8px;
 }
+/* Sized like the panel's own text, not like a form field: the viewport's maximum-scale
+   already keeps iOS from zooming on focus, which is what the 16px of inputs is for. */
 .world-search {
   width: 100%;
   box-sizing: border-box;
-  padding: 5px 9px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.world-actors .sprite-item {
+  font-size: 13px;
 }
 /* How many of a class are placed, at the right of its row: a click selects them all. */
 .actor-count {
@@ -1283,6 +1471,110 @@ body[data-page='actors'] #actors-page {
 }
 .world-maps {
   flex: 1;
+}
+/* The maps, each with its actors under it: plain rows, the selected one lit like the
+   inspector's, the map's ⋮ shown on hover (always on a touch screen, where there is none). */
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 6px;
+}
+.world-list:has(.tree-row) {
+  gap: 1px;
+}
+.tree-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.tree-row:hover,
+.tree-row:has(.tree-item:hover) {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.tree-row.active,
+.tree-row.active:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.tree-row .tree-item:hover {
+  background: transparent;
+}
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-map .tree-label {
+  font-weight: 600;
+}
+.tree-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.tree-fold {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.tree-fold[hidden] {
+  display: grid;
+  visibility: hidden;
+}
+.tree-fold svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.12s;
+}
+.tree-fold.folded svg {
+  transform: rotate(-90deg);
+}
+/* An actor under its map: indented past the arrow, a small picture. */
+.tree-actor {
+  flex: none;
+  width: 100%;
+  padding-left: 28px;
+}
+.tree-actor .thumb {
+  width: 18px !important;
+  height: 18px !important;
+}
+.tree-map > .menu > button {
+  background: transparent;
+  border-color: transparent;
+  visibility: hidden;
+}
+.tree-map:focus-within > .menu > button,
+.tree-map > .menu > button.active {
+  visibility: visible;
+}
+@media (hover: hover) {
+  .tree-map:hover > .menu > button {
+    visibility: visible;
+  }
+}
+@media (hover: none) {
+  .tree-map.active > .menu > button {
+    visibility: visible;
+  }
 }
 .chip-select {
   position: relative;
@@ -1619,4 +1911,10 @@ body[data-page='settings'] #settings-page {
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+.world-selected .actors-info:empty {
+  display: none;
+}
+.view-controls button.icon[hidden] {
+  display: none;
 }

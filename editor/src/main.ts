@@ -14,7 +14,7 @@ async function main() {
   await app.start()
   const actors = new ActorsPage(project, app)
   await actors.load()
-  const world = new WorldPage(project, app)
+  const world = new WorldPage(project, app, actors.files)
   await world.load()
   buildSettingsPage(storage, () => app.refreshSync(), {
     settings: () => project.settings,

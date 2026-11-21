@@ -36,8 +36,8 @@ Use a fine-grained token limited to that repository, with **Contents: Read and w
 The token stays in the browser, on that device only.
 
 When the editor works from the browser's storage, a sync button shows in the top bar.
-It compares `game.json`, `palette.json`, `board.json`, `sprites/*`, `tiles/*`, `maps/*` and
-`fonts/*` on the device, on GitHub, and
+It compares `game.json`, `palette.json`, `board.json`, `sprites/*`, `tiles/*`, `maps/*`,
+`actors/*.json` and `fonts/*` on the device, on GitHub, and
 as they were at the last sync: changes on one side follow that side, changes sent to
 GitHub go out as one commit. A file (or sprite) changed on both sides is a conflict: the
 editor asks which version to keep. On Mac with `lucarne dev`, use git in the game folder.
@@ -49,7 +49,6 @@ my-game/
   game.json          { "columns": 20, "rows": 11, "tileSize": 16 }   // every one optional
   palette.json       ["#1a1c2c", "#5d275d", …]
   board.json         where each sprite sits on the editor's board, and its color
-  actors.json        each class of actors' box, by class name (see "Walls"), only when one has a box
   sprites/hero.png   sheet: the animation frames side by side, left to right
   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
                        "frames": [{ "duration": 100 }],
@@ -60,8 +59,10 @@ my-game/
   fonts/name.png     a font: its characters in white, in a grid (made by importing one)
   fonts/name.json    which character is in which cell, and how far the next one starts
   fonts/name.license.txt   the font's license, when it has one
-  code/main.ts       the game's code (TypeScript), starting point
-  game.js            built from code/ by `lucarne dev`: commit it, never edit it
+  actors/hero.ts     an actor: its code (TypeScript), a class that extends Actor (see "Actors")
+  actors/hero.json   its values set in the editor, its box among them, only when it has some
+  code/main.ts       the rest of the game's code, optional: the game itself, helpers
+  game.js            built from actors/ and code/ by `lucarne dev`: commit it, never edit it
 ```
 
 Every change is saved automatically, about 0.4 s after the last stroke.
@@ -73,22 +74,27 @@ to the editor. Arrows or WASD (ZQSD on AZERTY) move, Space or Enter is the actio
 a gamepad works too. The play bar shows how long an update and a frame take: an update
 has 16.7 ms.
 
-A game is made of **actors**: classes that extend `Actor`. Creating one puts it in the
-world; the engine updates and draws every actor by itself.
+A game is made of **actors**: one file each in `actors/`, a class that extends `Actor`.
+The engine creates them, updates and draws them by itself.
 
 ```ts
-// code/main.ts
-import { Actor, camera, game, input, screen, sprite } from 'lucarne'
+// actors/hero.ts
+import { Actor, camera, input, screen, sprite } from 'lucarne'
 
-class Hero extends Actor {
-  update() { this.move(input.x * 1.25, input.y * 1.25) }   // 60 times per second
-  draw() { screen.sprite(sprite('hero'), 0, 0) }           // around itself
+export default class Hero extends Actor {
+  speed = 1.25                                    // a variable: set in the editor too
+  create() { camera.follow(this) }                // once, when its values are set
+  update() { this.move(input.x * this.speed, input.y * this.speed) }   // 60 times per second
+  draw() { screen.sprite(sprite('hero'), 0, 0) }  // around itself
 }
+```
 
-camera.follow(new Hero(160, 90))
+```ts
+// code/main.ts (optional)
+import { game, screen } from 'lucarne'
 
 export default game({
-  draw() { screen.clear('#1a1c2c') },        // the background, under the maps and actors
+  draw() { screen.clear('#1a1c2c') },             // the background, under the maps and actors
 })
 ```
 
@@ -104,6 +110,14 @@ The game never chooses the scale, and never needs to know it (`screen.width` and
 
 ### Actors
 
+An actor is a pair of files named alike: `actors/<name>.ts` is its code, a class that
+extends `Actor` as the default export; `actors/<name>.json` holds what the editor sets for
+every actor of that kind. The name is the file's (lowercase, `-` and `_`): maps place an
+actor by it. A class in `code/` (a helper, a dialogue) is an actor that is never placed.
+
+- Actors are created with `spawn(Hero, { x: 160, y: 90 })`, or placed on a map; never with
+  `new`, which throws. `spawn` sets the actor's values (below), then calls its `create()`:
+  what a constructor would do goes there. It returns the actor.
 - `update()` runs 60 times per second on every display, for every actor, in the order they
   were created. An actor created during an update gets its first update on the next one.
   There is no update for the game itself: what concerns the whole game (a clock, a
@@ -113,8 +127,8 @@ The game never chooses the scale, and never needs to know it (`screen.width` and
   are drawn from the top of the world down, by `y`: the lower one is in front.
 - `this.move(dx, dy)` moves; `this.place(x, y)` jumps there with no in-between (a door, a
   teleport); `this.remove()` takes the actor out of the world at the end of the update.
-- An actor's box is drawn on the **Actors** page, not written in the code (see "Walls").
-  Walls and the other actors' boxes stop it; without one, it goes through everything.
+- An actor's box is drawn on the **Actors** page (see "Walls"). Walls and the other actors'
+  boxes stop it; without one, it goes through everything.
 - `drawUI()` draws on the screen itself, over the world, where the camera does not move it.
 
 Displays refresh at other rates (120 Hz, 144 Hz…), so on each displayed frame the engine
@@ -122,6 +136,42 @@ draws every actor between where it was before its last update and where it is no
 is smooth on any display, with no `dt` in the game's code. An actor just created or placed
 is drawn where it is. On a 60 Hz display, each frame shows the last update as it is.
 `draw` only draws: the screen cannot be used elsewhere, and the game should not change in it.
+
+### Variables: the code declares, the editor sets
+
+A field of an actor whose default is a number, text, `true`/`false` or a list of lines of
+text (`lines = ['Hello!']`) is a **variable**: the editor shows it, to set its value. Other
+fields (objects, an empty list, `#private` ones) are the code's own. The box is the
+engine's variable, on every actor (`null` unless set), typed or drawn on the actor.
+
+A variable's value is looked up in this order, the last one set winning:
+
+```
+the code's default  →  each parent's actors/<parent>.json  →  actors/<name>.json  →  the placed actor (map)  →  spawn's values
+```
+
+- **Actors** page: the values for every actor of a kind, in `actors/<name>.json`. A value
+  set there has its name in bold, with ↺ next to it to clear it; the name's tooltip says
+  where an inherited one comes from. A click on a row selects it, the one worked on.
+- **World** page: the values of the actors selected, for them alone, in the map.
+- `spawn(Hero, { speed: 2 })`: values from the code, for that one.
+
+A value in the code is only the default: an AI or a reader checks the actor's file and the
+map before trusting it, or reads the actor as it runs (`lucarne.actors()`). A class that
+extends another actor (`export default class Guard extends Villager`) takes its parent's
+file before its own. A value a file sets that the code does not declare, or of the wrong
+kind, stops the game with an error naming the file and the variable; the editor shows it
+in red, to fix or remove.
+
+```json
+{
+  "box": { "x": -5, "y": -6, "width": 10, "height": 6 },
+  "lines": ["Hello!", "Nice weather today."],
+  "speed": 0.5
+}
+```
+
+An actor file holds only what is set, one value per line, the box first: none set, no file.
 
 ### Camera
 
@@ -191,38 +241,39 @@ grow downward without moving the tiles maps use; `null` is empty.
 
 ### The world page
 
-The world page shows the whole world, every map at its place. It works in one of three
-modes, chosen with the switch on top of its tools (or 1, 2, 3). The mode sets both the
-tools on the left and the panel on the right, and only what it is about reacts to the
-pointer: painting under a villager never grabs it. The page remembers the mode it was in.
+The world page shows the whole world, every map at its place. It works in one of two
+modes, chosen with the switch on top of its tools (or 1, 2). The mode sets both the tools
+on the left and the panel on the right, and only what it is about reacts to the pointer:
+painting under a villager never grabs it. The page remembers the mode it was in.
 
-- **Maps**: Move (V) moves a map and resizes it by its corners; the panel lists the maps,
-  to create, rename, delete or go to one.
+- **Maps** arranges the world: the maps and the actors on them. Its panel reads from the
+  top down: the game's actors, to place; the maps, each with its actors listed under it
+  (▾ folds them), to create, rename, delete or select one; and what is selected. Each tool
+  does one thing on the maps: Select (V) takes actors, Place (P) drops them, the Eraser
+  (E) removes them, and **Move map** (M) moves a map and resizes it by its corners, so a
+  map is never dragged by accident. A click on a row of the list selects that map or actor
+  whatever the tool, and an actor that draws nothing (a spawner) is found there. A map
+  selected shows its name, to rename it, and its size; Delete deletes it (asked first).
 - **Tiles**: the pencil (B), eraser (E) and eyedropper (I), and the tilesets to pick tiles
   from. Actors fade a little, out of the way.
-- **Actors**: Select (V) and Place (P), and the game's actors to place (see below).
 
 ### Placing actors on maps
 
-The code says what an actor is; the map says where each one starts. Every class that
-`code/main.ts` exports and that extends `Actor` can be placed on the maps, in the
-**Actors** mode of the world page:
+`actors/villager.ts` says what a villager is; the map says where each one starts, and what
+this one does differently. Every actor file can be placed on the maps, in the **Maps**
+mode of the world page.
 
-```ts
-export class Villager extends Actor {
-  update() { … }                                         // walks, talks: like any actor
-  draw() { screen.sprite(sprite('villager'), 0, 0) }
-}
-```
-
-- The Actors panel lists those classes, each drawn by its own `draw()`: the editor runs the
-  game's code, creates one of each at (0, 0) and draws it, without ever updating it. What
-  it shows is the game's first frame. It reads the code again when the world page opens
-  and when the window comes back to the front. An actor that draws nothing (a spawner) shows
-  as a dashed frame; one whose class the code no longer exports, as a red one. Modal actors
-  (a `Dialogue`, a `Menu`) are UI and are not listed.
-- The panel has one row per class, with a search field to filter them by name. The number
+- The Actors panel lists the actors, each drawn by its own `draw()`: the editor runs the
+  game's code, creates one of each outside the world, with its values, and draws it,
+  without ever updating it. What it shows is the game's first frame. It reads the code
+  again when the page opens and when the window comes back to the front. An actor that
+  draws nothing (a spawner) shows as a dashed frame; one with no `actors/<name>.ts`, as a
+  red one.
+- The panel has one row per actor, with a search field to filter them by name. The number
   at the right of a row says how many are placed; a click on it selects them all.
+- At the bottom, the panel shows the variables of the actors selected, to set for them
+  alone (several of the same kind at once; a value they do not share shows as `—`). ↺
+  clears a value: the actor takes its file's again.
 - Picking a row switches to Place: each click drops one, the pointer holding it by the
   middle of its sprite. Esc goes back to Select.
 - Actors snap to half tiles by their **sprite's frame**: the frame's top left goes on a
@@ -230,7 +281,7 @@ export class Villager extends Actor {
   sprite where it should stand in its cell, and it fills a cell exactly (or stands between
   two), whatever its origin or its box. An actor drawn with several sprites snaps by its
   largest one, its body. One that draws no sprite has its feet on half tiles. The magnet
-  at the bottom left of the map (in Actors mode) turns snapping off: actors then go
+  at the bottom left of the map (in Maps mode) turns snapping off: actors then go
   anywhere, by the pixel. This browser remembers it.
 - Select: a click selects an actor, Shift adds or removes one, and dragging on the ground
   draws a box that selects what it touches (⌘A: every actor). Dragging the selection moves
@@ -240,20 +291,21 @@ export class Villager extends Actor {
   duplicates, Delete removes. Undo covers it all.
 - Eraser (E): a click removes the actor under the pointer, and a stroke every actor it
   crosses; one undo brings the whole stroke back. Esc goes back to Select.
-- When the game starts, the engine creates every placed actor with `new Villager(x, y)`,
-  map by map (by name), after the actors the code creates at its top level and before
-  `start()`. From then on it is an actor like any other: it moves however its `update()`
-  says, from map to map if it walks there. The map only holds where it starts.
-- A map that places a class the code does not export stops the game with an error naming
-  the map and the class.
+- When the game starts, the engine spawns every placed actor, map by map (by name), after
+  the actors the code spawns at its top level and before `start()`. From then on it is an
+  actor like any other: it moves however its `update()` says, from map to map if it walks
+  there. The map only holds where it starts.
+- A map that places an actor the game does not have stops the game with an error naming
+  the map and the actor.
 
-In the map file, an actor is its class's export name and its feet, in game pixels from the
-map's top left corner, so actors move with their map (and the ones left outside when a map
-shrinks go):
+In the map file, an actor is its name, its feet, in game pixels from the map's top left
+corner (actors move with their map, and the ones left outside when a map shrinks go), then
+the values set for this one alone, by variable name:
 
 ```json
   "actors": [
-    { "type": "Villager", "x": 40, "y": 96 }
+    { "actor": "villager", "x": 40, "y": 96 },
+    { "actor": "villager", "x": 72, "y": 96, "lines": ["Nice weather."] }
   ]
 ```
 
@@ -262,23 +314,21 @@ shrinks go):
 An actor with a box slides along walls and other actors by itself: there is nothing to
 write in the code.
 
-```ts
-export class Hero extends Actor {
-  update() { this.move(input.x * 1.25, input.y * 1.25) }
-}
-```
-
-- The box is drawn on the **Actors** page (between Pixels and World in the switch): pick the
-  class in the list, and drag over the actor, drawn large by its own `draw()` with its feet
-  marked by a cross. The box is a rectangle around the feet (the actor's position, its
-  sprite's origin), the same on every frame of the animation (one that changed would push
-  the actor into walls). Feet a bit narrower than the sprite and a few pixels high suit a
-  top-down game: the head can pass in front of a wall. Delete removes it, ⌘Z undoes, ↑ ↓
-  go through the classes.
-- Boxes are saved in `actors.json` by the name the class is exported under, like maps place
-  it: only exported classes can have one. A class with no box of its own takes its
-  parent's. `this.box` reads it, `{ x, y, width, height }`, (x, y) its top left relative to
-  the feet.
+- The box is set on the **Actors** page (between Pixels and World in the switch): pick the
+  actor in the list on the left, drawn large by its own `draw()` with its feet marked by a
+  cross. The box is the first of its variables on the right: type its X Y W H there (↑ ↓
+  add or take one, ⇧ ten), or click its row to see it on the actor, with handles: drag an edge
+  or a corner to resize it, its inside to move it, anywhere else to draw a new one; the
+  arrows move it, Delete clears it (the parent's box comes back), Escape or a tap away
+  leaves it. It is drawn only while its row is selected. Its switch turned off takes it away; ⌘Z undoes. The box
+  is a rectangle around the feet (the actor's position, its sprite's origin), the same on
+  every frame of the animation (one that changed would push the actor into walls). Feet a
+  bit narrower than the sprite and a few pixels high suit a top-down game: the head can
+  pass in front of a wall.
+- The box is a variable (see "Variables"): saved in `actors/<name>.json`, taken from the
+  parent's file when the actor sets none. `this.box` is each actor's own,
+  `{ x, y, width, height }`, (x, y) its top left relative to the feet: the code may change
+  it as the game runs (a hero crouching), or set it to `null`.
 - **Every box is solid to every other**: actors stop against each other as against walls.
   An actor that should be walked through (a coin, a trigger) has no box.
 - The walls are the **solid tiles**, and everything **outside the maps**: the camera never
@@ -301,15 +351,6 @@ export class Hero extends Actor {
 ```json
 {
   "version": 1,
-  "actors": {
-    "Hero": { "box": { "x": -5, "y": -6, "width": 10, "height": 6 } }
-  }
-}
-```
-
-```json
-{
-  "version": 1,
   "solid": [
     { "column": 0, "row": 2, "x": 0, "y": 0, "width": 16, "height": 16 },
     { "column": 3, "row": 2, "x": 0, "y": 8, "width": 16, "height": 8 }
@@ -317,7 +358,7 @@ export class Hero extends Actor {
 }
 ```
 
-`actors.json` holds one line per class, sorted by name. `tiles/<name>.json` lists the solid tiles by column and row, like the cells of a map, with
+`tiles/<name>.json` lists the solid tiles by column and row, like the cells of a map, with
 their rectangle in pixels inside the tile. It exists only when some tile is solid.
 
 ### Text and UI
@@ -327,8 +368,8 @@ screen.text('Bonjour !', 8, 8, '#f4f4f4')                 // in the game's font
 screen.text(long, 8, 8, '#f4f4f4', { width: 120 })        // wrapped at 120 pixels
 font().measure('Bonjour !')                               // { width, height }
 
-new Dialogue(['Hello!', 'Nice weather today.'])           // letter by letter, page by page
-new Menu(['Yes', 'No'], (i) => { … })                     // up, down, action
+spawn(Dialogue, { pages: ['Hello!', 'Nice weather.'] })   // letter by letter, page by page
+spawn(Menu, { items: ['Yes', 'No'], onChoose: (i) => { … } })   // up, down, action
 ```
 
 Text is stamped from the font's own pixels: the browser never draws it, so it is as crisp
@@ -350,8 +391,8 @@ the last modal actor created updates, the camera and the world's clock (`time.ms
 and everything is still drawn behind it. The UI's clock (`time.uiMs`) keeps running, so
 text still appears and cursors still blink. `Dialogue` and `Menu` are modal, and remove
 themselves when done. They draw their box with the game's sprite named `panel` if it has
-one, and the menu's cursor with `cursor`. Extend them to change their text color:
-`class Sign extends Dialogue { color = '#1a1c2c' }`.
+one, and the menu's cursor with `cursor`. Their text color is `color`:
+`spawn(Dialogue, { pages, color: '#1a1c2c' })`.
 
 ### Driving a game from a script
 
@@ -361,7 +402,7 @@ page hidden (what an AI uses to test a game):
 
 ```js
 lucarne.step(60, ['right'])   // 60 updates with "right" held, then shows the result
-lucarne.actors()              // [{ type: 'Hero', x: 267, y: 120, box: { x: 262, y: 114, width: 10, height: 6 }, … }]
+lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, speed: 1.25, box: { x: 262, y: 114, width: 10, height: 6 }, … }]
 lucarne.ui()                  // { modal: 'Menu', text: ['Yes', 'No', '>'] }
 lucarne.camera()              // { x: 96, y: 0, map: 'town' }
 await lucarne.picture()       // the frame at game resolution, as a PNG data URL
@@ -371,8 +412,8 @@ lucarne.timings()             // milliseconds per update, per drawing, per frame
 If the game has no code yet, ▶ shows a little night scene instead (the arrows and the
 action key do something there too).
 
-The browser cannot run TypeScript, so `lucarne dev` builds `code/` into `game.js` whenever
-a file in it changes, and again just before playing. Build errors show in the editor and
+The browser cannot run TypeScript, so `lucarne dev` builds `actors/*.ts` and `code/` into
+`game.js` whenever one of them changes, and again just before playing. Build errors show in the editor and
 in the terminal. The iPad has no server: it plays the `game.js` it gets from GitHub,
 with the sprites as they are on the iPad. Code is written on the Mac; sprites can be
 changed on either.
@@ -404,7 +445,8 @@ like sprites, with their tile grid shown; they are 8 tiles wide, add or remove r
 corner, and have no animation. With the Walls tool, their solid tiles show hatched in red. The Origin (O) and Walls (X) tools sit below a divider, after the drawing tools: each works on one kind of image only, and is greyed out on the other (a click says why).
 
 The switch at the left of the top bar goes between the three editors, in the order a game
-is made: **Pixels** (sprites and tilesets), **Actors** (each class's box, see "Walls") and
+is made: **Pixels** (sprites and tilesets), **Actors** (each actor's box and values: the
+actors on the left, the one picked in the middle, its box and variables on the right) and
 **World**.
 
 The **world editor** (World, in the switch at the left of the top bar) shows every map at its place. Zoom, pan and undo work
@@ -431,8 +473,8 @@ npm run build        # installable static version, in dist/
 ```
 
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
-(`runner.ts`), the world, its actors and the camera (`world.ts`, smooth motion between
-updates, actors' boxes), walls (`collision.ts`), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
+(`runner.ts`), the world, its actors and the camera (`world.ts`: `spawn`, the actor files,
+smooth motion between updates), variables and how a value is checked (`values.ts`), walls (`collision.ts`), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
 `fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), and the
 game's settings (`game.ts`, read from `game.json`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
@@ -449,8 +491,9 @@ Editor code lives in `editor/src/`:
 - `viewport.ts`, `view.ts`, `input.ts`: zoom and panning, rendering the board, mouse, pen and gestures
 - `world.ts`: the world editor's maps, tools, history — no DOM, tested in `tests/world.test.ts`
 - `worldview.ts`, `worldpage.ts`: rendering the world, and its page
-- `actors.ts`: actors' boxes (`actors.json`) and their history — no DOM, tested in `tests/actors.test.ts`
-- `actortypes.ts`, `actorspage.ts`: the game's classes of actors, drawn by their own code, and the Actors page
+- `actors.ts`: actor files (`actors/<name>.json`), where a value comes from, and their history — no DOM, tested in `tests/actors.test.ts`
+- `actortypes.ts`, `actorspage.ts`: the game's actors as its code declares them, drawn by their own code, and the Actors page
+- `inspector.ts`: the variables of an actor, to set (the Actors page and the world page)
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)

@@ -1,8 +1,8 @@
 // Ready-made UI: a dialogue box and a menu. Both are modal actors: while one is open, the
 // world stops behind it (see `Actor.modal`), and it removes itself when done.
 //
-//   new Dialogue(['Hello!', 'Nice weather today.'])
-//   new Menu(['Yes', 'No'], (i) => { if (i === 0) shop.open() })
+//   spawn(Dialogue, { pages: ['Hello!', 'Nice weather today.'] })
+//   spawn(Menu, { items: ['Yes', 'No'], onChoose: (i) => { if (i === 0) shop.open() } })
 //
 // They write in the game's font, in a box drawn with the game's sprite named "panel" (its
 // middle row and column stretch, see `screen.panel`), or a plain box if it has none. The
@@ -50,28 +50,27 @@ export class Dialogue extends Actor {
   modal = true
   /** Color of the text (and of a plain box's border). */
   color = '#f4f4f4'
-  private readonly pages: string[]
-  private page = 0
-  private letters = 0
+  /** What it says, one page after the other. */
+  pages: string[] = []
+  #page = 0
+  #letters = 0
 
-  constructor(pages: string | string[]) {
-    super()
-    this.pages = typeof pages === 'string' ? [pages] : pages
+  create() {
     if (this.pages.length === 0) this.remove()
   }
 
   /** Is the current page fully shown? */
   get done() {
-    return this.letters >= [...this.pages[this.page]].length
+    return this.#letters >= [...this.pages[this.#page]].length
   }
 
   update() {
-    if (!this.done) this.letters += LETTERS_PER_UPDATE
+    if (!this.done) this.#letters += LETTERS_PER_UPDATE
     if (!input.pressed('action')) return
-    if (!this.done) this.letters = Infinity
-    else if (this.page < this.pages.length - 1) {
-      this.page++
-      this.letters = 0
+    if (!this.done) this.#letters = Infinity
+    else if (this.#page < this.pages.length - 1) {
+      this.#page++
+      this.#letters = 0
     } else this.remove()
   }
 
@@ -80,11 +79,11 @@ export class Dialogue extends Actor {
     const pad = padding()
     const width = screen.width - MARGIN * 2
     // Wrapped as a whole, so words don't jump to the next line as they appear.
-    const lines = f.lines(this.pages[this.page], width - pad.x * 2)
+    const lines = f.lines(this.pages[this.#page], width - pad.x * 2)
     const height = lines.length * f.lineHeight + pad.y * 2
     const top = screen.height - MARGIN - height
     box(MARGIN, top, width, height, this.color)
-    let left = Math.floor(this.letters)
+    let left = Math.floor(this.#letters)
     lines.forEach((line, i) => {
       const chars = [...line]
       if (left > 0) screen.text(chars.slice(0, left).join(''), MARGIN + pad.x, top + pad.y + i * f.lineHeight, this.color)
@@ -105,15 +104,15 @@ export class Menu extends Actor {
   modal = true
   /** Color of the text (and of a plain box's border). */
   color = '#f4f4f4'
+  /** The choices, top to bottom. */
+  items: string[] = []
+  /** Called with the choice made, once the menu has closed. */
+  onChoose: (index: number, item: string) => void = () => {}
   /** The highlighted choice. */
   choice = 0
 
-  constructor(
-    readonly items: string[],
-    private readonly onChoose: (index: number, item: string) => void,
-  ) {
-    super()
-    if (items.length === 0) this.remove()
+  create() {
+    if (this.items.length === 0) this.remove()
   }
 
   update() {

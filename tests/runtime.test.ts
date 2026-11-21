@@ -8,7 +8,8 @@ import { attachScreen, screen, writtenText } from '../runtime/screen'
 import { Sprite, setSprites, sprite } from '../runtime/sprites'
 import { time } from '../runtime/time'
 import { Dialogue, Menu } from '../runtime/ui'
-import { Actor, camera, cameraMapName, drawWorld, linkBoxes, modalActor, placeActors, resetWorld, actorTypes, setBoxes, updateWorld, worldActors } from '../runtime/world'
+import type { Box } from '../runtime/collision'
+import { Actor, actorClasses, actorParents, actorValues, actorVariables, camera, cameraMapName, drawWorld, modalActor, placeActors, probe, registerActors, resetWorld, setActorFiles, spawn, updateWorld, worldActors } from '../runtime/world'
 
 const data = {
   name: 'hero',
@@ -70,7 +71,7 @@ beforeEach(() => {
   resetWorld()
   setSprites([data])
   setMaps(16, [], [])
-  setBoxes({})
+  setActorFiles({})
 })
 
 describe('settings', () => {
@@ -159,14 +160,9 @@ describe('screen', () => {
 /** An actor that records its updates and draws a 1×1 rectangle where it is. */
 class Dot extends Actor {
   updates = 0
-  constructor(
-    x: number,
-    y: number,
-    readonly log: string[] = [],
-    readonly name = 'dot',
-  ) {
-    super(x, y)
-  }
+  log: string[] = []
+  name = 'dot'
+
   update() {
     this.updates++
     this.log.push(this.name)
@@ -182,12 +178,12 @@ describe('actors', () => {
     class Spawner extends Dot {
       update() {
         super.update()
-        if (this.updates === 1) new Dot(0, 0, log, 'child')
+        if (this.updates === 1) spawn(Dot, { x: 0, y: 0, log, name: 'child' })
       }
     }
-    new Dot(0, 0, log, 'a')
-    new Spawner(0, 0, log, 'spawner')
-    new Dot(0, 0, log, 'b')
+    spawn(Dot, { x: 0, y: 0, log, name: 'a' })
+    spawn(Spawner, { x: 0, y: 0, log, name: 'spawner' })
+    spawn(Dot, { x: 0, y: 0, log, name: 'b' })
     updateWorld()
     expect(log).toEqual(['a', 'spawner', 'b'])
     updateWorld()
@@ -196,14 +192,14 @@ describe('actors', () => {
 
   it('leave the world at the end of the update that removes them', () => {
     const log: string[] = []
-    const a = new Dot(0, 0, log, 'a')
+    const a = spawn(Dot, { x: 0, y: 0, log, name: 'a' })
     class Remover extends Dot {
       update() {
         super.update()
         a.remove()
       }
     }
-    new Remover(0, 0, log, 'remover')
+    spawn(Remover, { x: 0, y: 0, log, name: 'remover' })
     updateWorld()
     expect(log).toEqual(['a', 'remover'])
     expect(worldActors().map((t) => (t as Dot).name)).toEqual(['remover'])
@@ -217,7 +213,7 @@ describe('actors', () => {
         this.move(4, 2)
       }
     }
-    new Mover(10, 10)
+    spawn(Mover, { x: 10, y: 10 })
     updateWorld()
     updateWorld()
     drawWorld(0.5)
@@ -227,7 +223,7 @@ describe('actors', () => {
 
   it('are drawn where they are when new or placed: no in-between', () => {
     const calls = screenAt(100, 100, 10)
-    const dot = new Dot(10, 10)
+    const dot = spawn(Dot, { x: 10, y: 10 })
     drawWorld(0.5)
     updateWorld()
     dot.place(50, 50)
@@ -240,9 +236,9 @@ describe('actors', () => {
 
   it('are drawn from the top of the world down, ties in creation order', () => {
     const calls = screenAt(100, 100, 1)
-    new Dot(0, 50, [], 'low')
-    new Dot(1, 10, [], 'high')
-    new Dot(2, 50, [], 'low too')
+    spawn(Dot, { x: 0, y: 50, log: [], name: 'low' })
+    spawn(Dot, { x: 1, y: 10, log: [], name: 'high' })
+    spawn(Dot, { x: 2, y: 50, log: [], name: 'low too' })
     drawWorld(1)
     expect(calls.map((c) => c[1])).toEqual([1, 0, 2])
   })
@@ -254,8 +250,8 @@ describe('actors', () => {
         screen.rect(2, 3, 1, 1, '#fff')
       }
     }
-    new Hud(40, 40)
-    new Dot(10, 10)
+    spawn(Hud, { x: 40, y: 40 })
+    spawn(Dot, { x: 10, y: 10 })
     camera.x = 5
     drawWorld(1)
     expect(calls).toEqual([
@@ -273,7 +269,7 @@ describe('camera', () => {
         this.move(1.3, 0)
       }
     }
-    const hero = new Walker(30, 30)
+    const hero = spawn(Walker, { x: 30, y: 30 })
     camera.follow(hero)
     updateWorld()
     for (const alpha of [0, 0.3, 0.7, 1]) {
@@ -293,7 +289,7 @@ describe('camera', () => {
         this.place(500, 500)
       }
     }
-    camera.follow(new Teleporter(30, 30))
+    camera.follow(spawn(Teleporter, { x: 30, y: 30 }))
     updateWorld()
     drawWorld(0.5, () => screen.rect(0, 0, 1, 1, 'ground'))
     expect(calls[0].slice(1, 3)).toEqual([-450, -470])
@@ -312,7 +308,7 @@ describe('maps', () => {
   it('draws only the tiles on screen, under the actors, on whole display pixels', () => {
     const calls = screenAt(32, 32, 2)
     setMaps(16, [{ name: 'ground', sheet }], [map('a', 0, 0, 10, 10)])
-    new Dot(0, 0)
+    spawn(Dot, { x: 0, y: 0 })
     camera.x = 8
     camera.y = 0
     drawWorld(1)
@@ -337,7 +333,7 @@ describe('maps', () => {
   it('keep the camera inside the map of the actor it follows', () => {
     screenAt(100, 60, 1)
     setMaps(10, [], [map('a', 0, 0, 30, 20)])
-    const hero = new Dot(20, 20)
+    const hero = spawn(Dot, { x: 20, y: 20 })
     camera.follow(hero)
     expect([camera.x, camera.y]).toEqual([0, 0])
     hero.place(295, 195)
@@ -357,7 +353,7 @@ describe('maps', () => {
         this.move(2, 0)
       }
     }
-    const hero = new Walker(299, 100)
+    const hero = spawn(Walker, { x: 299, y: 100 })
     camera.follow(hero)
     expect(camera.x).toBe(200)
     updateWorld()
@@ -372,7 +368,7 @@ describe('maps', () => {
   it('settle the camera in its map when the game starts, even if it followed before', () => {
     attachScreen(null)
     setMaps(10, [], [map('a', 0, 0, 30, 20)])
-    camera.follow(new Dot(20, 20))
+    camera.follow(spawn(Dot, { x: 20, y: 20 }))
     const r = new Runner({}, fakeCanvas(100, 60).canvas, (err) => { throw err }, { width: 100, height: 60 })
     r.start()
     expect([camera.x, camera.y]).toEqual([0, 0])
@@ -390,7 +386,7 @@ describe('maps', () => {
   it('let the camera follow freely between maps', () => {
     screenAt(100, 60, 1)
     setMaps(10, [], [map('a', 0, 0, 30, 20)])
-    const hero = new Dot(1000, 1000)
+    const hero = spawn(Dot, { x: 1000, y: 1000 })
     camera.follow(hero)
     expect([camera.x, camera.y]).toEqual([950, 970])
     expect(cameraMapName()).toBe(null)
@@ -400,12 +396,12 @@ describe('maps', () => {
 describe('modal actors', () => {
   it('stop the world: only the last one updates, and the world clock stops', () => {
     const log: string[] = []
-    new Dot(0, 0, log, 'world')
+    spawn(Dot, { x: 0, y: 0, log, name: 'world' })
     class Modal extends Dot {
       modal = true
     }
-    const first = new Modal(0, 0, log, 'first')
-    const second = new Modal(0, 0, log, 'second')
+    const first = spawn(Modal, { x: 0, y: 0, log, name: 'first' })
+    const second = spawn(Modal, { x: 0, y: 0, log, name: 'second' })
     expect(updateWorld()).toBe(false)
     expect(log).toEqual(['second'])
     second.remove()
@@ -424,7 +420,7 @@ describe('modal actors', () => {
       modal = true
     }
     r.step(6)
-    const m = new Modal()
+    const m = spawn(Modal)
     r.step(6)
     m.remove()
     r.step(6)
@@ -453,7 +449,7 @@ describe('runner', () => {
           this.move(input.x * 1.25, input.y)
         }
       }
-      const w = new Walker(10, 10)
+      const w = spawn(Walker, { x: 10, y: 10 })
       const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
       r.start()
       r.step(60, ['right'])
@@ -476,7 +472,7 @@ describe('runner pacing', () => {
         updates++
       }
     }
-    new Counter()
+    spawn(Counter)
     canvas ??= fakeCanvas(10, 10).canvas
     const r = new Runner({}, canvas, (err) => { throw err }, size)
     r.fit(canvas.width * 100, canvas.height * 100)
@@ -523,7 +519,7 @@ describe('runner pacing', () => {
         screen.rect(0, 0, 1, 1, '#fff')
       }
     }
-    new Mover()
+    spawn(Mover)
     simulate(hz, 300, jitterMs, { width: 10, height: 10 }, fake.canvas)
     const xs = fake.calls.map((c) => c[1] as number)
     return { xs, steps: xs.slice(30).map((v, i) => v - xs[29 + i]) }
@@ -552,7 +548,7 @@ describe('runner pacing', () => {
         screen.rect(0, 0, 1, 1, '#fff')
       }
     }
-    new Mover()
+    spawn(Mover)
     const fake = fakeCanvas(10, 10)
     simulate(60, 120, 0.5, { width: 10, height: 10 }, fake.canvas)
     const last = fake.calls[fake.calls.length - 1][1] as number
@@ -622,7 +618,7 @@ describe('dialogue and menu', () => {
 
   it('shows a dialogue letter by letter, page by page, then closes', () => {
     const r = play()
-    const d = new Dialogue(['ab ab', 'b ab ab'])
+    const d = spawn(Dialogue, { pages: ['ab ab', 'b ab ab'] })
     r.step(4) // half a letter per update
     expect(writtenText().map((t) => t.text)).toEqual(['ab'])
     r.step(1, ['action']) // the whole page at once
@@ -641,7 +637,7 @@ describe('dialogue and menu', () => {
   it('moves a menu cursor and calls back with the choice', () => {
     const r = play()
     let chosen = -1
-    new Menu(['a', 'b', 'ab'], (i) => (chosen = i))
+    spawn(Menu, { items: ['a', 'b', 'ab'], onChoose: (i) => (chosen = i) })
     r.step(1, ['up']) // wraps to the last
     r.step(1)
     r.step(1, ['down'])
@@ -667,26 +663,24 @@ describe('walls', () => {
   }
   const world = (...maps: MapData[]) => setMaps(16, [{ name: 'ground', sheet, solid }], maps)
 
-  /** A 10 × 6 box: its feet, centered on x, its bottom on y. */
-  class Walker extends Actor {}
-  beforeEach(() => {
-    setBoxes({ Walker: { x: -5, y: -6, width: 10, height: 6 } })
-    linkBoxes(actorTypes({ Walker }))
-  })
+  /** A 10 × 6 box: its feet, centered on x, its bottom on y (a box the code gives it). */
+  class Walker extends Actor {
+    box: Box | null = { x: -5, y: -6, width: 10, height: 6 }
+  }
 
   it('let actors through when the game has no maps, or when the actor has no box', () => {
-    const w = new Walker(8, 8)
+    const w = spawn(Walker, { x: 8, y: 8 })
     expect(w.move(100, 0)).toBe(true)
     expect(w.x).toBe(108)
     world(walls(['.#.']))
-    const ghost = new Actor(8, 8)
+    const ghost = spawn(Actor, { x: 8, y: 8 })
     expect(ghost.move(16, 0)).toBe(true)
     expect(ghost.x).toBe(24)
   })
 
   it('stop a box against a solid tile, and say so', () => {
     world(walls(['..#.']))
-    const w = new Walker(8, 12)
+    const w = spawn(Walker, { x: 8, y: 12 })
     expect(w.move(4, 0)).toBe(true)
     expect(w.move(20, 0)).toBe(false)
     expect(w.x).toBe(27)
@@ -697,7 +691,7 @@ describe('walls', () => {
 
   it('slide along a wall: what is stopped on one axis, the other keeps', () => {
     world(walls(['..#.', '..#.', '....']))
-    const w = new Walker(20, 12)
+    const w = spawn(Walker, { x: 20, y: 12 })
     expect(w.move(9, 3)).toBe(false)
     expect([w.x, w.y]).toEqual([27, 15])
   })
@@ -705,21 +699,21 @@ describe('walls', () => {
   it('collide with the solid part of a tile only', () => {
     world(walls(['....', '.v..', '....']))
     // Above the solid half: free.
-    const above = new Walker(4, 24)
+    const above = spawn(Walker, { x: 4, y: 24 })
     expect(above.move(40, 0)).toBe(true)
     // In line with it: stopped at its left edge.
-    const level = new Walker(4, 30)
+    const level = spawn(Walker, { x: 4, y: 30 })
     level.move(40, 0)
     expect(level.x).toBe(11)
     // Coming down onto it.
-    const falling = new Walker(24, 16)
+    const falling = spawn(Walker, { x: 24, y: 16 })
     falling.move(0, 20)
     expect(falling.y).toBe(24)
   })
 
   it('are everything outside the maps, but not between maps that touch', () => {
     world(walls(['....', '....']), walls(['....', '....'], 4, 0, 'b'))
-    const w = new Walker(20, 20)
+    const w = spawn(Walker, { x: 20, y: 20 })
     w.move(-50, 0)
     expect(w.x).toBe(5)
     w.move(0, 50)
@@ -733,14 +727,14 @@ describe('walls', () => {
   it('stop any speed, however thin the wall', () => {
     const thin = [{ column: 0, row: 0, x: 7, y: 0, width: 2, height: 16 }]
     setMaps(16, [{ name: 'ground', sheet, solid: thin }], [walls(['.......', '...#...', '.......'])])
-    const w = new Walker(8, 28)
+    const w = spawn(Walker, { x: 8, y: 28 })
     w.move(500, 0)
     expect(w.x).toBe(50)
   })
 
   it('let an actor placed inside a wall walk out of it', () => {
     world(walls(['....', '.#..', '....']))
-    const w = new Walker(24, 28)
+    const w = spawn(Walker, { x: 24, y: 28 })
     expect(w.move(20, 0)).toBe(true)
     expect(w.x).toBe(44)
   })
@@ -749,7 +743,7 @@ describe('walls', () => {
     // A corridor one tile high, between walls, on the right.
     world(walls(['......', '...###', '......', '...###', '......']))
     // The corridor is y 32 to 48; feet from y 44 to 50 clip the wall below it by 2.
-    const w = new Walker(43, 50)
+    const w = spawn(Walker, { x: 43, y: 50 })
     expect(w.move(1, 0)).toBe(false)
     expect(w.x).toBe(43)
     expect(w.y).toBe(49)
@@ -763,11 +757,11 @@ describe('walls', () => {
     // A doorway one tile wide (x 16 to 32) in a wall from y 16 to 32.
     world(walls(['....', '#.##', '....']))
     // Feet from x 28 to 38 clip the wall right of the door by 6: past half of 10.
-    const far = new Walker(33, 38)
+    const far = spawn(Walker, { x: 33, y: 38 })
     far.move(0, -10)
     expect([far.x, far.y]).toEqual([33, 38])
     // From x 25 to 35, by 3: nudged left as it walks.
-    const w = new Walker(30, 38)
+    const w = spawn(Walker, { x: 30, y: 38 })
     expect(w.move(0, -2)).toBe(false)
     expect([w.x, w.y]).toEqual([28, 38])
     w.move(0, -2)
@@ -779,51 +773,33 @@ describe('walls', () => {
   it('stop dead against a corner the actor is mostly in line with', () => {
     world(walls(['......', '...###', '......', '...###', '......']))
     // Feet from y 47 to 53 are 5 pixels into the wall below: past half of 6.
-    const w = new Walker(43, 53)
+    const w = spawn(Walker, { x: 43, y: 53 })
     expect(w.move(10, 0)).toBe(false)
     expect([w.x, w.y]).toEqual([43, 53])
   })
 })
 
 describe('boxes', () => {
-  class Hero extends Actor {}
-  class Rock extends Actor {}
-  class BigRock extends Rock {}
+  class Hero extends Actor {
+    box: Box | null = { x: -4, y: -4, width: 8, height: 4 }
+  }
+  class Rock extends Actor {
+    box: Box | null = { x: -8, y: -8, width: 16, height: 8 }
+  }
   class Coin extends Actor {}
-  beforeEach(() => {
-    setBoxes({ Hero: { x: -4, y: -4, width: 8, height: 4 }, Rock: { x: -8, y: -8, width: 16, height: 8 } })
-    linkBoxes(actorTypes({ Hero, Rock, Coin }))
-  })
-
-  it("come from actors.json by export name, and a class without one takes its parent's", () => {
-    expect(new Hero(0, 0).box).toEqual({ x: -4, y: -4, width: 8, height: 4 })
-    expect(new BigRock(0, 0).box).toEqual({ x: -8, y: -8, width: 16, height: 8 })
-    expect(new Coin(0, 0).box).toBe(null)
-    expect(new Actor(0, 0).box).toBe(null)
-    // Shared by every actor of the class: the code cannot change one by accident.
-    expect(Object.isFrozen(new Hero(0, 0).box)).toBe(true)
-  })
-
-  it('reach actors the code created before the boxes were tied to the classes', () => {
-    setBoxes({ Hero: { x: -4, y: -4, width: 8, height: 4 } })
-    const early = new Hero(0, 0)
-    expect(early.box).toBe(null)
-    linkBoxes(actorTypes({ Hero }))
-    expect(early.box).toEqual({ x: -4, y: -4, width: 8, height: 4 })
-  })
 
   it('are offset from the feet as drawn', () => {
     setMaps(16, [], [{ name: 'a', x: 0, y: 0, width: 4, height: 4, cells: new Array(16).fill(null), actors: [] }])
     // The box from x - 4 to x + 4: stopped 4 pixels before the right edge of the map.
-    const h = new Hero(32, 32)
+    const h = spawn(Hero, { x: 32, y: 32 })
     expect(h.move(100, 0)).toBe(false)
     expect(h.x).toBe(60)
   })
 
   it('stop actors against each other, and slide along them', () => {
     // The rock from x 92 to 108, y 92 to 100.
-    new Rock(100, 100)
-    const h = new Hero(80, 99)
+    spawn(Rock, { x: 100, y: 100 })
+    const h = spawn(Hero, { x: 80, y: 99 })
     expect(h.move(20, 0)).toBe(false)
     expect(h.x).toBe(88)
     // Diagonally: x stops, y goes on.
@@ -832,41 +808,143 @@ describe('boxes', () => {
   })
 
   it('let actors without a box through, and through them', () => {
-    const coin = new Coin(90, 99)
-    const h = new Hero(80, 99)
+    const coin = spawn(Coin, { x: 90, y: 99 })
+    const h = spawn(Hero, { x: 80, y: 99 })
     expect(h.move(20, 0)).toBe(true)
     expect(coin.move(30, 0)).toBe(true)
   })
 
   it('ignore removed actors, and let overlapping actors part', () => {
-    const rock = new Rock(100, 100)
-    const h = new Hero(100, 100)
+    const rock = spawn(Rock, { x: 100, y: 100 })
+    const h = spawn(Hero, { x: 100, y: 100 })
     expect(h.move(0, 20)).toBe(true)
     rock.remove()
-    const h2 = new Hero(80, 100)
+    const h2 = spawn(Hero, { x: 80, y: 100 })
     expect(h2.move(40, 0)).toBe(true)
+  })
+
+  it('belong to each actor: changing one changes no other', () => {
+    const a = spawn(Hero)
+    const b = spawn(Hero)
+    a.box!.height = 2
+    expect(b.box!.height).toBe(4)
+  })
+})
+
+describe('spawn', () => {
+  it('is the only way to create an actor', () => {
+    class Hero extends Actor {}
+    expect(() => new Hero()).toThrow('Actors are created with spawn(Hero, { x, y }), not with new.')
+  })
+
+  it('sets the values, then calls create(), which sees them', () => {
+    const seen: number[] = []
+    class Hero extends Actor {
+      speed = 1
+      create() {
+        seen.push(this.speed, this.x)
+      }
+    }
+    const h = spawn(Hero, { x: 5, speed: 3 })
+    expect(seen).toEqual([3, 5])
+    expect([h.x, h.y]).toEqual([5, 0])
+  })
+})
+
+describe('actor files', () => {
+  class Villager extends Actor {
+    speed = 1
+    lines = ['Hello!']
+    shy = false
+    /** Not variables: not of a simple kind, or an empty list (of what?). */
+    home = { x: 0, y: 0 }
+    friends: Actor[] = []
+  }
+  class Guard extends Villager {}
+  class Helper extends Guard {}
+
+  /** The game's actor files: their values, then their classes, as game.js registers them. */
+  function files(values: Record<string, Record<string, unknown>>) {
+    setActorFiles(values)
+    registerActors({ villager: Villager, guard: Guard })
+  }
+
+  it('declare variables in the code: fields of a simple kind, the box first', () => {
+    files({})
+    expect(actorVariables(Villager)).toEqual([
+      { name: 'box', kind: 'box', value: null },
+      { name: 'speed', kind: 'number', value: 1 },
+      { name: 'lines', kind: 'lines', value: ['Hello!'] },
+      { name: 'shy', kind: 'switch', value: false },
+    ])
+  })
+
+  it("set values over the code's, a parent's file first, the nearest last", () => {
+    const box = { x: -4, y: -4, width: 8, height: 4 }
+    files({ villager: { box, speed: 0.5, lines: ['Hi.'] }, guard: { lines: ['Halt!'] } })
+    const v = spawn(Villager)
+    expect([v.box, v.speed, v.lines]).toEqual([box, 0.5, ['Hi.']])
+    const g = spawn(Guard, { speed: 2 })
+    expect([g.box, g.speed, g.lines]).toEqual([box, 2, ['Halt!']])
+    // A class with no file of its own (made in code/) takes its parents' files.
+    expect(spawn(Helper).lines).toEqual(['Halt!'])
+    expect(actorParents(Helper)).toEqual(['guard', 'villager'])
+    expect(actorValues(Guard)).toEqual({ box, speed: 0.5, lines: ['Halt!'] })
+    // A list set in a file is each actor's own.
+    v.lines.push('More.')
+    expect(spawn(Villager).lines).toEqual(['Hi.'])
+  })
+
+  it('name the file and the variable when a value does not fit the code', () => {
+    files({ villager: { sped: 2 } })
+    expect(() => spawn(Villager)).toThrow('actors/villager.json sets "sped", but the villager has no variable named so (its variables: box, speed, lines, shy). Declare it in actors/villager.ts')
+    files({ villager: { speed: 'fast' } })
+    expect(() => spawn(Guard)).toThrow('actors/villager.json: "speed" of the villager must be a number, not "fast".')
+    files({ villager: { lines: [] } })
+    expect(spawn(Villager).lines).toEqual([])
+    files({ villager: { box: { x: 0, y: 0, width: 0, height: 4 } } })
+    expect(() => spawn(Villager)).toThrow('"box" of the villager must be a box')
+  })
+
+  it('are checked when the game starts, even for an actor nothing places', () => {
+    files({ guard: { shy: 'yes' } })
+    expect(() => placeActors()).toThrow('actors/guard.json: "shy" of the guard must be true or false')
+    files({ ghost: {} })
+    expect(() => placeActors()).toThrow('actors/ghost.json has no actors/ghost.ts')
+  })
+
+  it('register only classes of actors', () => {
+    setActorFiles({})
+    expect(() => registerActors({ helper: () => 1 })).toThrow('actors/helper.ts must end with `export default class … extends Actor`')
+    registerActors({ villager: Villager })
+    expect([...actorClasses().keys()]).toEqual(['villager'])
+  })
+
+  it('let the editor create an actor outside the world, to draw it', () => {
+    files({})
+    const v = probe(Villager, { speed: 4 })
+    expect(v.speed).toBe(4)
+    expect(worldActors()).toEqual([])
   })
 })
 
 describe('placed actors', () => {
-  class Villager extends Actor {}
+  class Villager extends Actor {
+    lines = ['Hello!']
+  }
   class Chest extends Actor {}
   const empty = (name: string, x: number, y: number, actors: MapData['actors']): MapData => ({
     name, x, y, width: 2, height: 2, cells: new Array(4).fill(null), actors,
   })
-
-  it('are the classes the code exports that extend Actor, by their export name', () => {
-    const types = actorTypes({ default: {}, Villager, Box: Chest, helper: () => 1, Actor: class {} })
-    expect([...types.keys()]).toEqual(['Villager', 'Box'])
-  })
+  beforeEach(() => registerActors({ villager: Villager, chest: Chest }))
 
   it('are created at their place in the world, map by map, after the actors already there', () => {
-    const hero = new Actor(1, 1)
+    const hero = spawn(Actor, { x: 1, y: 1 })
     setMaps(16, [], [
-      empty('town', 10, 0, [{ type: 'Chest', x: 8, y: 16 }]),
-      empty('house', 0, 2, [{ type: 'Villager', x: 4, y: 12 }, { type: 'Chest', x: 0, y: 32 }]),
+      empty('town', 10, 0, [{ actor: 'chest', x: 8, y: 16, values: {} }]),
+      empty('house', 0, 2, [{ actor: 'villager', x: 4, y: 12, values: { lines: ['Hi.'] } }, { actor: 'chest', x: 0, y: 32, values: {} }]),
     ])
-    placeActors(actorTypes({ Villager, Chest }))
+    placeActors()
     expect(worldActors().map((t) => [t.constructor.name, t.x, t.y])).toEqual([
       ['Actor', 1, 1],
       ['Villager', 4, 44],
@@ -874,10 +952,13 @@ describe('placed actors', () => {
       ['Chest', 168, 16],
     ])
     expect(worldActors()[0]).toBe(hero)
+    expect((worldActors()[1] as Villager).lines).toEqual(['Hi.'])
   })
 
-  it('say which map places a class the code does not export', () => {
-    setMaps(16, [], [empty('town', 0, 0, [{ type: 'Ghost', x: 8, y: 16 }])])
-    expect(() => placeActors(actorTypes({ Villager }))).toThrow('maps/town.json places a Ghost, but code/main.ts exports no actor class named Ghost (it exports: Villager).')
+  it('say which map places an actor the game does not have, or sets what it does not declare', () => {
+    setMaps(16, [], [empty('town', 0, 0, [{ actor: 'ghost', x: 8, y: 16, values: {} }])])
+    expect(() => placeActors()).toThrow('maps/town.json places a ghost, but there is no actors/ghost.ts (the actors: villager, chest).')
+    setMaps(16, [], [empty('town', 0, 0, [{ actor: 'chest', x: 8, y: 16, values: { gold: 3 } }])])
+    expect(() => placeActors()).toThrow('maps/town.json sets "gold", but the chest has no variable named so')
   })
 })

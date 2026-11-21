@@ -2,7 +2,7 @@
 // It is itself a small Lucarne game, drawn with the engine's own `screen` and `input`.
 // The arrows make the cat look around; the action key sends a shooting star.
 
-import { Actor, game, input, screen } from '../../runtime/index'
+import { Actor, game, input, screen, spawn } from '../../runtime/index'
 
 const C = {
   ink: '#1a1c2c',
@@ -134,7 +134,7 @@ export const noGame = game({
     tick = 0
     shooting = null
     nextShooting = 180
-    new Night()
+    spawn(Night)
   },
 
   draw() {

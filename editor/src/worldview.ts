@@ -12,6 +12,8 @@ import type { World } from './world'
 const ON_DARK = { outline: 'rgba(255, 255, 255, 0.16)', active: 'rgba(255, 255, 255, 0.5)', grid: 'rgba(255, 255, 255, 0.07)', empty: 'rgba(255, 255, 255, 0.04)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)' }
 const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.18)', active: 'rgba(0, 0, 0, 0.5)', grid: 'rgba(0, 0, 0, 0.09)', empty: 'rgba(0, 0, 0, 0.05)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)' }
 const DANGER = '#e0566b'
+/** What is selected, on the maps as in the panel's list: the editor's accent. */
+const SELECTED = '#41a6f6'
 
 export class WorldView extends Viewport {
   /** Tileset pixels, ready to draw (dropped when a tileset changes: see `invalidate`). */
@@ -24,9 +26,9 @@ export class WorldView extends Viewport {
     private readonly tileset: (name: string) => Bitmap | null,
     /** The board color (the game's, else the editor's). */
     private readonly background: () => string,
-    /** A class of actors' picture; null when it draws nothing, undefined when the game's
-     * code has no such class (or could not be run). */
-    private readonly picture: (type: string) => ActorPicture | null | undefined,
+    /** An actor's picture; null when it draws nothing, undefined when the game has no
+     * such actor file (or its code could not be run). */
+    private readonly picture: (actor: string) => ActorPicture | null | undefined,
   ) {
     super(canvas, world)
     this.zoomRaw = 2
@@ -122,7 +124,7 @@ export class WorldView extends Viewport {
       }
 
       const isActive = name === world.active
-      ctx.strokeStyle = isActive && blocked ? DANGER : isActive ? ink.active : ink.outline
+      ctx.strokeStyle = isActive && blocked ? DANGER : name === world.selectedMap ? SELECTED : isActive ? ink.active : ink.outline
       ctx.lineWidth = lw
       ctx.strokeRect(x - lw / 2, y - lw / 2, w + lw, h + lw)
     }
@@ -131,12 +133,12 @@ export class WorldView extends Viewport {
     // they fade a little: they are there, but out of the way.
     const mode = world.mode
     if (mode === 'tiles') ctx.globalAlpha = 0.45
-    for (const t of world.actorsInDepthOrder()) this.drawActor(t.actor.type, t.x, t.y, ink)
+    for (const t of world.actorsInDepthOrder()) this.drawActor(t.placement.actor, t.x, t.y, ink)
     ctx.globalAlpha = 1
-    if (mode === 'actors') {
+    if (mode === 'maps') {
       for (const t of world.selection) {
         const p = world.placed(t)
-        if (p) this.outline(world.actorRect(p), ink.cursor)
+        if (p) this.outline(world.actorRect(p), SELECTED)
       }
       // The Eraser: the actor a click would remove.
       if (hv && tool === 'remove') {
@@ -155,11 +157,11 @@ export class WorldView extends Viewport {
     }
 
     // The actor about to be placed, under the pointer: where it would stand.
-    if (hv && tool === 'place' && world.actorType && !world.dragging) {
-      const at = world.placeAt(world.actorType, hv)
+    if (hv && tool === 'place' && world.placing && !world.dragging) {
+      const at = world.placeAt(world.placing, hv)
       if (world.mapForActor(at)) {
         ctx.globalAlpha = 0.6
-        this.drawActor(world.actorType, at.x, at.y, ink)
+        this.drawActor(world.placing, at.x, at.y, ink)
         ctx.globalAlpha = 1
       }
     }
@@ -208,14 +210,14 @@ export class WorldView extends Viewport {
 
   /**
    * Draws an actor with its feet at (x, y), in world pixels: its picture, or a dashed frame
-   * when it draws nothing, or a red one when the game's code has no such class.
+   * when it draws nothing, or a red one when the game has no such actor file.
    */
-  private drawActor(type: string, x: number, y: number, ink: typeof ON_DARK) {
+  private drawActor(actor: string, x: number, y: number, ink: typeof ON_DARK) {
     const { ctx, world } = this
     const z = this.zoom
     const lw = Math.max(1, Math.round(this.dpr))
-    const p = this.picture(type)
-    const b = world.boundsOf(type)
+    const p = this.picture(actor)
+    const b = world.boundsOf(actor)
     const left = Math.round(this.ox + (x + b.x) * z)
     const top = Math.round(this.oy + (y + b.y) * z)
     const w = Math.round(b.w * z)

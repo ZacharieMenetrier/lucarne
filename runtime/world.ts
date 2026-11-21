@@ -1,11 +1,14 @@
 // The world: the game's actors, the camera, and the order in which they update and draw.
 //
-//   class Hero extends Actor {
-//     update() { this.move(input.x, input.y) }     // 60 times per second
-//     draw() { screen.sprite(sprite('hero'), 0, 0) } // around itself: (0, 0) is where it is
+//   export default class Hero extends Actor {          // actors/hero.ts
+//     speed = 1.25                                     // a variable (see values.ts)
+//     create() { camera.follow(this) }                 // once its values are set
+//     update() { this.move(input.x * this.speed, 0) }  // 60 times per second
+//     draw() { screen.sprite(sprite('hero'), 0, 0) }   // around itself: (0, 0) is where it is
 //   }
-//   const hero = new Hero(100, 80)                  // creating an actor puts it in the world
-//   camera.follow(hero)
+//
+// Actors are created with `spawn(Hero, { x: 100, y: 80 })`, or placed on a map. Either way
+// the engine creates it, sets its values (see "Actor files" below), then calls `create()`.
 //
 // Actors update 60 times per second, in the order they were created. Displays refresh at
 // other rates (120 Hz, 144 Hz…), so each displayed frame draws every actor between where it
@@ -16,6 +19,7 @@
 import { collide, type Box } from './collision'
 import { drawMaps, mapAt, placements, solidsIn, type Rect } from './maps'
 import { attachScreen, beginDraw, endDraw, setOrigin, screen, screenScale } from './screen'
+import { checkValues, copyValue, variablesOf, type Value, type Variable } from './values'
 
 /** Where the engine keeps its own state on each actor (a symbol: games never see it). */
 const track = Symbol('lucarne')
@@ -38,8 +42,15 @@ let created = 0
 let anyRemoved = false
 
 /**
- * Something in the game's world. Extend it; creating one puts it in the world.
+ * How the actor being constructed is made: by `spawn`, into the world, or by `probe`, to
+ * read its code's defaults and leave the world as it is. Null: by `new`, which is refused.
+ */
+let constructing: 'world' | 'probe' | null = null
+
+/**
+ * Something in the game's world. Extend it, and create one with `spawn`.
  *
+ * - `create()` runs once, when its values are set: what a constructor would do.
  * - `update()` runs 60 times per second, for every actor, in the order they were created.
  *   An actor created during an update gets its first update on the next one.
  * - `draw()` draws the actor around itself: (0, 0) is its position, where a sprite drawn
@@ -52,8 +63,15 @@ let anyRemoved = false
  */
 export class Actor {
   /** Position in the world, in game pixels (fractions are fine). */
-  x: number
-  y: number
+  x = 0
+  y = 0
+  /**
+   * Its box: `{ x, y, width, height }` in game pixels, (x, y) its top left relative to the
+   * actor's position. Walls stop it, and so do the boxes of other actors. Null: it goes
+   * through everything, and nothing bumps into it. Drawn on the Actors page; the code may
+   * change it as the game runs (a hero crouching), for this actor alone.
+   */
+  box: Box | null = null
   /**
    * While a modal actor is in the world (a menu, a dialogue), the world stops: only the
    * last modal actor created updates, the world's clock (`time.ms`) and the camera stop,
@@ -63,21 +81,23 @@ export class Actor {
   /** @internal */
   [track]: Track
 
-  constructor(x = 0, y = 0) {
-    this.x = x
-    this.y = y
-    this[track] = { fromX: x, fromY: y, jumped: true, removed: false, order: created++, shownY: y }
-    actors.push(this)
+  /**
+   * Not called by the game: `spawn` creates actors. A constructor runs before the values
+   * set in the editor, which would make them lie to it; `create()` runs after them.
+   */
+  constructor() {
+    if (!constructing) {
+      throw new Error(`Actors are created with spawn(${new.target.name}, { x, y }), not with new.`)
+    }
+    this[track] = { fromX: 0, fromY: 0, jumped: true, removed: false, order: 0, shownY: 0 }
+    if (constructing === 'world') {
+      this[track].order = created++
+      actors.push(this)
+    }
   }
 
-  /**
-   * Its box, drawn on the Actors page (actors.json): `{ x, y, width, height }` in game
-   * pixels, (x, y) its top left relative to the actor's position. Walls stop it, and so do
-   * the boxes of other actors. Null: it goes through everything, and nothing bumps into it.
-   */
-  get box(): Box | null {
-    return boxOf(this.constructor)
-  }
+  /** Called once, when the actor is created and its values are set. */
+  create(): void {}
 
   /** Called 60 times per second. */
   update(): void {}
@@ -132,51 +152,169 @@ export class Actor {
   }
 }
 
-// --- Boxes ------------------------------------------------------------------
+/** A class of actors: created by `spawn`, never with `new`. */
+export type ActorType<T extends Actor = Actor> = new () => T
+
+/** What `spawn` can set on an actor: its position, its box, and its class's own fields. */
+export type Values<T extends Actor> = Partial<Omit<T, keyof Actor>> & { x?: number; y?: number; box?: Box | null }
+
+/**
+ * Creates an actor in the world: its code's defaults, then the values set in the editor
+ * (its actor files, see below), then `values`, then its `create()`. Returns it.
+ *
+ *   spawn(Villager, { x: 40, y: 96, lines: ['Nice weather.'] })
+ *   spawn(Dialogue, { pages: ['Hello!'] })
+ */
+export function spawn<T extends Actor>(Type: ActorType<T>, values?: Values<T>): T {
+  const actor = construct(Type, 'world')
+  setValues(actor, actorValues(Type))
+  if (values) Object.assign(actor, values)
+  const k = actor[track]
+  k.fromX = actor.x
+  k.fromY = actor.y
+  k.shownY = actor.y
+  actor.create()
+  return actor
+}
+
+function construct<T extends Actor>(Type: ActorType<T>, how: 'world' | 'probe'): T {
+  const before = constructing
+  constructing = how
+  try {
+    return new Type()
+  } finally {
+    constructing = before
+  }
+}
+
+/** Sets checked values on an actor, each a copy of its own: no two share a list or a box. */
+function setValues(actor: Actor, values: Record<string, Value>) {
+  for (const [name, v] of Object.entries(values)) (actor as unknown as Record<string, Value>)[name] = copyValue(v)
+}
+
+// --- Actor files ------------------------------------------------------------
 //
-// Boxes are drawn on the Actors page and saved in actors.json by the name a class is
-// exported under (the name maps place it by), so the game's code writes none. They are
-// tied to the classes once the code has run, and looked up lazily: actors created by the
-// code's top level, before that, get theirs too. A class with no box of its own takes its
-// parent's: a class that is not exported (so cannot be drawn on) still has a body.
+// An actor is a pair of files named alike: actors/<name>.ts exports its class (the code
+// declares), actors/<name>.json holds the values set in the editor for every actor of that
+// kind (the editor sets), its box among them. The name is the file's: maps place an actor
+// by it. game.js registers the classes before the game's other code runs, so that actors
+// spawned at the top level of code/main.ts get their values too.
+//
+// A class gets the values of every actor file on its way up to Actor, the nearest last:
+// a guard that extends the villager is a villager with its own differences. A class
+// defined in code/ (a helper, a dialogue) has no file, and only its code's defaults.
 
-/** Boxes by export name, as read from actors.json. */
-let boxesByName: Record<string, Box> = {}
-/** Boxes by class, tied once the code has run (see `setActorBoxes`). */
-let ownBoxes = new WeakMap<Function, Box>()
-/** Each class's box, own or inherited, worked out on first use. */
-let resolved = new WeakMap<Function, Box | null>()
+/** Each actor file's values, by name, as read: checked when first used. */
+let files: Record<string, Record<string, unknown>> = {}
+/** The classes of actors/*.ts, by name, and the other way round. */
+let classes = new Map<string, ActorType>()
+let names = new WeakMap<Function, string>()
+/** Worked out on first use: a class's variables, and its values from its actor files. */
+let variablesCache = new WeakMap<Function, Variable[]>()
+let valuesCache = new WeakMap<Function, Record<string, Value>>()
 
-/** Called by the editor before the game's code runs, with actors.json's boxes. */
-export function setBoxes(boxes: Record<string, Box>) {
-  boxesByName = boxes
-  ownBoxes = new WeakMap()
-  resolved = new WeakMap()
+/** Called by the editor before the game's code runs, with every actors/<name>.json. */
+export function setActorFiles(values: Record<string, Record<string, unknown>>) {
+  files = values
+  classes = new Map()
+  names = new WeakMap()
+  variablesCache = new WeakMap()
+  valuesCache = new WeakMap()
 }
 
-/** Ties the boxes to the classes the game's code exports, once it has run. */
-export function linkBoxes(types: ReadonlyMap<string, ActorType>) {
-  ownBoxes = new WeakMap()
-  resolved = new WeakMap()
-  for (const [name, Type] of types) {
-    const b = boxesByName[name]
-    if (b) ownBoxes.set(Type, Object.freeze({ x: b.x, y: b.y, width: b.width, height: b.height }))
-  }
-}
-
-function boxOf(type: Function): Box | null {
-  let b = resolved.get(type)
-  if (b !== undefined) return b
-  b = null
-  for (let c: Function | null = type; c && c !== Actor; c = Object.getPrototypeOf(c)) {
-    const own = ownBoxes.get(c)
-    if (own) {
-      b = own
-      break
+/**
+ * Called by game.js (see server/build.mjs) with the default export of each actors/*.ts,
+ * by file name, before the game's other code runs.
+ */
+export function registerActors(found: Record<string, unknown>) {
+  for (const [name, Type] of Object.entries(found)) {
+    if (typeof Type !== 'function' || !(Type.prototype instanceof Actor)) {
+      throw new Error(`actors/${name}.ts must end with \`export default class … extends Actor\` (or a class extending one).`)
     }
+    classes.set(name, Type as ActorType)
+    names.set(Type, name)
   }
-  resolved.set(type, b)
-  return b
+}
+
+/** The classes of actors/*.ts, by name: what maps place. */
+export function actorClasses(): ReadonlyMap<string, ActorType> {
+  return classes
+}
+
+/** The name of a class's actor file, or null for a class that has none. */
+export function actorName(Type: Function): string | null {
+  return names.get(Type) ?? null
+}
+
+/** The names of the actor files a class inherits from, the nearest first (not its own). */
+export function actorParents(Type: Function): string[] {
+  const out: string[] = []
+  for (let c = Object.getPrototypeOf(Type); c && c !== Actor; c = Object.getPrototypeOf(c)) {
+    const n = names.get(c)
+    if (n) out.push(n)
+  }
+  return out
+}
+
+/**
+ * Creates an actor outside the world, with its code's defaults only: to read its variables,
+ * or for the editor to draw it with values of its own.
+ */
+export function probe<T extends Actor>(Type: ActorType<T>, values: Record<string, Value> = {}): T {
+  const actor = construct(Type, 'probe')
+  setValues(actor, values)
+  return actor
+}
+
+/** A class's variables, with its code's defaults (see values.ts). */
+export function actorVariables(Type: ActorType): Variable[] {
+  let v = variablesCache.get(Type)
+  if (!v) {
+    v = variablesOf(probe(Type))
+    variablesCache.set(Type, v)
+  }
+  return v
+}
+
+/** The values a class gets from its actor files, checked, the nearest file last. Throws on
+ * a value its class does not declare, or of the wrong kind. */
+export function actorValues(Type: Function): Record<string, Value> {
+  let out = valuesCache.get(Type)
+  if (out) return out
+  out = {}
+  const chain: Function[] = []
+  for (let c: Function | null = Type; c && c !== Actor; c = Object.getPrototypeOf(c)) if (names.has(c)) chain.unshift(c)
+  for (const c of chain) {
+    const name = names.get(c)!
+    const own = files[name]
+    if (own) Object.assign(out, checkValues(own, actorVariables(c as ActorType), `actors/${name}.json`, name))
+  }
+  valuesCache.set(Type, out)
+  return out
+}
+
+/**
+ * Checks every actor file, then creates every actor placed on the maps, map by map, with
+ * its values from the map. Called once the game's code has run, before `start()`: the
+ * actors code/main.ts spawns at its top level come first. A file that sets what its class
+ * does not declare, or a map that places an actor with no actors/<name>.ts, is an error to
+ * fix, rather than a value or an actor silently missing.
+ */
+export function placeActors() {
+  for (const name of Object.keys(files)) {
+    const Type = classes.get(name)
+    if (!Type) throw new Error(`actors/${name}.json has no actors/${name}.ts: write the actor's code, or delete the file.`)
+    actorValues(Type)
+  }
+  for (const p of placements()) {
+    const Type = classes.get(p.actor)
+    if (!Type) {
+      const known = [...classes.keys()].join(', ') || 'none'
+      throw new Error(`maps/${p.map}.json places a ${p.actor}, but there is no actors/${p.actor}.ts (the actors: ${known}).`)
+    }
+    const values = checkValues(p.values, actorVariables(Type), `maps/${p.map}.json`, p.actor)
+    spawn(Type, { ...values, x: p.x, y: p.y } as Values<Actor>)
+  }
 }
 
 /** The actor moving (its own box is not a wall to it). */
@@ -260,44 +398,9 @@ export function settleCamera() {
   cameraJumped = true
 }
 
-/** A class of actors the editor can place on a map: created with `new Type(x, y)`. */
-export type ActorType = new (x: number, y: number) => Actor
-
-/**
- * The actor classes a game's code exports (from `code/main.ts`), by the name they are
- * exported under: the names maps place them by. Exporting a class is what makes it
- * placeable; nothing else declares it. The export name is used rather than the class's
- * own name, which a bundler may change.
- */
-export function actorTypes(exports: Record<string, unknown>): Map<string, ActorType> {
-  const out = new Map<string, ActorType>()
-  for (const [name, value] of Object.entries(exports)) {
-    if (typeof value === 'function' && value.prototype instanceof Actor) out.set(name, value as ActorType)
-  }
-  return out
-}
-
-/**
- * Creates every actor placed on the maps, with `new Type(x, y)` at its place in the world.
- * Called once the game's code has run (its classes exist then) and before `start()`: the
- * actors the code creates at its top level come first, then the placed ones, map by map.
- * A map that places a class the code does not export is an error, to fix in the code or
- * on the map, rather than an actor silently missing.
- */
-export function placeActors(types: ReadonlyMap<string, ActorType>) {
-  for (const p of placements()) {
-    const Type = types.get(p.type)
-    if (!Type) {
-      const known = [...types.keys()].join(', ') || 'none'
-      throw new Error(`maps/${p.map}.json places a ${p.type}, but code/main.ts exports no actor class named ${p.type} (it exports: ${known}).`)
-    }
-    new Type(p.x, p.y)
-  }
-}
-
 /**
  * Draws one actor by itself on a canvas of `width` × `height` game pixels (one canvas
- * pixel each), its position at (x, y): the editor's picture of a class of actors. Draws
+ * pixel each), its position at (x, y): the editor's picture of an actor. Draws
  * nothing else, and leaves the screen detached.
  */
 export function drawActorOn(actor: Actor, canvas: HTMLCanvasElement | OffscreenCanvas, width: number, height: number, x: number, y: number) {

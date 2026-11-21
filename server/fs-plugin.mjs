@@ -5,7 +5,7 @@
 //   GET    /__lucarne/fs?path=…         → raw content (404 if missing)
 //   PUT    /__lucarne/fs?path=…         → writes the request body
 //   DELETE /__lucarne/fs?path=…         → deletes the file
-//   POST   /__lucarne/build             → rebuilds game.js from code/ → { ok, error?, missing? }
+//   POST   /__lucarne/build             → rebuilds game.js from actors/ and code/ → { ok, error?, missing? }
 //
 // Paths are relative to the game folder. Paths that leave it, and paths that
 // go through a hidden entry (.git, .env…), are rejected.

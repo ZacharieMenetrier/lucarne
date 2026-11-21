@@ -4,10 +4,10 @@
 //     update() { this.move(input.x, input.y) }   // slides along walls by itself
 //   }
 //
-// An actor's box is drawn on the Actors page and saved in actors.json, by class name: the
-// code writes nothing. It is a rectangle placed around the actor's feet (its position, the
-// origin of its sprite), the same on every frame: a box that changed with the animation
-// would push the actor into walls.
+// An actor's box is drawn on the Actors page and saved in its actor file
+// (actors/<name>.json): the code writes nothing. It is a rectangle placed around the actor's
+// feet (its position, the origin of its sprite), the same on every frame: a box that
+// changed with the animation would push the actor into walls.
 //
 // The walls are given by the caller (see `move` in world.ts): the solid parts of tiles,
 // everything outside the maps, and the boxes of the other actors. A move goes along x,

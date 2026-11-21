@@ -19,6 +19,21 @@ should get the right behavior by writing nothing. This is a requirement for ever
   them.
 - When you notice an existing option that a convention could replace, propose removing it.
 
+## The code declares, the editor sets
+
+An actor is `actors/<name>.ts` (its class: behavior and each variable's default) and
+`actors/<name>.json` (the values set in the editor, the box among them); a map holds where
+each one starts and its own values. A value is the code's default, then the parents'
+files, the actor's file, the map, `spawn`'s values: the last set wins (`runtime/values.ts`).
+
+- Anything the editor sets is data, never written into the code; anything the code declares
+  gets its default there, never in a file. A new engine-level fact about actors becomes a
+  variable on `Actor` (like `box`), not a new file or setting.
+- A default in the code may not be what the game uses: check the actor's file and the maps,
+  or `lucarne.actors()`, before reasoning from it.
+- Reuse goes through inheritance (`extends` another actor) and plain functions in `code/`.
+  There are no components.
+
 ## Working with AI
 
 Lucarne is developed AI first: an AI must be able to run, play and check everything itself.

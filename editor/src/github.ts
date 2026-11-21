@@ -53,11 +53,11 @@ export function isEditorFile(path: string) {
     path === 'game.json' ||
     path === 'palette.json' ||
     path === 'board.json' ||
-    path === 'actors.json' ||
     path === 'game.js' ||
     /^sprites\/[^/]+\.(png|json)$/.test(path) ||
     /^tiles\/[^/]+\.(png|json)$/.test(path) ||
     /^maps\/[^/]+\.json$/.test(path) ||
+    /^actors\/[^/]+\.json$/.test(path) ||
     /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path)
   )
 }
@@ -246,6 +246,7 @@ export async function syncWithGitHub(
     ...(await storage.list('fonts')).map((n) => `fonts/${n}`),
     ...(await storage.list('tiles')).map((n) => `tiles/${n}`),
     ...(await storage.list('maps')).map((n) => `maps/${n}`),
+    ...(await storage.list('actors')).map((n) => `actors/${n}`),
   ].filter(isEditorFile)
   for (const path of localPaths) {
     const data = await storage.read(path)

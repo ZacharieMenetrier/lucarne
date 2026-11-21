@@ -1,15 +1,17 @@
-// The game's classes of actors, as the world editor shows them to place on maps.
+// The game's actors, as the Actors page and the world editor show them: one per actor file
+// (actors/<name>.ts), with what its code declares.
 //
-// The classes live in the game's code, so the editor runs it: game.js is built (on Mac),
-// its top-level code runs, and every class it exports that extends Actor is a kind of
-// actor to place. Each one is created once at (0, 0), never updated, and drawn by its own
-// `draw()`: the editor shows exactly what the game's first frame shows, with no picture to
-// choose for the editor. Modal actors (a menu, a dialogue) are UI, not actors on a map:
-// they are left out.
+// The classes live in the game's code, so the editor runs it: game.js is built (on Mac), it
+// registers the actor files, and its top-level code runs. Each actor is then created once
+// outside the world, with its code's defaults (its variables) and with the values of its
+// actor files (its picture), never updated, and drawn by its own `draw()`: the editor
+// shows exactly what the game's first frame shows, with no picture to choose for the
+// editor.
 
 import { resetTime } from '../../runtime/time'
 import { spriteFramesOf, type SpriteFrame } from '../../runtime/screen'
-import { drawActorOn, resetWorld, type Actor } from '../../runtime/world'
+import type { Variable } from '../../runtime/values'
+import { actorClasses, actorParents, actorValues, actorVariables, drawActorOn, probe, resetWorld, type Actor } from '../../runtime/world'
 import type { Rect } from './bitmap'
 import { fetchGameCode, importGame, isPlaying, loadGameData, useEngine } from './play'
 import type { Project } from './project'
@@ -29,11 +31,15 @@ export interface ActorPicture {
 }
 
 export interface ActorKind {
-  /** The name it is exported under: what maps place it by. */
+  /** Its file's name: what maps place it by. */
   name: string
+  /** The actors it extends, the nearest first: their files' values come before its own. */
+  parents: string[]
+  /** What its code declares, with its defaults, the box first (see runtime/values.ts). */
+  variables: Variable[]
   /** Its picture; null when it draws nothing (a spawner, a trigger). */
   picture: ActorPicture | null
-  /** Why it could not be created or drawn. */
+  /** Why it could not be created or drawn, or what is wrong in its files' values. */
   error?: string
 }
 
@@ -49,8 +55,8 @@ export type ActorKinds =
 const CANVAS = 256
 
 /**
- * The game's classes of actors, with their pictures. Null when a game is playing: the
- * engine runs one game at a time, and this runs the game's code.
+ * The game's actors, with their pictures, as saved (save the actor files first). Null when
+ * a game is playing: the engine runs one game at a time, and this runs the game's code.
  */
 export function loadActorKinds(project: Project): Promise<ActorKinds | null> {
   return useEngine(async () => {
@@ -62,17 +68,24 @@ export function loadActorKinds(project: Project): Promise<ActorKinds | null> {
       await loadGameData(project)
       resetWorld()
       resetTime()
-      const { types } = await importGame(got.code)
+      await importGame(got.code)
       const kinds: ActorKind[] = []
-      for (const [name, Type] of types) {
-        resetWorld()
+      for (const [name, Type] of actorClasses()) {
+        const kind: ActorKind = { name, parents: actorParents(Type), variables: [], picture: null }
         try {
-          const actor = new Type(0, 0)
-          if (actor.modal) continue
-          kinds.push({ name, picture: pictureOf(actor) })
+          kind.variables = actorVariables(Type)
+          // A value its files set wrong is said, and drawn without: it is fixed on the page.
+          let values = {}
+          try {
+            values = actorValues(Type)
+          } catch (err) {
+            kind.error = (err as Error).message ?? String(err)
+          }
+          kind.picture = pictureOf(probe(Type, values))
         } catch (err) {
-          kinds.push({ name, picture: null, error: (err as Error).message ?? String(err) })
+          kind.error = (err as Error).message ?? String(err)
         }
+        kinds.push(kind)
       }
       return { kinds: kinds.sort((a, b) => a.name.localeCompare(b.name)) }
     } catch (err) {

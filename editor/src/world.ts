@@ -5,12 +5,17 @@
 // cells of the game's tile size. Maps are moved and resized like sprites on the board, and
 // never overlap. Undo covers every map.
 //
-// The page works in one of three modes, each with its own tools: Tiles (paint the maps),
-// Actors (place the game's actors on them) and Maps (move and resize the maps). Only what
-// the mode is about reacts to the pointer: painting under a villager never grabs it.
+// The page works in one of two modes, each with its own tools: Tiles (paint the maps) and
+// Maps (arrange the world: the game's actors on the maps, and the maps themselves). Only
+// what the mode is about reacts to the pointer: painting under a villager never grabs it.
+// In Maps, each tool does one thing: Select takes actors (a drag on the ground draws a box
+// around them), Place drops them, the Eraser removes them, and Move map moves and resizes
+// the maps; a map cannot be dragged by accident while selecting actors. One selection holds
+// either actors or a map, whatever the tool: the page's list selects both.
 //
-// Actors (instances of the game's actor classes) are kept by the map they start in, in
-// pixels from its top left, so they move with it. They snap to half tiles by their
+// Actors (instances of the game's actor files, actors/<name>.ts) are kept by the map they
+// start in, in pixels from its top left, so they move with it, with the values set for
+// each one alone. They snap to half tiles by their
 // sprite's frame, or go anywhere by the pixel (see `snapActor`), are selected one by one or with a box, and can be
 // dragged, nudged, copied and pasted from one map to another.
 //
@@ -19,16 +24,16 @@
 import { rectContains, linePoints, type Point, type Rect } from './bitmap'
 import { boundsOf, findFreeSpot, overlaps, resizeRect, type Corner } from './board'
 import { History } from './history'
-import { cellAt, cloneMap, insideMap, reframe, renameTileset, setCell, tilesetsOf, type GameMap, type Placement, type Tile } from './map'
+import { sameValue } from './actors'
+import { cellAt, cloneMap, clonePlacement, insideMap, reframe, renameTileset, setCell, tilesetsOf, type GameMap, type Placement, type Tile } from './map'
 
-export type WorldMode = 'tiles' | 'actors' | 'maps'
+export type WorldMode = 'tiles' | 'maps'
 export type WorldTool = 'tile' | 'eraser' | 'picker' | 'select' | 'place' | 'remove' | 'move'
 
 /** The tools of each mode, in the order the toolbar shows them; the first is its default. */
 export const MODE_TOOLS: Record<WorldMode, WorldTool[]> = {
   tiles: ['tile', 'eraser', 'picker'],
-  actors: ['select', 'place', 'remove'],
-  maps: ['move'],
+  maps: ['select', 'place', 'remove', 'move'],
 }
 
 export function modeOf(tool: WorldTool): WorldMode {
@@ -37,7 +42,7 @@ export function modeOf(tool: WorldTool): WorldMode {
 
 /** A placed actor, where it is in the world (game pixels), and the map that keeps it. */
 export interface PlacedActor {
-  actor: Placement
+  placement: Placement
   map: string
   x: number
   y: number
@@ -92,23 +97,25 @@ export class World {
   hover: Point | null = null
   mode: WorldMode = 'tiles'
   /** The tool last used in each mode: coming back to a mode picks it again. */
-  private lastTool: Record<WorldMode, WorldTool> = { tiles: 'tile', actors: 'select', maps: 'move' }
-  /** The class of actors the Place tool places (by its export name). */
-  actorType: string | null = null
-  /** The actors selected (Actors mode). The very objects in the maps' lists. */
+  private lastTool: Record<WorldMode, WorldTool> = { tiles: 'tile', maps: 'select' }
+  /** The actor the Place tool places (by name). */
+  placing: string | null = null
+  /** The actors selected (Maps mode). The very objects in the maps' lists. */
   selection = new Set<Placement>()
+  /** The map selected (Maps mode), instead of actors: its name and size are shown. */
+  selectedMap: string | null = null
   /** Actors copied (⌘C), from the top left of their feet, in world pixels. */
-  private clipboard: { type: string; x: number; y: number }[] = []
+  private clipboard: Placement[] = []
   /** Where they were copied from, and how many times pasted there (each paste steps aside). */
   private copiedAt: Point = { x: 0, y: 0 }
   private pastes = 0
   /**
-   * A class's picture around its feet, in game pixels (what the view draws and what a
+   * An actor's picture around its feet, in game pixels (what the view draws and what a
    * click hits), or null when it has none: the world has no knowledge of the game's code.
    */
-  actorBounds: (type: string) => Rect | null = () => null
-  /** The frame of a class's sprite around its feet, which it snaps by, or null (see `snapActor`). */
-  actorFrame: (type: string) => Rect | null = () => null
+  actorBounds: (actor: string) => Rect | null = () => null
+  /** The frame of an actor's sprite around its feet, which it snaps by, or null (see `snapActor`). */
+  actorFrame: (actor: string) => Rect | null = () => null
   /** Actors snap to half tiles (the default), or go anywhere by the pixel (the page's toggle). */
   snap = true
 
@@ -212,10 +219,10 @@ export class World {
   // -------------------------------------------------------------------------
   // Actors
 
-  /** What a class covers around its feet: its picture, or one tile standing on them. */
-  boundsOf(type: string): Rect {
+  /** What an actor covers around its feet: its picture, or one tile standing on them. */
+  boundsOf(actor: string): Rect {
     const t = this.tileSize
-    return this.actorBounds(type) ?? { x: -t / 2, y: -t, w: t, h: t }
+    return this.actorBounds(actor) ?? { x: -t / 2, y: -t, w: t, h: t }
   }
 
   /** Every placed actor, from the back to the front (by y, as the game draws them). */
@@ -223,50 +230,48 @@ export class World {
     const out: PlacedActor[] = []
     for (const name of [...this.maps.keys()].sort()) {
       const m = this.maps.get(name)!
-      for (const actor of m.actors) out.push({ actor, map: name, x: m.x * this.tileSize + actor.x, y: m.y * this.tileSize + actor.y })
+      for (const t of m.actors) out.push({ placement: t, map: name, x: m.x * this.tileSize + t.x, y: m.y * this.tileSize + t.y })
     }
     return out.sort((a, b) => a.y - b.y)
   }
 
   /** A placed actor, found in the maps (null if it is no longer in any). */
-  placed(actor: Placement): PlacedActor | null {
+  placed(t: Placement): PlacedActor | null {
     for (const [name, m] of this.maps) {
-      if (m.actors.includes(actor)) return { actor, map: name, x: m.x * this.tileSize + actor.x, y: m.y * this.tileSize + actor.y }
+      if (m.actors.includes(t)) return { placement: t, map: name, x: m.x * this.tileSize + t.x, y: m.y * this.tileSize + t.y }
     }
     return null
   }
 
   /** The rectangle a placed actor covers, in world pixels. */
   actorRect(p: PlacedActor): Rect {
-    const b = this.boundsOf(p.actor.type)
+    const b = this.boundsOf(p.placement.actor)
     return { x: p.x + b.x, y: p.y + b.y, w: b.w, h: b.h }
   }
 
   /** The actor in front under a world point. */
   actorAt(p: Point): Placement | null {
     const all = this.actorsInDepthOrder()
-    for (let i = all.length - 1; i >= 0; i--) if (rectContains(this.actorRect(all[i]), p)) return all[i].actor
+    for (let i = all.length - 1; i >= 0; i--) if (rectContains(this.actorRect(all[i]), p)) return all[i].placement
     return null
   }
 
-  /** How many actors of a class are placed, in every map. */
-  countOf(type: string): number {
+  /** How many of an actor are placed, in every map. */
+  countOf(actor: string): number {
     let n = 0
-    for (const m of this.maps.values()) for (const t of m.actors) if (t.type === type) n++
+    for (const m of this.maps.values()) for (const t of m.actors) if (t.actor === actor) n++
     return n
   }
 
-  /** Selects every actor of a class (to find them, or move them all). */
-  selectAllOf(type: string) {
+  /** Selects every placed one of an actor (to find them, or move them all). */
+  selectAllOf(actor: string) {
     this.setTool('select')
-    this.selection = new Set(this.actorsInDepthOrder().filter((p) => p.actor.type === type).map((p) => p.actor))
-    this.emit()
+    this.select(this.actorsInDepthOrder().filter((p) => p.placement.actor === actor).map((p) => p.placement))
   }
 
   /** Selects every placed actor. */
   selectAll() {
-    this.selection = new Set(this.actorsInDepthOrder().map((p) => p.actor))
-    this.emit()
+    this.select(this.actorsInDepthOrder().map((p) => p.placement))
   }
 
   /** The step actors snap to: half a tile (a whole one when the tile size is odd). */
@@ -283,9 +288,9 @@ export class World {
    * draws no sprite has its feet on half tiles. With snapping off, the feet go on the
    * nearest pixel.
    */
-  snapActor(type: string, feet: Point): Point {
+  snapActor(actor: string, feet: Point): Point {
     if (!this.snap) return { x: Math.round(feet.x), y: Math.round(feet.y) }
-    const f = this.actorFrame(type) ?? { x: 0, y: 0 }
+    const f = this.actorFrame(actor) ?? { x: 0, y: 0 }
     const step = this.actorStep
     return { x: Math.round((feet.x + f.x) / step) * step - f.x, y: Math.round((feet.y + f.y) / step) * step - f.y }
   }
@@ -295,9 +300,9 @@ export class World {
    * middle, so a one-tile sprite fills the cell under the pointer. With no frame, the
    * pointer holds its feet, and it stands on the half tile under the pointer.
    */
-  placeAt(type: string, p: Point): Point {
-    const f = this.actorFrame(type)
-    if (f) return this.snapActor(type, { x: p.x - f.x - f.w / 2, y: p.y - f.y - f.h / 2 })
+  placeAt(actor: string, p: Point): Point {
+    const f = this.actorFrame(actor)
+    if (f) return this.snapActor(actor, { x: p.x - f.x - f.w / 2, y: p.y - f.y - f.h / 2 })
     if (!this.snap) return { x: Math.round(p.x), y: Math.round(p.y) }
     const step = this.actorStep
     return { x: Math.round(p.x / step) * step, y: Math.ceil(p.y / step) * step }
@@ -311,11 +316,33 @@ export class World {
     return null
   }
 
-  /** Chooses the class of actors to place: the Place tool takes over. */
-  setActorType(type: string | null) {
-    this.actorType = type
-    if (type) this.setTool('place')
+  /** Chooses the actor to place: the Place tool takes over. */
+  setPlacing(actor: string | null) {
+    this.placing = actor
+    if (actor) this.setTool('place')
     else this.emit()
+  }
+
+  /**
+   * Sets a value on every selected actor, for each of them alone, or clears it (undefined):
+   * they take their actor file's again. One undo brings them all back.
+   */
+  setValue(name: string, value: unknown) {
+    if (this.drag || !this.selection.size) return
+    const befores = new Map<string, GameMap>()
+    for (const [mapName, m] of this.maps) {
+      for (const t of m.actors) {
+        if (!this.selection.has(t)) continue
+        const before = t.values[name]
+        if (before === undefined ? value === undefined : value !== undefined && sameValue(before, value)) continue
+        if (!befores.has(mapName)) befores.set(mapName, cloneMap(m))
+        if (value === undefined) delete t.values[name]
+        else t.values[name] = structuredClone(value)
+      }
+    }
+    if (!befores.size) return
+    this.record(befores)
+    this.emit()
   }
 
   /** Removes the selected actors. */
@@ -347,7 +374,7 @@ export class World {
     if (!placed.length) return
     const left = Math.min(...placed.map((p) => p.x))
     const top = Math.min(...placed.map((p) => p.y))
-    this.clipboard = placed.sort((a, b) => a.y - b.y).map((p) => ({ type: p.actor.type, x: p.x - left, y: p.y - top }))
+    this.clipboard = placed.sort((a, b) => a.y - b.y).map((p) => ({ ...clonePlacement(p.placement), x: p.x - left, y: p.y - top }))
     this.copiedAt = { x: left, y: top }
     this.pastes = 0
   }
@@ -369,14 +396,14 @@ export class World {
     const hv = this.hover
     if (hv) {
       const top = this.clipboard[0]
-      const feet = this.placeAt(top.type, hv)
+      const feet = this.placeAt(top.actor, hv)
       if (this.mapForActor(feet)) at = { x: feet.x - top.x, y: feet.y - top.y }
     }
     if (!at) {
       this.pastes++
       at = { x: this.copiedAt.x + this.pastes * step, y: this.copiedAt.y + this.pastes * step }
     }
-    this.add(this.clipboard.map((c) => ({ type: c.type, x: at.x + c.x, y: at.y + c.y })))
+    this.add(this.clipboard.map((c) => ({ ...clonePlacement(c), x: at.x + c.x, y: at.y + c.y })))
   }
 
   /** Copies the selected actors and pastes them one step aside. */
@@ -390,7 +417,7 @@ export class World {
   }
 
   /** Adds actors at world positions, in the maps they stand in, and selects them. */
-  private add(list: { type: string; x: number; y: number }[]) {
+  private add(list: Placement[]) {
     const befores = new Map<string, GameMap>()
     const added = new Set<Placement>()
     for (const c of list) {
@@ -398,15 +425,16 @@ export class World {
       if (!name) continue
       const m = this.maps.get(name)!
       if (!befores.has(name)) befores.set(name, cloneMap(m))
-      const actor = { type: c.type, x: c.x - m.x * this.tileSize, y: c.y - m.y * this.tileSize }
-      m.actors.push(actor)
-      added.add(actor)
+      const t = { ...c, x: c.x - m.x * this.tileSize, y: c.y - m.y * this.tileSize }
+      m.actors.push(t)
+      added.add(t)
     }
     if (!added.size) {
       this.onMessage('Actors go inside a map')
       return
     }
-    this.setTool('actors' === this.mode ? this.tool : 'select')
+    this.setTool(this.mode === 'maps' && this.tool !== 'move' ? this.tool : 'select')
+    this.selectedMap = null
     this.selection = added
     this.record(befores)
     this.emit()
@@ -464,6 +492,7 @@ export class World {
     this.selection = new Set([...this.selection].filter((t) => !this.maps.get(name)?.actors.includes(t)))
     this.maps.delete(name)
     if (this.active === name) this.active = null
+    if (this.selectedMap === name) this.selectedMap = null
     this.history.rewrite((c) => {
       const maps = c.maps.filter((m) => m.name !== name)
       return maps.length ? { maps } : null
@@ -478,6 +507,7 @@ export class World {
     m.name = to
     this.maps.set(to, m)
     if (this.active === from) this.active = to
+    if (this.selectedMap === from) this.selectedMap = to
     const rename = (g: GameMap) => ({ ...g, name: to })
     this.history.rewrite((c) => ({
       maps: c.maps.map((m) => (m.name === from ? { name: to, before: rename(m.before), after: rename(m.after) } : m)),
@@ -508,7 +538,35 @@ export class World {
     this.tool = tool
     this.mode = modeOf(tool)
     this.lastTool[this.mode] = tool
-    if (this.mode !== 'actors') this.selection = new Set()
+    if (this.mode !== 'maps') {
+      this.selection = new Set()
+      this.selectedMap = null
+    }
+    this.emit()
+  }
+
+  /** Selects a map (Maps mode): the actors selected are left. */
+  selectMap(name: string | null) {
+    if (name !== null && !this.maps.has(name)) return
+    if (this.mode !== 'maps') this.setMode('maps')
+    this.selection = new Set()
+    this.selectedMap = name
+    if (name) this.active = name
+    this.emit()
+  }
+
+  /** Selects actors (Maps mode), in place of the map or actors selected. */
+  select(actors: Iterable<Placement>) {
+    if (this.mode !== 'maps') this.setMode('maps')
+    this.selection = new Set(actors)
+    this.selectedMap = null
+    this.emit()
+  }
+
+  /** Selects nothing. */
+  deselect() {
+    this.selection = new Set()
+    this.selectedMap = null
     this.emit()
   }
 
@@ -540,7 +598,7 @@ export class World {
 
   down(p: Point) {
     if (this.drag) return
-    if (this.mode === 'actors') {
+    if (this.mode === 'maps' && this.tool !== 'move') {
       this.downActors(p)
       this.emit()
       return
@@ -552,6 +610,9 @@ export class World {
     const c = this.cellOf(p)
     switch (this.tool) {
       case 'move':
+        // The map moved is the one selected.
+        this.selection = new Set()
+        this.selectedMap = name
         this.drag = { kind: 'place', name, start: { x: p.x, y: p.y }, origin: { x: map.x, y: map.y }, before: cloneMap(map) }
         break
       case 'tile':
@@ -573,16 +634,16 @@ export class World {
   }
 
   /**
-   * Actors mode. Place: a click drops the class picked, in the cell under the pointer (see
+   * Maps mode, but Move map. Place: a click drops the class picked, in the cell under the pointer (see
    * `placeAt`). Select: a click on an actor selects it (Shift: adds or removes it) and
    * dragging moves the whole selection; dragging on the ground draws a box that selects
    * what it touches.
    */
   private downActors(p: Point) {
     if (this.tool === 'place') {
-      if (!this.actorType) return this.onMessage('Pick an actor in the Actors panel first')
-      const at = this.placeAt(this.actorType, p)
-      this.add([{ type: this.actorType, ...at }])
+      if (!this.placing) return this.onMessage('Pick an actor in the Actors panel first')
+      const at = this.placeAt(this.placing, p)
+      this.add([{ actor: this.placing, ...at, values: {} }])
       return
     }
     if (this.tool === 'remove') {
@@ -591,6 +652,7 @@ export class World {
       return
     }
     const hit = this.actorAt(p)
+    this.selectedMap = null
     if (!hit) {
       const base = this.shift ? new Set(this.selection) : new Set<Placement>()
       this.selection = new Set(base)
@@ -633,6 +695,8 @@ export class World {
   startResize(name: string, corner: Corner, p: Point) {
     if (this.drag || !this.maps.has(name)) return
     this.active = name
+    this.selection = new Set()
+    this.selectedMap = name
     const origin = this.cellRect(name)!
     this.drag = { kind: 'resize', name, corner, start: { x: p.x, y: p.y }, origin, rect: origin, before: cloneMap(this.maps.get(name)!) }
     this.emit()
@@ -645,7 +709,7 @@ export class World {
     if (d.kind === 'actors') {
       // The actor held snaps (see `snapActor`); the others keep their places relative to it.
       const from = d.from.get(d.held)!
-      const to = this.snapActor(d.held.type, { x: from.x + p.x - d.start.x, y: from.y + p.y - d.start.y })
+      const to = this.snapActor(d.held.actor, { x: from.x + p.x - d.start.x, y: from.y + p.y - d.start.y })
       const delta = { x: to.x - from.x, y: to.y - from.y }
       // Outside every map: they wait at their last place inside.
       this.moveActors(d.from, delta, d.befores)
@@ -663,7 +727,7 @@ export class World {
       this.selection = new Set(d.base)
       for (const t of this.actorsInDepthOrder()) {
         const r = this.actorRect(t)
-        if (r.x < box.x + box.w && box.x < r.x + r.w && r.y < box.y + box.h && box.y < r.y + r.h) this.selection.add(t.actor)
+        if (r.x < box.x + box.w && box.x < r.x + r.w && r.y < box.y + box.h && box.y < r.y + r.h) this.selection.add(t.placement)
       }
       return this.emit()
     }
@@ -771,14 +835,16 @@ export class World {
   }
 
   private restore(states: [string, GameMap][]) {
+    // The maps become copies: the actors selected are found again by their place in them,
+    // so that undoing a value keeps the actors it was set on selected.
+    const selected = [...this.maps].flatMap(([name, m]) => m.actors.flatMap((t, i) => (this.selection.has(t) ? [[name, i] as const] : [])))
     for (const [name, map] of states) {
       if (!this.maps.has(name)) continue
       this.maps.set(name, cloneMap(map))
       this.active = name
       this.onEdit(name)
     }
-    // The maps are copies now: the actors selected are no longer in them.
-    this.selection = new Set()
+    this.selection = new Set(selected.map(([name, i]) => this.maps.get(name)!.actors[i]).filter((t) => t !== undefined))
     this.emit()
   }
 }
@@ -786,7 +852,7 @@ export class World {
 function sameMap(a: GameMap, b: GameMap) {
   if (a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height) return false
   if (a.actors.length !== b.actors.length) return false
-  if (a.actors.some((t, i) => t.type !== b.actors[i].type || t.x !== b.actors[i].x || t.y !== b.actors[i].y)) return false
+  if (a.actors.some((t, i) => t.actor !== b.actors[i].actor || t.x !== b.actors[i].x || t.y !== b.actors[i].y || !sameValue(t.values, b.actors[i].values))) return false
   return a.cells.every((c, i) => {
     const o = b.cells[i]
     return c === o || (!!c && !!o && c.tileset === o.tileset && c.col === o.col && c.row === o.row)
