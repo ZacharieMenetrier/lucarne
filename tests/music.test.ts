@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MusicEditor } from '../editor/src/music'
 import { emptySong, serializeSong, songSteps, type Song } from '../runtime/sound'
 
-function editor(song: Song = { tempo: 120, tracks: [{ instrument: 'flute', notes: [] }, { instrument: 'snare', notes: [] }] }) {
+function editor(song: Song = { tempo: 120, time: '4/4', tracks: [{ instrument: 'flute', notes: [] }, { instrument: 'snare', notes: [] }] }) {
   const ed = new MusicEditor()
   ed.isDrum = (i) => i === 'snare'
   const saved: string[] = []
@@ -91,6 +91,27 @@ describe('music editor', () => {
     ed.removeTrack(1)
     expect(song.tracks.length).toBe(1)
     expect(ed.track).toBe(0)
+  })
+
+  it('changes the time, undoably, without moving notes', () => {
+    const { ed, song } = editor()
+    ed.place(4, 72)
+    ed.setTime('3/4')
+    expect([song.time, song.tracks[0].notes[0].step]).toEqual(['3/4', 4])
+    ed.undo()
+    expect(song.time).toBe('4/4')
+  })
+
+  it('replaces the part sung over with the take, undone at once', () => {
+    const { ed, song } = editor()
+    ed.place(0, 60, 6)
+    ed.place(8, 62, 2)
+    ed.place(16, 64, 2)
+    ed.sing([{ step: 4, pitch: 67, length: 2 }, { step: 6, pitch: 69, length: 4 }], 4, 10)
+    expect(ed.selection.size).toBe(2)
+    expect(song.tracks[0].notes.map((n) => [n.step, n.pitch, n.length])).toEqual([[0, 60, 4], [4, 67, 2], [6, 69, 4], [16, 64, 2]])
+    ed.undo()
+    expect(song.tracks[0].notes.map((n) => [n.step, n.pitch, n.length])).toEqual([[0, 60, 6], [8, 62, 2], [16, 64, 2]])
   })
 
   it('keeps an undo per song', () => {

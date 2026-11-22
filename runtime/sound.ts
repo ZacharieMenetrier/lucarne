@@ -12,19 +12,31 @@
 // Repeating 5 waves rather than a longer stretch: a held note becomes a steady tone, where a
 // second of the recording repeated would come back like a rhythm (chosen by ear).
 //
-// A song (songs/<name>.json) is a tempo and tracks; a track is one instrument and its notes,
-// on a fixed grid of sixteenth notes, never two of the same pitch at once. It ends with the
-// bar of its last note, and loops.
+// A song (songs/<name>.json) is a tempo, a time signature and tracks; a track is one
+// instrument and its notes, on a fixed grid of sixteenth notes, never two of the same pitch at
+// once. It ends with the bar of its last note, and loops.
 //
 // This file has no imports: the script that prepares the built-in instruments runs it with
 // plain Node.
 
 /** Every instrument plays at 16 kHz, 8-bit: what the import stores, and what is heard. */
 export const RATE = 16000
-/** The grid: a note starts and lasts a whole number of sixteenth notes. */
-export const STEPS_PER_BEAT = 4
-export const STEPS_PER_BAR = 16
-/** A song's tempo, in beats per minute, when its file sets none. */
+/** The grid: a note starts and lasts a whole number of sixteenth notes, four to a quarter. */
+export const STEPS_PER_QUARTER = 4
+/**
+ * The time signatures a song can have: how many steps make a bar, and a beat. Only these
+ * three, the ones songs are written in; 2/4 reads well enough as 4/4, and 12/8 as 6/8. The
+ * tempo always counts quarter notes, whatever the time, so changing it never changes speed.
+ */
+export const TIMES = {
+  '4/4': { bar: 16, beat: 4 },
+  '3/4': { bar: 12, beat: 4 },
+  '6/8': { bar: 12, beat: 6 },
+} as const
+export type Time = keyof typeof TIMES
+/** A song's time when its file sets none. */
+export const DEFAULT_TIME: Time = '4/4'
+/** A song's tempo, in quarter notes per minute, when its file sets none. */
 export const DEFAULT_TEMPO = 120
 export const MIN_TEMPO = 40
 export const MAX_TEMPO = 300
@@ -75,19 +87,26 @@ export interface Track {
 
 export interface Song {
   tempo: number
+  time: Time
   tracks: Track[]
 }
 
 export function emptySong(): Song {
-  return { tempo: DEFAULT_TEMPO, tracks: [] }
+  return { tempo: DEFAULT_TEMPO, time: DEFAULT_TIME, tracks: [] }
 }
+
+/** Steps in one bar, and in one beat, of the song. */
+export const barSteps = (song: Song) => TIMES[song.time].bar
+export const beatSteps = (song: Song) => TIMES[song.time].beat
 
 /** Reads a song file. A note is [step, "C5", length], or [step] on a drum. */
 export function parseSong(text: string): Song {
-  const raw = JSON.parse(text) as { tempo?: unknown; tracks?: unknown }
+  const raw = JSON.parse(text) as { tempo?: unknown; time?: unknown; tracks?: unknown }
   if (!raw || typeof raw !== 'object') throw new Error('a song is an object')
   const tempo = raw.tempo === undefined ? DEFAULT_TEMPO : Number(raw.tempo)
   if (!Number.isFinite(tempo) || tempo < MIN_TEMPO || tempo > MAX_TEMPO) throw new Error(`tempo must be between ${MIN_TEMPO} and ${MAX_TEMPO}`)
+  const time = raw.time === undefined ? DEFAULT_TIME : raw.time
+  if (typeof time !== 'string' || !(time in TIMES)) throw new Error(`time must be one of ${Object.keys(TIMES).join(', ')}`)
   const tracks: Track[] = []
   for (const t of Array.isArray(raw.tracks) ? raw.tracks : []) {
     const track = t as { instrument?: unknown; notes?: unknown }
@@ -109,7 +128,7 @@ export function parseSong(text: string): Song {
     }
     tracks.push({ instrument: track.instrument, notes: untangle(notes) })
   }
-  return { tempo, tracks }
+  return { tempo, time: time as Time, tracks }
 }
 
 export function sortNotes(notes: Note[]): Note[] {
@@ -138,12 +157,13 @@ export function untangle(notes: Note[]): Note[] {
   return notes
 }
 
-/** The song file: one track per line, the tempo only when it is not the default. */
+/** The song file: one track per line, the tempo and time only when not the default. */
 export function serializeSong(song: Song): string {
   const note = (n: Note) => (n.pitch === null ? `[${n.step}]` : `[${n.step}, "${noteName(n.pitch)}", ${n.length}]`)
   const tracks = song.tracks.map((t) => `    { "instrument": ${JSON.stringify(t.instrument)}, "notes": [${untangle(t.notes.map((n) => ({ ...n }))).map(note).join(', ')}] }`)
   const lines = ['{']
   if (song.tempo !== DEFAULT_TEMPO) lines.push(`  "tempo": ${song.tempo},`)
+  if (song.time !== DEFAULT_TIME) lines.push(`  "time": "${song.time}",`)
   lines.push(tracks.length ? `  "tracks": [\n${tracks.join(',\n')}\n  ]` : '  "tracks": []', '}')
   return lines.join('\n') + '\n'
 }
@@ -155,11 +175,12 @@ export const noteEnd = (n: Note) => n.step + (n.pitch === null ? 1 : n.length)
 export function songSteps(song: Song): number {
   let end = 0
   for (const t of song.tracks) for (const n of t.notes) end = Math.max(end, noteEnd(n))
-  return Math.max(1, Math.ceil(end / STEPS_PER_BAR)) * STEPS_PER_BAR
+  const bar = barSteps(song)
+  return Math.max(1, Math.ceil(end / bar)) * bar
 }
 
 /** Seconds per sixteenth. */
-export const stepSeconds = (tempo: number) => 60 / tempo / STEPS_PER_BEAT
+export const stepSeconds = (tempo: number) => 60 / tempo / STEPS_PER_QUARTER
 
 // ---------------------------------------------------------------------------
 // Instruments

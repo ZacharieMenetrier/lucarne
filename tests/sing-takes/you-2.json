@@ -1,0 +1,251 @@
+{
+  "id": "you-2",
+  "recordedAt": "2026-11-22T11:24:09.397Z",
+  "seconds": 25.2865306122449,
+  "sampleRate": 44100,
+  "tempo": 90,
+  "countInBeats": 4,
+  "songStartSeconds": 3.172471655328798,
+  "clicksSeconds": [
+    0.5058049886621315,
+    1.1724716553287982,
+    1.8391383219954647,
+    2.5058049886621316,
+    3.172471655328798,
+    3.8391383219954647,
+    4.505804988662131,
+    5.172471655328797,
+    5.839138321995464,
+    6.505804988662131,
+    7.172471655328797,
+    7.839138321995464,
+    8.505804988662131,
+    9.172471655328797,
+    9.839138321995463,
+    10.505804988662131,
+    11.172471655328797,
+    11.839138321995463,
+    12.505804988662131,
+    13.172471655328797,
+    13.839138321995463,
+    14.505804988662131,
+    15.172471655328797,
+    15.839138321995463,
+    16.50580498866213,
+    17.172471655328795,
+    17.839138321995463,
+    18.50580498866213,
+    19.172471655328795,
+    19.839138321995463,
+    20.50580498866213,
+    21.172471655328795,
+    21.839138321995463,
+    22.50580498866213,
+    23.172471655328795,
+    23.839138321995463
+  ],
+  "latency": {
+    "microphone": null,
+    "output": 0.01596371882086168,
+    "base": 0.0029024943310657597
+  },
+  "microphone": {
+    "echoCancellation": true,
+    "sampleRate": 44100
+  },
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.2 Safari/605.1.15",
+  "melody": [
+    {
+      "step": 0,
+      "pitch": 60,
+      "length": 4,
+      "word": "Frè"
+    },
+    {
+      "step": 4,
+      "pitch": 62,
+      "length": 4,
+      "word": "re"
+    },
+    {
+      "step": 8,
+      "pitch": 64,
+      "length": 4,
+      "word": "Jac"
+    },
+    {
+      "step": 12,
+      "pitch": 60,
+      "length": 4,
+      "word": "ques"
+    },
+    {
+      "step": 16,
+      "pitch": 60,
+      "length": 4,
+      "word": "frè"
+    },
+    {
+      "step": 20,
+      "pitch": 62,
+      "length": 4,
+      "word": "re"
+    },
+    {
+      "step": 24,
+      "pitch": 64,
+      "length": 4,
+      "word": "Jac"
+    },
+    {
+      "step": 28,
+      "pitch": 60,
+      "length": 4,
+      "word": "ques"
+    },
+    {
+      "step": 32,
+      "pitch": 64,
+      "length": 4,
+      "word": "Dor"
+    },
+    {
+      "step": 36,
+      "pitch": 65,
+      "length": 4,
+      "word": "mez"
+    },
+    {
+      "step": 40,
+      "pitch": 67,
+      "length": 8,
+      "word": "vous"
+    },
+    {
+      "step": 48,
+      "pitch": 64,
+      "length": 4,
+      "word": "dor"
+    },
+    {
+      "step": 52,
+      "pitch": 65,
+      "length": 4,
+      "word": "mez"
+    },
+    {
+      "step": 56,
+      "pitch": 67,
+      "length": 8,
+      "word": "vous"
+    },
+    {
+      "step": 64,
+      "pitch": 67,
+      "length": 2,
+      "word": "Son"
+    },
+    {
+      "step": 66,
+      "pitch": 69,
+      "length": 2,
+      "word": "nez"
+    },
+    {
+      "step": 68,
+      "pitch": 67,
+      "length": 2,
+      "word": "les"
+    },
+    {
+      "step": 70,
+      "pitch": 65,
+      "length": 2,
+      "word": "ma"
+    },
+    {
+      "step": 72,
+      "pitch": 64,
+      "length": 4,
+      "word": "ti"
+    },
+    {
+      "step": 76,
+      "pitch": 60,
+      "length": 4,
+      "word": "nes"
+    },
+    {
+      "step": 80,
+      "pitch": 67,
+      "length": 2,
+      "word": "son"
+    },
+    {
+      "step": 82,
+      "pitch": 69,
+      "length": 2,
+      "word": "nez"
+    },
+    {
+      "step": 84,
+      "pitch": 67,
+      "length": 2,
+      "word": "les"
+    },
+    {
+      "step": 86,
+      "pitch": 65,
+      "length": 2,
+      "word": "ma"
+    },
+    {
+      "step": 88,
+      "pitch": 64,
+      "length": 4,
+      "word": "ti"
+    },
+    {
+      "step": 92,
+      "pitch": 60,
+      "length": 4,
+      "word": "nes"
+    },
+    {
+      "step": 96,
+      "pitch": 60,
+      "length": 4,
+      "word": "Ding"
+    },
+    {
+      "step": 100,
+      "pitch": 55,
+      "length": 4,
+      "word": "daing"
+    },
+    {
+      "step": 104,
+      "pitch": 60,
+      "length": 8,
+      "word": "dong"
+    },
+    {
+      "step": 112,
+      "pitch": 60,
+      "length": 4,
+      "word": "ding"
+    },
+    {
+      "step": 116,
+      "pitch": 55,
+      "length": 4,
+      "word": "daing"
+    },
+    {
+      "step": 120,
+      "pitch": 60,
+      "length": 8,
+      "word": "dong"
+    }
+  ]
+}

@@ -28,13 +28,19 @@ export class MusicPlayer {
 
   /** The audio context, made on the first sound (a browser only starts one after a click or a key). */
   audio(): AudioContext {
-    try {
-      // Plays even with an iPhone's or iPad's silent switch on.
-      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession
-      if (session) session.type = 'playback'
-    } catch {}
-    this.ctx ??= new AudioContext()
-    if (this.ctx.state === 'suspended') void this.ctx.resume()
+    if (!this.ctx) {
+      try {
+        // Plays even with an iPhone's or iPad's silent switch on (set once: singing switches
+        // it to play-and-record for a while, microphone.ts).
+        const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession
+        if (session) session.type = 'playback'
+      } catch {}
+      this.ctx = new AudioContext()
+    }
+    // Not only "suspended": Safari also has "interrupted", which is where a change of audio
+    // session (singing, microphone.ts) or another app taking the sound leaves it, and it
+    // stays silent until resumed.
+    if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') void this.ctx.resume()
     return this.ctx
   }
 
@@ -63,6 +69,27 @@ export class MusicPlayer {
     if (!this.voice || !this.ctx || !this.duration) return null
     const t = (((this.ctx.currentTime - this.t0) % this.duration) + this.duration) % this.duration
     return t / this.step
+  }
+
+  /**
+   * A click on every beat from `at` (audio clock) on, the first of each bar louder, until
+   * stopped: what singing follows. `bar` is one bar of the click, already rendered.
+   */
+  click(bar: Float32Array, at: number): () => void {
+    const ctx = this.audio()
+    const buffer = ctx.createBuffer(1, Math.max(1, bar.length), ctx.sampleRate)
+    buffer.getChannelData(0).set(bar)
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.loop = true
+    source.connect(ctx.destination)
+    source.start(at)
+    return () => {
+      try {
+        source.stop()
+      } catch {}
+      source.disconnect()
+    }
   }
 
   /** One note alone, as it is placed. */

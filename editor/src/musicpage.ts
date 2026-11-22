@@ -7,7 +7,7 @@
 // filled with its color, the others as thin outlines of theirs, over it, so that no note
 // hides another (they are not edited there: a track is picked in the list). A drum has no pitch: its track is a row
 // of its own, under the notes. The ruler on top shows the bars, and where playing starts.
-// Under the grid, the tempo and Play: the song loops while it is painted, and a note plays
+// Under the grid, the tempo, the time and Play: the song loops while it is painted, and a note plays
 // as it is placed.
 
 import type { App } from './app'
@@ -18,6 +18,7 @@ import { MusicEditor, type MusicTool } from './music'
 import { MusicPlayer } from './musicplayer'
 import { createActionsMenu, createEditorSwitch, createMenu, currentPage, goTo, onPage } from './menu'
 import { isPlaying } from './play'
+import { singTake } from './singdialog'
 import type { Project } from './project'
 import { NAME_RE } from './sprite'
 import {
@@ -25,13 +26,14 @@ import {
   LOWEST,
   MAX_TEMPO,
   MIN_TEMPO,
-  STEPS_PER_BAR,
-  STEPS_PER_BEAT,
+  DEFAULT_TIME,
+  TIMES,
   noteEnd,
   noteName,
   songSteps,
   stepSeconds,
   type Instrument,
+  type Time,
   type Note,
   type Song,
 } from '../../runtime/sound'
@@ -88,7 +90,10 @@ export class MusicPage {
   private readonly tracksPanel: HTMLElement
   private readonly songList: HTMLElement
   private readonly tempo: HTMLInputElement
+  private readonly time: HTMLSelectElement
   private readonly playButton: HTMLButtonElement
+  private readonly recordButton: HTMLButtonElement
+  private singing = false
   private readonly length: HTMLElement
   private readonly songs = new Map<string, Song>()
   private readonly pending = new Set<string>()
@@ -131,17 +136,26 @@ export class MusicPage {
       max: MAX_TEMPO,
       step: 1,
       inputMode: 'numeric',
-      'aria-label': 'Tempo, in beats per minute',
+      'aria-label': 'Tempo, in quarter notes per minute',
       onchange: () => this.setTempo(),
       onkeydown: (e: KeyboardEvent) => {
         e.stopPropagation()
         if (e.key === 'Enter') this.tempo.blur()
       },
     })
+    // The time signature: it only sets where the bar and beat lines fall; notes never move.
+    this.time = h('select', {
+      'aria-label': 'Time signature',
+      onchange: () => this.editor.setTime(this.time.value as Time),
+    }, ...Object.keys(TIMES).map((t) => h('option', { value: t }, t)))
     this.playButton = h('button', { type: 'button', className: 'small icon-btn music-play', title: 'Play / stop (Space)', 'aria-label': 'Play', onclick: () => {
       this.togglePlay()
       // Space plays and stops: the button must not keep the focus, or it would click too.
       this.playButton.blur()
+    } })
+    this.recordButton = h('button', { type: 'button', className: 'small icon-btn music-record', title: 'Sing into the track (R)', 'aria-label': 'Sing into the track', html: icon('record'), onclick: () => {
+      void this.sing()
+      this.recordButton.blur()
     } })
     this.length = h('span', { className: 'music-length' })
     const tools = h('nav', { className: 'world-tools', 'aria-label': 'Tools' },
@@ -165,8 +179,9 @@ export class MusicPage {
         this.stage = h('main', { className: 'music-stage' }, this.canvas, this.empty),
         h('div', { className: 'music-transport' },
           h('div', { className: 'bar-side' },
-            h('label', { className: 'music-tempo', title: 'Beats per minute' }, 'Tempo', this.tempo)),
-          this.playButton,
+            h('label', { className: 'music-tempo', title: 'Quarter notes per minute' }, 'Tempo', this.tempo),
+            h('label', { className: 'music-tempo' }, 'Time', this.time)),
+          h('div', { className: 'music-buttons' }, this.playButton, this.recordButton),
           h('div', { className: 'bar-side end' }, this.length)),
         h('aside', { className: 'world-side' },
           this.tracksPanel = h('section', { className: 'music-tracks' },
@@ -276,7 +291,7 @@ export class MusicPage {
     const name = await this.askName('New song', this.uniqueSong('song'), 'Create')
     if (!name) return
     // A first track, to paint notes right away.
-    const song: Song = { tempo: 120, tracks: [{ instrument: 'flute', notes: [] }] }
+    const song: Song = { tempo: 120, time: DEFAULT_TIME, tracks: [{ instrument: 'flute', notes: [] }] }
     try {
       await this.project.saveSong(name, song)
     } catch (err) {
@@ -371,37 +386,55 @@ export class MusicPage {
 
   // --- Tracks -----------------------------------------------------------------
 
-  /** Asks for an instrument: the engine's and the game's, each one can be heard first. */
-  private async pickInstrument(title: string, current?: string): Promise<string | null> {
+  /**
+   * Asks for an instrument: the engine's and the game's. Pressing a name plays it and
+   * selects it, so instruments can be heard one after the other before choosing; pressing
+   * the selected one again, or `ok`, takes it.
+   */
+  private async pickInstrument(title: string, ok: string, current?: string): Promise<string | null> {
+    let chosen = current ?? null
     const list = h('div', { className: 'instrument-list' })
+    const items: HTMLButtonElement[] = []
     const group = (label: string, drums: boolean) => {
-      const items = this.instruments.list().filter((i) => i.drum === drums)
-      if (!items.length) return
+      const insts = this.instruments.list().filter((i) => i.drum === drums)
+      if (!insts.length) return
       list.append(h('h3', {}, label))
       const grid = h('div', { className: 'instrument-grid' })
-      for (const i of items) {
-        grid.append(h('div', { className: 'instrument-item' + (i.name === current ? ' active' : '') },
-          h('button', { type: 'submit', value: i.name, className: 'instrument-name', title: i.own ? `${i.name} (this game’s)` : i.name }, i.name, i.own ? h('small', {}, 'game') : null),
-          h('button', {
-            type: 'button',
-            className: 'small icon-btn instrument-listen',
-            title: `Listen to ${i.name}`,
-            'aria-label': `Listen to ${i.name}`,
-            html: icon('play'),
-            onclick: () => this.listen(i.name),
-          })))
+      for (const i of insts) {
+        const item = h('button', {
+          type: 'button',
+          className: 'instrument-item' + (i.name === chosen ? ' active' : ''),
+          onclick: () => {
+            if (chosen === i.name) return dialog.close(i.name)
+            chosen = i.name
+            for (const b of items) b.classList.toggle('active', b === item)
+            add.disabled = false
+            this.listen(i.name)
+          },
+        }, i.name, i.own ? h('small', {}, 'game') : null)
+        items.push(item)
+        grid.append(item)
       }
       list.append(grid)
     }
     if (!this.instruments.list().length) list.append(h('p', { className: 'muted' }, 'Loading the instruments…'))
     group('Instruments', false)
     group('Drums', true)
-    const res = await openDialog(title, list, [
+    const res = openDialog(title, list, [
       { label: 'Import…', value: 'import', kind: 'left' },
       { label: 'Cancel', value: 'cancel' },
+      { label: ok, value: 'ok', kind: 'primary' },
     ], undefined, 'instrument-dialog')
-    if (res === 'import') return this.importInstrument()
-    return res
+    // The dialog opens with nothing focused: a name lit by focus would read as chosen.
+    const dialog = list.closest('dialog')!
+    const add = dialog.querySelector<HTMLButtonElement>('button[value="ok"]')!
+    add.disabled = !chosen
+    dialog.tabIndex = -1
+    dialog.focus()
+    const value = await res
+    if (value === 'import') return this.importInstrument()
+    if (value === 'ok') return chosen
+    return value
   }
 
   private listen(name: string) {
@@ -415,14 +448,14 @@ export class MusicPage {
 
   private async newTrack() {
     if (!this.editor.song) return toast('Create a song first.')
-    const name = await this.pickInstrument('New track')
+    const name = await this.pickInstrument('New track', 'Add')
     if (name) this.editor.addTrack(name)
   }
 
   private async changeInstrument(i: number) {
     const t = this.editor.song?.tracks[i]
     if (!t) return
-    const name = await this.pickInstrument('Instrument', t.instrument)
+    const name = await this.pickInstrument('Instrument', 'Change', t.instrument)
     if (name && name !== t.instrument) this.editor.setInstrument(i, name)
   }
 
@@ -466,6 +499,38 @@ export class MusicPage {
     }, 60)
   }
 
+  // --- Singing ------------------------------------------------------------------
+
+  /**
+   * Sings into the selected track, in a popup (singdialog.ts): the take replaces the track
+   * from the start marker to the end of its last note, and comes selected. One undo.
+   */
+  private async sing() {
+    const ed = this.editor
+    const song = ed.song
+    const track = ed.current
+    if (!song || !track || this.singing) return
+    this.stop()
+    this.singing = true
+    let notes: Note[] | null
+    try {
+      notes = await singTake(this.player, song, ed.drum, this.instruments.get('claves'))
+    } catch (err) {
+      const e = err as Error
+      console.error('Microphone:', e)
+      return toast(e.name === 'NotAllowedError' ? 'The microphone is not allowed: allow it for this site (and, on a Mac, for the app in System Settings › Privacy › Microphone).' : `No microphone: ${e.message}.`)
+    } finally {
+      this.singing = false
+    }
+    if (!notes) return
+    // Something else was opened meanwhile: the take is dropped.
+    if (ed.song !== song || ed.current !== track) return
+    if (!notes.length) return toast('No voice heard.')
+    const from = ed.start
+    const placed = notes.map((n) => ({ ...n, step: n.step + from }))
+    ed.sing(placed, from, Math.max(...placed.map(noteEnd)))
+  }
+
   /** Draws the playhead while playing, and keeps it in view. */
   private tick() {
     cancelAnimationFrame(this.frame)
@@ -493,7 +558,7 @@ export class MusicPage {
   private setTempo() {
     const v = Math.round(Number(this.tempo.value))
     if (!Number.isFinite(v) || v < MIN_TEMPO || v > MAX_TEMPO) {
-      toast(`Tempo: between ${MIN_TEMPO} and ${MAX_TEMPO} beats per minute.`)
+      toast(`Tempo: between ${MIN_TEMPO} and ${MAX_TEMPO} quarter notes per minute.`)
       this.renderTransport()
       return
     }
@@ -518,12 +583,22 @@ export class MusicPage {
     return this.canvas.clientHeight - this.lanesHeight
   }
 
+  /** Steps in a bar and in a beat of the open song. */
+  private get bar(): number {
+    return TIMES[this.editor.song?.time ?? DEFAULT_TIME].bar
+  }
+
+  private get beat(): number {
+    return TIMES[this.editor.song?.time ?? DEFAULT_TIME].beat
+  }
+
   /** How many steps the grid shows: the song and a little more, at least the canvas. */
   private get gridSteps() {
     const song = this.editor.song
-    const steps = song ? songSteps(song) + AFTER * STEPS_PER_BAR : STEPS_PER_BAR
+    const bar = this.bar
+    const steps = song ? songSteps(song) + AFTER * bar : bar
     const visible = Math.ceil((this.canvas.clientWidth - GUTTER + this.sx) / this.stepWidth)
-    return Math.max(steps, Math.ceil(visible / STEPS_PER_BAR) * STEPS_PER_BAR)
+    return Math.max(steps, Math.ceil(visible / bar) * bar)
   }
 
   private clampScroll() {
@@ -842,6 +917,7 @@ export class MusicPage {
       else if (k === 'b') ed.setTool('pencil')
       else if (k === 'e') ed.setTool('eraser')
       else if (k === 'm') ed.setTool('select')
+      else if (k === 'r' && !e.repeat) void this.sing()
       else if (e.key === 'Delete' || e.key === 'Backspace') ed.deleteSelection()
       else if (e.key.startsWith('Arrow') && ed.selection.size) this.nudge(e.key, e.shiftKey)
       else if (e.key === 'Escape') {
@@ -859,7 +935,7 @@ export class MusicPage {
     const notes = [...ed.selection]
     const from = new Map(notes.map((n) => [n, { step: n.step, pitch: n.pitch }]))
     const n = big ? 1 : 0
-    const [ds, dp] = { ArrowLeft: [-(n ? STEPS_PER_BAR : 1), 0], ArrowRight: [n ? STEPS_PER_BAR : 1, 0], ArrowUp: [0, n ? 12 : 1], ArrowDown: [0, n ? -12 : -1] }[key] ?? [0, 0]
+    const [ds, dp] = { ArrowLeft: [-(n ? this.bar : 1), 0], ArrowRight: [n ? this.bar : 1, 0], ArrowUp: [0, n ? 12 : 1], ArrowDown: [0, n ? -12 : -1] }[key] ?? [0, 0]
     ed.move(notes, from, ds, dp)
     if (notes.length === 1 && dp) this.hear(notes[0].pitch, notes[0].length)
   }
@@ -888,6 +964,8 @@ export class MusicPage {
     const song = this.editor.song
     if (document.activeElement !== this.tempo) this.tempo.value = song ? String(song.tempo) : ''
     this.tempo.disabled = !song
+    this.time.value = song?.time ?? DEFAULT_TIME
+    this.time.disabled = !song
     this.playButton.disabled = !song
     const state = this.player.playing ? 'stop' : 'play'
     if (this.playButton.dataset.state !== state) {
@@ -896,7 +974,8 @@ export class MusicPage {
       this.playButton.setAttribute('aria-label', state === 'stop' ? 'Stop' : 'Play')
     }
     this.playButton.classList.toggle('active', this.player.playing)
-    const bars = song ? songSteps(song) / STEPS_PER_BAR : 0
+    this.recordButton.disabled = !song || !this.editor.current
+    const bars = song ? songSteps(song) / this.bar : 0
     const seconds = song ? songSteps(song) * stepSeconds(song.tempo) : 0
     this.length.textContent = song ? `${bars} bar${bars > 1 ? 's' : ''} · ${seconds.toFixed(1)} s` : ''
   }
@@ -992,13 +1071,18 @@ export class MusicPage {
     // After the end of the song: darker, it does not play.
     ctx.fillStyle = 'rgba(0, 0, 0, 0.22)'
     ctx.fillRect(X(steps), RULER, W, lanesTop - RULER)
-    // The cells, faint like the pixel grid; a stronger line at every bar and under every C.
+    // The cells, faint like the pixel grid; a little stronger at every beat (what tells 3/4
+    // from 6/8), stronger again at every bar and under every C.
+    const bar = this.bar
+    const beat = this.beat
     ctx.fillStyle = 'rgba(255, 255, 255, 0.035)'
     for (let p = LOWEST; p <= HIGHEST; p++) ctx.fillRect(GUTTER, Math.round(Y(p) + ROW) - px, W, px)
     if (SW >= 8) for (let s = first; s <= last; s++) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)'
+    for (let s = Math.ceil(first / beat) * beat; s <= last; s += beat) if (s % bar) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.11)'
     for (let p = LOWEST; p <= HIGHEST; p++) if (p % 12 === 0) ctx.fillRect(GUTTER, Math.round(Y(p) + ROW) - px, W, px)
-    for (let s = Math.ceil(first / STEPS_PER_BAR) * STEPS_PER_BAR; s <= last; s += STEPS_PER_BAR) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
+    for (let s = Math.ceil(first / bar) * bar; s <= last; s += bar) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
 
     // The row and step under the pointer.
     if (this.hover && this.hover.pitch !== null && !ed.drum && !this.drag) {
@@ -1060,10 +1144,10 @@ export class MusicPage {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)'
         if (SW >= 8) for (let s = first; s <= last; s++) ctx.fillRect(Math.round(X(s)), y, px, LANE)
         ctx.fillStyle = 'rgba(255, 255, 255, 0.11)'
-        for (let s = Math.ceil(first / STEPS_PER_BAR) * STEPS_PER_BAR; s <= last; s += STEPS_PER_BAR) ctx.fillRect(Math.round(X(s)), y, px, LANE)
+        for (let s = Math.ceil(first / bar) * bar; s <= last; s += bar) ctx.fillRect(Math.round(X(s)), y, px, LANE)
         // Beats, so the hits can be counted.
         ctx.fillStyle = 'rgba(255, 255, 255, 0.06)'
-        for (let s = Math.ceil(first / STEPS_PER_BEAT) * STEPS_PER_BEAT; s <= last; s += STEPS_PER_BEAT) ctx.fillRect(Math.round(X(s)), y + LANE - 4, px, 4)
+        for (let s = Math.ceil(first / beat) * beat; s <= last; s += beat) ctx.fillRect(Math.round(X(s)), y + LANE - 4, px, 4)
         ctx.fillStyle = C.line
         ctx.fillRect(GUTTER, y, W, px)
         const front = track === ed.track
@@ -1157,9 +1241,9 @@ export class MusicPage {
     ctx.font = '11px -apple-system, BlinkMacSystemFont, system-ui, sans-serif'
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
-    for (let s = Math.floor(first / STEPS_PER_BAR) * STEPS_PER_BAR; s <= last; s += STEPS_PER_BAR) {
+    for (let s = Math.floor(first / bar) * bar; s <= last; s += bar) {
       ctx.fillStyle = s < steps ? C.muted : withAlpha(C.muted, 0.45)
-      ctx.fillText(String(s / STEPS_PER_BAR + 1), X(s) + (s === ed.start ? 11 : 5), RULER / 2)
+      ctx.fillText(String(s / bar + 1), X(s) + (s === ed.start ? 11 : 5), RULER / 2)
       ctx.fillStyle = C.line
       ctx.fillRect(Math.round(X(s)), RULER - 7, px, 7)
     }

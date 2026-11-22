@@ -26,6 +26,7 @@ const PATHS: Record<string, string> = {
   frames: 'M320-120v-520h520v520H320Zm60-60h400v-400H380v400ZM120-320v-520h520v100h-60v-40H180v400h140v60H120Z', // stacked frames (custom)
   play: 'M320-200v-560l440 280-440 280Z', // play_arrow
   stop: 'M240-240v-480h480v480H240Z', // stop (filled)
+  record: 'M480-280a200 200 0 1 1 0-400a200 200 0 1 1 0 400Z', // a filled circle (custom, like fiber_manual_record)
   pause: 'M525-200v-560h235v560H525Zm-325 0v-560h235v560H200Z', // pause
   add: 'M450-450H200v-60h250v-250h60v250h250v60H510v250h-60v-250Z', // add
   remove: 'M200-450v-60h560v60H200Z', // remove

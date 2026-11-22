@@ -6,7 +6,7 @@
 // one row of hits, under the notes.
 
 import { History } from './history'
-import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, untangle, type Note, type Song } from '../../runtime/sound'
+import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, untangle, type Note, type Song, type Time } from '../../runtime/sound'
 
 export type MusicTool = 'pencil' | 'eraser' | 'select'
 
@@ -127,6 +127,7 @@ export class MusicEditor {
     if (!change || !this.song || !this.name) return
     const restored = parseSong(change[side])
     this.song.tempo = restored.tempo
+    this.song.time = restored.time
     this.song.tracks = restored.tracks
     this.track = Math.min(this.track, Math.max(0, this.song.tracks.length - 1))
     this.selection.clear()
@@ -181,6 +182,37 @@ export class MusicEditor {
 
   setTempo(tempo: number) {
     this.edit((s) => (s.tempo = tempo))
+  }
+
+  /** Changes how the song is counted: its bars and beats. The notes stay where they are. */
+  setTime(time: Time) {
+    this.edit((s) => (s.time = time))
+  }
+
+  // --- Singing --------------------------------------------------------------
+
+  /**
+   * A take sung into the selected track over the steps from..to: it replaces what was there
+   * (singing a passage again is how it is fixed), and a note that started earlier and still
+   * sounds at `from` stops there. One undo. The notes sung come selected, to be moved as one
+   * if they landed a little off.
+   */
+  sing(notes: Note[], from: number, to: number) {
+    const t = this.current
+    if (!t) return
+    this.begin()
+    const kept: Note[] = []
+    for (const n of t.notes) {
+      if (n.step >= from && n.step < to) continue
+      const copy = { ...n }
+      if (copy.step < from && noteEnd(copy) > from) copy.length = from - copy.step
+      kept.push(copy)
+    }
+    const sung = notes.map((n) => ({ ...n }))
+    t.notes = [...kept, ...sung]
+    this.tool = 'select'
+    this.selection = new Set(sung)
+    this.end()
   }
 
   // --- Notes ----------------------------------------------------------------

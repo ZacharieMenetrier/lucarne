@@ -2006,11 +2006,61 @@ body[data-page='music'] #music-page {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+.music-tempo select {
+  padding: 3px 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
 .music-play {
   width: 40px;
 }
 .music-play.active {
   color: var(--accent);
+}
+.music-buttons {
+  display: flex;
+  gap: 6px;
+}
+.music-record {
+  width: 40px;
+}
+/* Singing a melody (singdialog.ts): the beat, the count, the voice's level. */
+.sing-beats {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+.sing-beat {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--line);
+}
+.sing-beat:first-child {
+  box-shadow: 0 0 0 2px var(--line);
+}
+.sing-beat.on {
+  background: var(--accent);
+}
+dialog p.sing-label {
+  margin: 14px 0;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sing-level {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.sing-level span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--danger);
 }
 .music-length {
   font-size: 12px;
@@ -2055,63 +2105,63 @@ body[data-page='music'] #music-page {
   text-decoration: line-through;
 }
 
-/* The instrument picker: every instrument a button, its name, with a small Listen next to it. */
+/* The instrument picker: plain names. Pressing one plays it and lights it, softly like
+   the World page's selected map; the dialog's button then takes it. */
 dialog.instrument-dialog {
-  width: min(460px, calc(100vw - 32px));
+  width: min(440px, calc(100vw - 32px));
 }
 .instrument-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   max-height: min(60vh, 520px);
   overflow-y: auto;
 }
 .instrument-list h3 {
-  margin: 6px 0 0;
+  margin: 10px 0 2px;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
 }
+.instrument-list h3:first-child {
+  margin-top: 0;
+}
 .instrument-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  gap: 2px;
 }
 .instrument-item {
   display: flex;
   align-items: center;
-  gap: 2px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-}
-.instrument-item:hover {
-  border-color: #4a4a5a;
-}
-.instrument-item.active {
-  border-color: var(--accent);
-}
-.instrument-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
   gap: 6px;
-  text-align: left;
+  min-width: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
   background: transparent;
-  border-color: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.instrument-name small {
+.instrument-item:hover:not(.active) {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.instrument-item.active,
+.instrument-item.active:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.instrument-item:focus {
+  outline: none;
+}
+.instrument-item:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.instrument-item small {
   color: var(--muted);
   font-size: 11px;
-}
-.instrument-listen {
-  flex: none;
-  background: transparent;
-  border-color: transparent;
-}
-.instrument-listen:hover:not(:disabled) {
-  background: var(--panel-2);
 }

@@ -63,7 +63,7 @@ my-game/
   actors/hero.json   its values set in the editor, its box among them, only when it has some
   instruments/lute.wav   an instrument of the game's own: one note, as it plays (16 kHz, 8-bit)
   instruments/lute.json  { "note": "C4" }, the note it was recorded at; none: a drum
-  songs/town.json    a song: its tempo and its tracks of notes (see "Music")
+  songs/town.json    a song: its tempo, its time and its tracks of notes (see "Music")
   code/main.ts       the rest of the game's code, optional: the game itself, helpers
   game.js            built from actors/ and code/ by `lucarne dev`: commit it, never edit it
 ```
@@ -404,7 +404,8 @@ The **Music** page (after World) makes them. It works like the pixel editor: the
 left (pencil, eraser, select), the song in the middle, and on the right the **tracks** (what
 is painted with, like the palette) and the **songs** (like the sprites).
 
-- **The grid** is time from left to right, in sixteenth notes (a line at every bar), and the
+- **The grid** is time from left to right, in sixteenth notes (a line at every beat, a
+  stronger one at every bar), and the
   notes from bottom to top (a line at every octave, its C named). A note starts and lasts a
   whole number of sixteenths. There is no key and no scale: every note is there.
 - **A track is one instrument**, and so one color. Every track is on the grid: the selected
@@ -417,14 +418,30 @@ is painted with, like the palette) and the **songs** (like the sprites).
   by its body to move it, by its end to lengthen it. On a drum's row, a click places or
   takes away a hit. **Select** draws a box: the arrows move the notes (⇧: a bar, an octave),
   ⌘C, ⌘X, ⌘V (where playing starts), ⌘D, Delete. A click on a note's name plays it.
+- **Singing** (the ● button under the grid, or R) writes a melody without placing each note:
+  a popup counts in with a click at the song's tempo (two bars at 120, at least 4 seconds,
+  the time a microphone takes to wake up), then keeps the beat while you sing. Done (Enter,
+  Space or R) turns the whole take into notes on the selected track, its first beat on the
+  marker where playing starts. They replace what was there up to the last note sung
+  (singing a passage again is how it is fixed) and come selected, to be moved if they
+  landed a little off. Each note is a stretch of voice on one semitone, rounded to the
+  nearest one after taking out how sharp or flat the whole take is, and to the sixteenth
+  grid; a slide into a note is that note, and a dip in the voice ("doo doo") starts a new
+  one. On a drum's track, each attack (a clap, "ts", "k") is a hit. The take is one undo;
+  Escape cancels it. The notes stay in the octave sung: ⇧↑ moves them an octave. Humming
+  tracks better than words. The browser only gives the microphone on localhost or https.
 - **The song loops** while it is painted (Space, or Play under the grid), and a note plays as
   it is placed. The ruler on top shows the bars; a click on it sets where playing starts.
-  A song ends with the bar of its last note: it grows as it is painted. Its only setting is
-  its **tempo**, in beats per minute (120 unless set).
+  A song ends with the bar of its last note: it grows as it is painted. It has two
+  settings, under the grid: its **tempo**, in quarter notes per minute (120 unless set),
+  and its **time**: 4/4 (bars of 16 sixteenths, the default), 3/4 (12 sixteenths in 3
+  beats) or 6/8 (12 sixteenths in 2 beats). The time only says where the bars and beats
+  fall: changing it moves no note and changes no speed.
 
 ```json
 {
   "tempo": 90,
+  "time": "6/8",
   "tracks": [
     { "instrument": "harp", "notes": [[0, "C5", 4], [4, "E5", 2], [6, "G5", 2]] },
     { "instrument": "bass-drum", "notes": [[0], [8]] }
@@ -433,7 +450,7 @@ is painted with, like the palette) and the **songs** (like the sprites).
 ```
 
 A note is `[step, pitch, length]` in sixteenths, `[step]` on a drum. The tempo is written
-only when it is not 120.
+only when it is not 120, the time only when it is not 4/4.
 
 **An instrument is the recording of one note.** The engine plays it, and does nothing else:
 
@@ -559,6 +576,7 @@ Editor code lives in `editor/src/`:
 - `inspector.ts`: the variables of an actor, to set (the Actors page and the world page)
 - `music.ts`: the Music page's song, tracks, tools and history — no DOM, tested in `tests/music.test.ts`
 - `musicpage.ts`, `musicplayer.ts`, `instruments.ts`: the Music page, playing a song in a loop, the instruments and their import
+- `sing.ts`: a voice made notes (pitch tracking, notes) — no DOM, tested in `tests/sing.test.ts`; `singdialog.ts` the popup it is sung in, `microphone.ts` hears it
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)

@@ -55,6 +55,7 @@ describe('notes', () => {
 describe('songs', () => {
   const song: Song = {
     tempo: 90,
+    time: '4/4',
     tracks: [
       { instrument: 'flute', notes: [{ step: 4, pitch: 74, length: 2 }, { step: 0, pitch: 72, length: 4 }] },
       { instrument: 'drum', notes: [{ step: 0, pitch: null, length: 1 }, { step: 8, pitch: null, length: 1 }] },
@@ -70,7 +71,7 @@ describe('songs', () => {
   })
 
   it('leaves the default tempo out of the file', () => {
-    expect(serializeSong({ tempo: DEFAULT_TEMPO, tracks: [] })).not.toContain('tempo')
+    expect(serializeSong({ tempo: DEFAULT_TEMPO, time: '4/4', tracks: [] })).not.toContain('tempo')
     expect(parseSong('{"tracks": []}').tempo).toBe(DEFAULT_TEMPO)
   })
 
@@ -81,9 +82,19 @@ describe('songs', () => {
   })
 
   it('ends with the bar of its last note', () => {
-    expect(songSteps({ tempo: 120, tracks: [] })).toBe(16)
+    expect(songSteps({ tempo: 120, time: '4/4', tracks: [] })).toBe(16)
     expect(songSteps(song)).toBe(16)
-    expect(songSteps({ tempo: 120, tracks: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] })).toBe(32)
+    expect(songSteps({ tempo: 120, time: '4/4', tracks: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] })).toBe(32)
+  })
+
+  it('counts bars of 12 steps in 3/4 and 6/8, and keeps the time in the file', () => {
+    const waltz: Song = { tempo: 120, time: '6/8', tracks: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] }
+    expect(songSteps(waltz)).toBe(24)
+    expect(serializeSong(waltz)).toContain('"time": "6/8"')
+    expect(parseSong(serializeSong(waltz)).time).toBe('6/8')
+    expect(serializeSong(song)).not.toContain('time')
+    expect(parseSong('{"tracks": []}').time).toBe('4/4')
+    expect(() => parseSong('{"time": "5/4"}')).toThrow(/time/)
   })
 })
 
@@ -135,7 +146,7 @@ describe('instruments', () => {
 describe('rendering a song', () => {
   const flute = instrument(tone(frequency(72), 1), 72)
   // The last beat of the bar: the song is one bar, two seconds.
-  const song: Song = { tempo: 120, tracks: [{ instrument: 'flute', notes: [{ step: 12, pitch: 72, length: 4 }] }] }
+  const song: Song = { tempo: 120, time: '4/4', tracks: [{ instrument: 'flute', notes: [{ step: 12, pitch: 72, length: 4 }] }] }
 
   it('lasts its whole bars, and what still sounds at the end goes on at the start', () => {
     const out = renderSong(song, () => flute, OUT)
