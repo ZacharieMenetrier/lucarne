@@ -62,8 +62,10 @@ my-game/
   actors/hero.ts     an actor: its code (TypeScript), a class that extends Actor (see "Actors")
   actors/hero.json   its values set in the editor, its box among them, only when it has some
   instruments/lute.wav   an instrument of the game's own: one note, as it plays (16 kHz, 8-bit)
-  instruments/lute.json  { "note": "C4" }, the note it was recorded at; none: a drum
-  songs/town.json    a song: its tempo, its time and its tracks of notes (see "Music")
+  instruments/lute.json  { "note": "C4", "volume": 4 }: the note it was recorded at (none: a
+                         drum) and its volume in dB, each only when it has one
+  instruments/snare.json { "volume": 6 } alone, with no .wav: the engine's snare's volume in this game
+  songs/town.json    a song: its tempo, its time and its instruments' notes (see "Music")
   code/main.ts       the rest of the game's code, optional: the game itself, helpers
   game.js            built from actors/ and code/ by `lucarne dev`: commit it, never edit it
 ```
@@ -401,33 +403,50 @@ one, and the menu's cursor with `cursor`. Their text color is `color`:
 
 Songs are notes, played by recorded instruments: no synthesis, no effects, no settings.
 The **Music** page (after World) makes them. It works like the pixel editor: the tools on the
-left (pencil, eraser, select), the song in the middle, and on the right the **tracks** (what
-is painted with, like the palette) and the **songs** (like the sprites).
+left (pencil, eraser, select), the song in the middle, and on the right the song's
+**instruments** (what is painted with, like the palette) and the **songs** (like the sprites).
 
 - **The grid** is time from left to right, in sixteenth notes (a line at every beat, a
   stronger one at every bar), and the
   notes from bottom to top (a line at every octave, its C named). A note starts and lasts a
   whole number of sixteenths. There is no key and no scale: every note is there.
-- **A track is one instrument**, and so one color. Every track is on the grid: the selected
-  one filled, the others as thin outlines over it, so no note hides another (they are edited
-  by picking their track in the list). Several notes at once on a track are a chord, but a
-  track never covers itself: when a note starts while the same pitch still sounds there,
-  the earlier one stops, as a string struck again starts over. A drum
-  (an instrument without a note) has no pitch: its track is a row of hits, under the notes.
-- **The pencil** places a note of the length last used (drag to make it longer), drags a note
-  by its body to move it, by its end to lengthen it. On a drum's row, a click places or
-  takes away a hit. **Select** draws a box: the arrows move the notes (⇧: a bar, an octave),
+- **A song has each instrument once**, and each one a color. + adds one: a click on a name
+  plays it, as often as wanted, and Add takes it; one already in the song can't be picked.
+  **Replace…** in an instrument's menu plays its notes with another. Every instrument is on
+  the grid: the selected one filled, the others as thin outlines over it, so no note hides
+  another (they are edited by picking them in the list). Several notes at once are a chord,
+  but an instrument never covers itself: when a note starts while the same pitch still
+  sounds there, the earlier one stops, as a string struck again starts over. A drum (an
+  instrument without a note) has no pitch: it is a row of hits, under the notes.
+- **Accompany** (in an instrument's menu) writes chords under the song for that instrument,
+  replacing its notes (one undo). It finds the song's key, then a chord every half bar (every
+  bar in 3/4) among the key's chords: the one whose notes sound the longest there, a note on
+  the beat counting more. Each other instrument (not the drums) has one vote, whatever its
+  number of notes: an accompaniment written before reinforces the melody it follows, without
+  drowning a melody changed since (Accompany it again). A near tie keeps the chord before.
+  The instrument decides how the chords are played, under the melody (the instrument that
+  plays highest): held (a bow, a breath), the chord held, or its root if the instrument is
+  low (recorded under C4); struck or plucked, an arpeggio in eighths, or the root on the
+  chord's first beat and the fifth on the others if it is low. They are notes like any
+  other, to change by hand.
+- **The pencil** places a note of the length last used (drag to make it longer); a click on a
+  note selects it (⇧ adds one or takes it away), dragging its body moves the notes selected,
+  its end lengthens it. On a drum's row, a click places or takes away a hit. **Select** draws
+  a box, or picks notes the same way: the arrows move the notes (⇧: a bar, an octave),
   ⌘C, ⌘X, ⌘V (where playing starts), ⌘D, Delete. A click on a note's name plays it.
 - **Singing** (the ● button under the grid, or R) writes a melody without placing each note:
   a popup counts in with a click at the song's tempo (two bars at 120, at least 4 seconds,
   the time a microphone takes to wake up), then keeps the beat while you sing. Done (Enter,
-  Space or R) turns the whole take into notes on the selected track, its first beat on the
+  Space or R) turns the whole take into notes of the selected instrument, its first beat on the
   marker where playing starts. They replace what was there up to the last note sung
   (singing a passage again is how it is fixed) and come selected, to be moved if they
   landed a little off. Each note is a stretch of voice on one semitone, rounded to the
-  nearest one after taking out how sharp or flat the whole take is, and to the sixteenth
-  grid; a slide into a note is that note, and a dip in the voice ("doo doo") starts a new
-  one. On a drum's track, each attack (a clap, "ts", "k") is a hit. The take is one undo;
+  nearest one after taking out how sharp or flat the whole take is; a slide into a note is
+  that note, and a dip or a consonant ("doo doo", "frère") starts a new one. The take is
+  then cleaned onto the sixteenth grid: moved by how late it was sung (the microphone's
+  delay and the singer's, which the browser does not tell), following a singer who hurries
+  or drags; a note is held over a breath up to the next; a single step glued to a note
+  beside it is part of it. On a drum, each attack (a clap, "ts", "k") is a hit. The take is one undo;
   Escape cancels it. The notes stay in the octave sung: ⇧↑ moves them an octave. Humming
   tracks better than words. The browser only gives the microphone on localhost or https.
 - **The song loops** while it is painted (Space, or Play under the grid), and a note plays as
@@ -442,14 +461,15 @@ is painted with, like the palette) and the **songs** (like the sprites).
 {
   "tempo": 90,
   "time": "6/8",
-  "tracks": [
-    { "instrument": "harp", "notes": [[0, "C5", 4], [4, "E5", 2], [6, "G5", 2]] },
-    { "instrument": "bass-drum", "notes": [[0], [8]] }
-  ]
+  "instruments": {
+    "harp": [[0, "C5", 4], [4, "E5", 2], [6, "G5", 2]],
+    "bass-drum": [[0], [8]]
+  }
 }
 ```
 
-A note is `[step, pitch, length]` in sixteenths, `[step]` on a drum. The tempo is written
+Each instrument is a key, in the order they are listed, with its notes. A note is
+`[step, pitch, length]` in sixteenths, `[step]` on a drum. The tempo is written
 only when it is not 120, the time only when it is not 4/4.
 
 **An instrument is the recording of one note.** The engine plays it, and does nothing else:
@@ -457,6 +477,17 @@ only when it is not 120, the time only when it is not 4/4.
 1. A note plays the recording from its start, faster or slower for its pitch.
 2. When the note ends, it fades out in a tenth of a second.
 3. If the note lasts longer than the recording, its last 5 waves repeat: a steady tone.
+
+Every instrument sounds as loud as the others: when it is loaded, the engine measures its
+first quarter of a second and turns it up or down to the same level, so a drum's short hit
+is heard next to a held flute. Its file is not changed. Then its **volume** turns it up or
+down, from −12 to +12 dB, for what the measure misses (a hit covered by held notes, a low
+sound heard less), set by ear in its `.json`, for every song of the game. The editor has
+no control for it: the engine's instruments come with theirs, and a game's own recording
+is imported at its level. A game's volume for one of the engine's is a `.json` alone in
+`instruments/`.
+A song that would go past full volume is turned down as a whole, every instrument by the
+same amount.
 
 Every instrument plays at 16 kHz, 8-bit: the sound's own pixels. The engine has twenty,
 usable by name in every game (`runtime/instruments/`, from the University of Iowa's
@@ -574,9 +605,10 @@ Editor code lives in `editor/src/`:
 - `actors.ts`: actor files (`actors/<name>.json`), where a value comes from, and their history — no DOM, tested in `tests/actors.test.ts`
 - `actortypes.ts`, `actorspage.ts`: the game's actors as its code declares them, drawn by their own code, and the Actors page
 - `inspector.ts`: the variables of an actor, to set (the Actors page and the world page)
-- `music.ts`: the Music page's song, tracks, tools and history — no DOM, tested in `tests/music.test.ts`
+- `music.ts`: the Music page's song, instruments, tools and history — no DOM, tested in `tests/music.test.ts`
+- `accompany.ts`: Accompany, the key and chords found under a song and the notes played on them — no DOM, tested in `tests/accompany.test.ts`
 - `musicpage.ts`, `musicplayer.ts`, `instruments.ts`: the Music page, playing a song in a loop, the instruments and their import
-- `sing.ts`: a voice made notes (pitch tracking, notes) — no DOM, tested in `tests/sing.test.ts`; `singdialog.ts` the popup it is sung in, `microphone.ts` hears it
+- `sing.ts`: a voice made notes (pitch tracking, notes) — no DOM, tested in `tests/sing.test.ts` and scored on recorded takes in `tests/sing-takes.test.mjs`; `singdialog.ts` the popup it is sung in, `microphone.ts` hears it
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)

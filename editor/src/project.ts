@@ -8,7 +8,7 @@ import { isHex } from './color'
 import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
 import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
 import { parseMap, serializeMap, type GameMap } from './map'
-import { decodeWav, encodeWav, noteName, noteNumber, parseSong, serializeSong, type Song } from '../../runtime/sound'
+import { decodeWav, encodeWav, parseInstrumentFile, parseSong, serializeInstrumentFile, serializeSong, type InstrumentFile, type Song } from '../../runtime/sound'
 import { decodePng, encodePng } from './png'
 import {
   NAME_RE,
@@ -256,35 +256,52 @@ export class Project {
     await this.storage.remove(`${MAPS_DIR}/${name}.json`)
   }
 
-  /** The game's own instruments: instruments/<name>.wav (its .json, when it has a note). */
+  /** The game's own instruments: instruments/<name>.wav (its .json, when it has a note or a volume). */
   async listInstruments(): Promise<string[]> {
+    return this.instrumentNames('wav')
+  }
+
+  /**
+   * The instruments with a .json. One without a .wav sets the volume of the engine's
+   * instrument of that name, in this game.
+   */
+  async listInstrumentFiles(): Promise<string[]> {
+    return this.instrumentNames('json')
+  }
+
+  private async instrumentNames(ext: string): Promise<string[]> {
     return (await this.storage.list(INSTRUMENTS_DIR))
-      .map((f) => /^(.+)\.wav$/.exec(f)?.[1])
+      .map((f) => new RegExp(`^(.+)\\.${ext}$`).exec(f)?.[1])
       .filter((n): n is string => n !== undefined && NAME_RE.test(n))
       .sort()
   }
 
-  /** A game's instrument: its recording, and its note (none: a drum). */
-  async loadInstrument(name: string): Promise<{ data: Float32Array; note: number | null }> {
-    const [wav, json] = await Promise.all([
-      this.storage.read(`${INSTRUMENTS_DIR}/${name}.wav`),
-      readText(this.storage, `${INSTRUMENTS_DIR}/${name}.json`),
-    ])
+  /** A game's instrument: its recording, its note (none: a drum) and its volume. */
+  async loadInstrument(name: string): Promise<{ data: Float32Array } & InstrumentFile> {
+    const [wav, file] = await Promise.all([this.storage.read(`${INSTRUMENTS_DIR}/${name}.wav`), this.loadInstrumentFile(name)])
     if (!wav) throw new Error(`Instrument not found: ${name}`)
-    return { data: decodeWav(wav).data, note: json === null ? null : parseInstrumentFile(json) }
+    return { data: decodeWav(wav).data, note: file?.note ?? null, volume: file?.volume }
   }
 
-  /** Saves an instrument as it plays; with no note, there is no .json. */
+  /** An instrument's .json; null if it has none. */
+  async loadInstrumentFile(name: string): Promise<InstrumentFile | null> {
+    const json = await readText(this.storage, `${INSTRUMENTS_DIR}/${name}.json`)
+    return json === null ? null : parseInstrumentFile(json)
+  }
+
+  /** Saves an instrument as it plays, at volume 0 (a new recording, a new level). */
   async saveInstrument(name: string, data: Float32Array, note: number | null, license: string | null = null) {
     await this.storage.write(`${INSTRUMENTS_DIR}/${name}.wav`, encodeWav(data))
-    await this.setInstrumentNote(name, note)
+    await this.saveInstrumentFile(name, { note })
     if (license !== null) await writeText(this.storage, `${INSTRUMENTS_DIR}/${name}.license.txt`, license)
   }
 
-  async setInstrumentNote(name: string, note: number | null) {
+  /** Writes an instrument's .json, or removes it when it would hold nothing. */
+  async saveInstrumentFile(name: string, file: InstrumentFile) {
     const path = `${INSTRUMENTS_DIR}/${name}.json`
-    if (note === null) await this.storage.remove(path)
-    else await writeText(this.storage, path, `{ "note": "${noteName(note)}" }\n`)
+    const text = serializeInstrumentFile(file)
+    if (text === null) await this.storage.remove(path)
+    else await writeText(this.storage, path, text)
   }
 
   async deleteInstrument(name: string) {
@@ -316,12 +333,6 @@ export class Project {
   async deleteSong(name: string) {
     await this.storage.remove(`${SONGS_DIR}/${name}.json`)
   }
-}
-
-/** An instrument's .json: `{ "note": "C5" }`. */
-export function parseInstrumentFile(text: string): number | null {
-  const raw = JSON.parse(text) as { note?: unknown }
-  return typeof raw?.note === 'string' ? noteNumber(raw.note) : null
 }
 
 /** A tileset narrower than TILESET_COLUMNS tiles (made elsewhere, or before the rule) gets

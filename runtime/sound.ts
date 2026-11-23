@@ -9,12 +9,15 @@
 //   2. When the note ends, it fades out in a tenth of a second.
 //   3. If the note lasts longer than the recording, its last 5 waves repeat.
 //
+// Every instrument also sounds as loud as the others: measured when it is loaded (LOUDNESS),
+// then turned up or down by its volume, set by ear in the editor.
+//
 // Repeating 5 waves rather than a longer stretch: a held note becomes a steady tone, where a
 // second of the recording repeated would come back like a rhythm (chosen by ear).
 //
-// A song (songs/<name>.json) is a tempo, a time signature and tracks; a track is one
-// instrument and its notes, on a fixed grid of sixteenth notes, never two of the same pitch at
-// once. It ends with the bar of its last note, and loops.
+// A song (songs/<name>.json) is a tempo, a time signature and its instruments, each one once
+// with its notes, on a fixed grid of sixteenth notes, never two of the same pitch at once. It
+// ends with the bar of its last note, and loops.
 //
 // This file has no imports: the script that prepares the built-in instruments runs it with
 // plain Node.
@@ -80,7 +83,12 @@ export interface Note {
   length: number
 }
 
-export interface Track {
+/**
+ * An instrument of a song and what it plays. A song has each instrument once: two flutes
+ * would be one flute louder, and two lists of notes to look for the one to change. A chord
+ * is several notes of one instrument.
+ */
+export interface Part {
   instrument: string
   notes: Note[]
 }
@@ -88,47 +96,53 @@ export interface Track {
 export interface Song {
   tempo: number
   time: Time
-  tracks: Track[]
+  /** In the order they are listed (and colored) in the editor. */
+  instruments: Part[]
 }
 
 export function emptySong(): Song {
-  return { tempo: DEFAULT_TEMPO, time: DEFAULT_TIME, tracks: [] }
+  return { tempo: DEFAULT_TEMPO, time: DEFAULT_TIME, instruments: [] }
 }
 
 /** Steps in one bar, and in one beat, of the song. */
 export const barSteps = (song: Song) => TIMES[song.time].bar
 export const beatSteps = (song: Song) => TIMES[song.time].beat
 
-/** Reads a song file. A note is [step, "C5", length], or [step] on a drum. */
+/**
+ * Reads a song file: `"instruments": { "flute": [notes], … }`, each instrument a key, so a
+ * song cannot have one twice. A note is [step, "C5", length], or [step] on a drum.
+ */
 export function parseSong(text: string): Song {
-  const raw = JSON.parse(text) as { tempo?: unknown; time?: unknown; tracks?: unknown }
+  const raw = JSON.parse(text) as { tempo?: unknown; time?: unknown; instruments?: unknown }
   if (!raw || typeof raw !== 'object') throw new Error('a song is an object')
   const tempo = raw.tempo === undefined ? DEFAULT_TEMPO : Number(raw.tempo)
   if (!Number.isFinite(tempo) || tempo < MIN_TEMPO || tempo > MAX_TEMPO) throw new Error(`tempo must be between ${MIN_TEMPO} and ${MAX_TEMPO}`)
   const time = raw.time === undefined ? DEFAULT_TIME : raw.time
   if (typeof time !== 'string' || !(time in TIMES)) throw new Error(`time must be one of ${Object.keys(TIMES).join(', ')}`)
-  const tracks: Track[] = []
-  for (const t of Array.isArray(raw.tracks) ? raw.tracks : []) {
-    const track = t as { instrument?: unknown; notes?: unknown }
-    if (typeof track.instrument !== 'string' || !track.instrument) throw new Error('every track needs an instrument')
+  const given = raw.instruments ?? {}
+  if (typeof given !== 'object' || Array.isArray(given)) throw new Error('instruments is an object: { "flute": [notes] }')
+  const instruments: Part[] = []
+  for (const [instrument, list] of Object.entries(given)) {
+    if (!instrument) throw new Error('an instrument has no name')
+    if (!Array.isArray(list)) throw new Error(`the notes of "${instrument}" are not a list`)
     const notes: Note[] = []
-    for (const n of Array.isArray(track.notes) ? track.notes : []) {
-      if (!Array.isArray(n)) throw new Error(`a note of "${track.instrument}" is not a list`)
+    for (const n of list) {
+      if (!Array.isArray(n)) throw new Error(`a note of "${instrument}" is not a list`)
       const step = Number(n[0])
-      if (!Number.isInteger(step) || step < 0) throw new Error(`a note of "${track.instrument}" has a bad step: ${JSON.stringify(n)}`)
+      if (!Number.isInteger(step) || step < 0) throw new Error(`a note of "${instrument}" has a bad step: ${JSON.stringify(n)}`)
       if (n.length === 1) {
         notes.push({ step, pitch: null, length: 1 })
         continue
       }
       const pitch = typeof n[1] === 'string' ? noteNumber(n[1]) : null
       const length = Number(n[2] ?? 1)
-      if (pitch === null) throw new Error(`a note of "${track.instrument}" has a bad pitch: ${JSON.stringify(n)}`)
-      if (!Number.isInteger(length) || length < 1) throw new Error(`a note of "${track.instrument}" has a bad length: ${JSON.stringify(n)}`)
+      if (pitch === null) throw new Error(`a note of "${instrument}" has a bad pitch: ${JSON.stringify(n)}`)
+      if (!Number.isInteger(length) || length < 1) throw new Error(`a note of "${instrument}" has a bad length: ${JSON.stringify(n)}`)
       notes.push({ step, pitch, length })
     }
-    tracks.push({ instrument: track.instrument, notes: untangle(notes) })
+    instruments.push({ instrument, notes: untangle(notes) })
   }
-  return { tempo, time: time as Time, tracks }
+  return { tempo, time: time as Time, instruments }
 }
 
 export function sortNotes(notes: Note[]): Note[] {
@@ -136,7 +150,7 @@ export function sortNotes(notes: Note[]): Note[] {
 }
 
 /**
- * A track never covers itself: two of its notes of the same pitch never overlap. When one
+ * An instrument never covers itself: two of its notes of the same pitch never overlap. When one
  * starts while the same pitch still sounds, the earlier one stops there, as a string struck
  * again starts over; two at the same step are one (the last). Drum hits: one per step.
  * Changes `notes` in place, sorted, and returns it.
@@ -157,14 +171,19 @@ export function untangle(notes: Note[]): Note[] {
   return notes
 }
 
-/** The song file: one track per line, the tempo and time only when not the default. */
+/**
+ * The song file: one instrument per line, the tempo and time only when not the default. Two
+ * parts of one instrument (only a song built in code can have them) are written as one.
+ */
 export function serializeSong(song: Song): string {
   const note = (n: Note) => (n.pitch === null ? `[${n.step}]` : `[${n.step}, "${noteName(n.pitch)}", ${n.length}]`)
-  const tracks = song.tracks.map((t) => `    { "instrument": ${JSON.stringify(t.instrument)}, "notes": [${untangle(t.notes.map((n) => ({ ...n }))).map(note).join(', ')}] }`)
+  const merged = new Map<string, Note[]>()
+  for (const p of song.instruments) merged.set(p.instrument, [...(merged.get(p.instrument) ?? []), ...p.notes])
+  const parts = [...merged].map(([name, notes]) => `    ${JSON.stringify(name)}: [${untangle(notes.map((n) => ({ ...n }))).map(note).join(', ')}]`)
   const lines = ['{']
   if (song.tempo !== DEFAULT_TEMPO) lines.push(`  "tempo": ${song.tempo},`)
   if (song.time !== DEFAULT_TIME) lines.push(`  "time": "${song.time}",`)
-  lines.push(tracks.length ? `  "tracks": [\n${tracks.join(',\n')}\n  ]` : '  "tracks": []', '}')
+  lines.push(parts.length ? `  "instruments": {\n${parts.join(',\n')}\n  }` : '  "instruments": {}', '}')
   return lines.join('\n') + '\n'
 }
 
@@ -174,7 +193,7 @@ export const noteEnd = (n: Note) => n.step + (n.pitch === null ? 1 : n.length)
 /** The song's length in steps: up to the end of the bar of its last note, at least one bar. */
 export function songSteps(song: Song): number {
   let end = 0
-  for (const t of song.tracks) for (const n of t.notes) end = Math.max(end, noteEnd(n))
+  for (const p of song.instruments) for (const n of p.notes) end = Math.max(end, noteEnd(n))
   const bar = barSteps(song)
   return Math.max(1, Math.ceil(end / bar)) * bar
 }
@@ -193,13 +212,73 @@ export interface Instrument {
   /** The part that repeats while a note is held (samples); empty on a drum. */
   loopStart: number
   loopEnd: number
+  /** What its notes are multiplied by: as loud as every other one, then its volume. */
+  gain: number
 }
 
-/** Readies a recording to be played: finds its last 5 waves and blends them so they loop
- *  without a seam. `data` is not changed. */
-export function instrument(data: Float32Array, note: number | null): Instrument {
+/**
+ * An instrument's volume, in dB, set by ear: what the measure of its loudness misses (a
+ * drum's hit is covered by held notes; a low sound is heard less). Whole dB, from MIN_VOLUME
+ * to MAX_VOLUME; 0 when its file sets none.
+ */
+export const MIN_VOLUME = -12
+export const MAX_VOLUME = 12
+
+/**
+ * An instrument's .json: `{ "note": "C5", "volume": 4 }`, each left out when it has none. A
+ * game's .json without a recording sets the volume of the engine's instrument of that name.
+ */
+export interface InstrumentFile {
+  /** The note it was recorded at; null for a drum. */
+  note: number | null
+  /** Unset: the engine's volume for a built-in instrument, 0 for any other. */
+  volume?: number
+}
+
+export function parseInstrumentFile(text: string): InstrumentFile {
+  const raw = JSON.parse(text) as { note?: unknown; volume?: unknown }
+  const note = typeof raw?.note === 'string' ? noteNumber(raw.note) : null
+  const v = Number(raw?.volume)
+  if (raw?.volume === undefined || !Number.isFinite(v)) return { note }
+  return { note, volume: Math.max(MIN_VOLUME, Math.min(MAX_VOLUME, Math.round(v))) }
+}
+
+/** The .json of an instrument; null when there is nothing to write. */
+export function serializeInstrumentFile({ note, volume }: InstrumentFile): string | null {
+  const parts = []
+  if (note !== null) parts.push(`"note": "${noteName(note)}"`)
+  if (volume !== undefined) parts.push(`"volume": ${volume}`)
+  return parts.length ? `{ ${parts.join(', ')} }\n` : null
+}
+
+/**
+ * How loud every instrument sounds: the level of its first quarter of a second. Recordings
+ * are stored as loud as they can be, peak at the top, but the ear hears how much sound there
+ * is, not the peak: a drum, one sharp hit, sounded far softer than a bassoon held at its
+ * peak (up to 16 dB). So the engine measures each one where it plays and evens them out,
+ * when it is loaded rather than in its file, where turning a sound down would cost it 8-bit
+ * steps. The quarter second is how long the ear takes to judge a sound, for a short hit and
+ * the start of a held note alike. The level is the middle of the built-in instruments'.
+ */
+const LOUDNESS = 0.25
+const LOUDNESS_SECONDS = 0.25
+
+/** The gain that brings a recording to LOUDNESS (1 if it is silent). */
+export function loudnessGain(data: Float32Array): number {
+  const n = Math.round(LOUDNESS_SECONDS * RATE)
+  let e = 0
+  for (let i = 0; i < Math.min(n, data.length); i++) e += data[i] * data[i]
+  // Over the whole quarter second, even past a shorter sound's end: a short sound is soft.
+  const level = Math.sqrt(e / n)
+  return level ? LOUDNESS / level : 1
+}
+
+/** Readies a recording to be played at its volume (dB): finds its last 5 waves and blends
+ *  them so they loop without a seam. `data` is not changed. */
+export function instrument(data: Float32Array, note: number | null, volume = 0): Instrument {
   const d = Float32Array.from(data)
-  if (note === null || d.length < 8) return { data: d, note, loopStart: d.length, loopEnd: d.length }
+  const gain = loudnessGain(d) * Math.pow(10, volume / 20)
+  if (note === null || d.length < 8) return { data: d, note, loopStart: d.length, loopEnd: d.length, gain }
   // The loop is sized on the recording's real pitch (a player is rarely exactly on the
   // note), so its 5 waves are 5 whole waves and a held note stays in tune.
   const f0 = detectPitch(d, RATE, frequency(note)) || frequency(note)
@@ -227,7 +306,7 @@ export function instrument(data: Float32Array, note: number | null): Instrument 
     const w = i / fade
     d[end - fade + i] = d[end - fade + i] * (1 - w) + d[start - fade + i] * w
   }
-  return { data: d, note, loopStart: start, loopEnd: end }
+  return { data: d, note, loopStart: start, loopEnd: end, gain }
 }
 
 // 4-point Gaussian interpolation, in a table of 256 positions between two samples: smooth,
@@ -255,6 +334,7 @@ const GAUSS = (() => {
  */
 export function addNote(out: Float32Array, at: number, outRate: number, inst: Instrument, pitch: number | null, seconds: number, gain = 1, wrap = false) {
   const { data, loopStart, loopEnd } = inst
+  gain *= inst.gain
   const drum = inst.note === null
   const ratio = ((drum || pitch === null ? 1 : frequency(pitch) / frequency(inst.note!)) * RATE) / outRate
   const hold = Math.round(seconds * outRate)
@@ -287,25 +367,36 @@ export function addNote(out: Float32Array, at: number, outRate: number, inst: In
   }
 }
 
-/** How loud each note is in a song: room for several at once before the soft limit. */
+/** How loud each note is in a song: room for a few at once before it has to be turned down. */
 const VOICE = 0.4
+
+/**
+ * Turns the whole sound down, all of it by the same amount, if it would go past 1 anywhere.
+ * Not a limiter on each sample (it flattened the drums' hits, and pushed the held notes
+ * under them): every instrument keeps its level next to the others. The whole song is there
+ * before it plays, so its loudest point is known.
+ */
+function fit(out: Float32Array): Float32Array {
+  let peak = 0
+  for (const v of out) peak = Math.max(peak, Math.abs(v))
+  if (peak > 1) for (let i = 0; i < out.length; i++) out[i] /= peak
+  return out
+}
 
 /**
  * The whole song, once, at `outRate`: what plays in a loop. A note still sounding at the end
  * (a held note's fade, a drum's tail) continues at the start, as it does when the song loops.
- * A track whose instrument is missing is silent.
+ * An instrument that is missing is silent.
  */
 export function renderSong(song: Song, instruments: (name: string) => Instrument | undefined, outRate: number): Float32Array {
   const step = stepSeconds(song.tempo)
   const out = new Float32Array(Math.round(songSteps(song) * step * outRate))
-  for (const t of song.tracks) {
-    const inst = instruments(t.instrument)
+  for (const p of song.instruments) {
+    const inst = instruments(p.instrument)
     if (!inst) continue
-    for (const n of t.notes) addNote(out, Math.round(n.step * step * outRate), outRate, inst, n.pitch, n.length * step, VOICE, true)
+    for (const n of p.notes) addNote(out, Math.round(n.step * step * outRate), outRate, inst, n.pitch, n.length * step, VOICE, true)
   }
-  // A soft limit: nearly nothing below 0.5, never past 1.
-  for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i])
-  return out
+  return fit(out)
 }
 
 /** One note alone, as heard when it is placed in the editor. */
@@ -313,8 +404,7 @@ export function renderNote(inst: Instrument, pitch: number | null, seconds: numb
   const len = inst.note === null ? Math.ceil((inst.data.length * outRate) / RATE) : Math.round((seconds + FADE) * outRate)
   const out = new Float32Array(len)
   addNote(out, 0, outRate, inst, pitch, seconds, VOICE)
-  for (let i = 0; i < out.length; i++) out[i] = Math.tanh(out[i])
-  return out
+  return fit(out)
 }
 
 // ---------------------------------------------------------------------------

@@ -9,11 +9,13 @@ import {
   instrument,
   noteName,
   noteNumber,
+  parseInstrumentFile,
   parseSong,
   prepareRecording,
   renderNote,
   renderSong,
   resample,
+  serializeInstrumentFile,
   serializeSong,
   tuneRecording,
   songSteps,
@@ -56,7 +58,7 @@ describe('songs', () => {
   const song: Song = {
     tempo: 90,
     time: '4/4',
-    tracks: [
+    instruments: [
       { instrument: 'flute', notes: [{ step: 4, pitch: 74, length: 2 }, { step: 0, pitch: 72, length: 4 }] },
       { instrument: 'drum', notes: [{ step: 0, pitch: null, length: 1 }, { step: 8, pitch: null, length: 1 }] },
     ],
@@ -65,35 +67,41 @@ describe('songs', () => {
   it('writes a song and reads it back, notes in order', () => {
     const text = serializeSong(song)
     expect(text).toContain('[0, "C5", 4], [4, "D5", 2]')
-    expect(text).toContain('[[0], [8]]')
+    expect(text).toContain('"drum": [[0], [8]]')
     expect(parseSong(text)).toEqual(parseSong(serializeSong(parseSong(text))))
-    expect(parseSong(text).tracks[0].notes.map((n) => n.step)).toEqual([0, 4])
+    expect(parseSong(text).instruments[0].notes.map((n) => n.step)).toEqual([0, 4])
+  })
+
+  it('has each instrument once: two parts of one are written as one', () => {
+    const twice: Song = { tempo: 120, time: '4/4', instruments: [{ instrument: 'a', notes: [{ step: 0, pitch: 60, length: 1 }] }, { instrument: 'a', notes: [{ step: 4, pitch: 60, length: 1 }] }] }
+    expect(parseSong(serializeSong(twice)).instruments).toEqual([{ instrument: 'a', notes: [{ step: 0, pitch: 60, length: 1 }, { step: 4, pitch: 60, length: 1 }] }])
   })
 
   it('leaves the default tempo out of the file', () => {
-    expect(serializeSong({ tempo: DEFAULT_TEMPO, time: '4/4', tracks: [] })).not.toContain('tempo')
-    expect(parseSong('{"tracks": []}').tempo).toBe(DEFAULT_TEMPO)
+    expect(serializeSong({ tempo: DEFAULT_TEMPO, time: '4/4', instruments: [] })).not.toContain('tempo')
+    expect(parseSong('{"instruments": {}}').tempo).toBe(DEFAULT_TEMPO)
   })
 
   it('rejects broken files with the reason', () => {
-    expect(() => parseSong('{"tracks": [{"notes": []}]}')).toThrow(/instrument/)
-    expect(() => parseSong('{"tracks": [{"instrument": "a", "notes": [[0, "X9", 1]]}]}')).toThrow(/pitch/)
+    expect(() => parseSong('{"instruments": [{"instrument": "a", "notes": []}]}')).toThrow(/instruments/)
+    expect(() => parseSong('{"instruments": {"a": 3}}')).toThrow(/notes/)
+    expect(() => parseSong('{"instruments": {"a": [[0, "X9", 1]]}}')).toThrow(/pitch/)
     expect(() => parseSong('{"tempo": 5}')).toThrow(/tempo/)
   })
 
   it('ends with the bar of its last note', () => {
-    expect(songSteps({ tempo: 120, time: '4/4', tracks: [] })).toBe(16)
+    expect(songSteps({ tempo: 120, time: '4/4', instruments: [] })).toBe(16)
     expect(songSteps(song)).toBe(16)
-    expect(songSteps({ tempo: 120, time: '4/4', tracks: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] })).toBe(32)
+    expect(songSteps({ tempo: 120, time: '4/4', instruments: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] })).toBe(32)
   })
 
   it('counts bars of 12 steps in 3/4 and 6/8, and keeps the time in the file', () => {
-    const waltz: Song = { tempo: 120, time: '6/8', tracks: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] }
+    const waltz: Song = { tempo: 120, time: '6/8', instruments: [{ instrument: 'a', notes: [{ step: 15, pitch: 60, length: 2 }] }] }
     expect(songSteps(waltz)).toBe(24)
     expect(serializeSong(waltz)).toContain('"time": "6/8"')
     expect(parseSong(serializeSong(waltz)).time).toBe('6/8')
     expect(serializeSong(song)).not.toContain('time')
-    expect(parseSong('{"tracks": []}').time).toBe('4/4')
+    expect(parseSong('{"instruments": {}}').time).toBe('4/4')
     expect(() => parseSong('{"time": "5/4"}')).toThrow(/time/)
   })
 })
@@ -131,7 +139,7 @@ describe('instruments', () => {
 
   it('fades out a tenth of a second after the note ends', () => {
     const out = renderNote(flute, 72, 0.5, OUT)
-    expect(rms(out, Math.round(0.4 * OUT), Math.round(0.5 * OUT))).toBeGreaterThan(0.1)
+    expect(rms(out, Math.round(0.4 * OUT), Math.round(0.5 * OUT))).toBeGreaterThan(0.05)
     expect(Math.abs(out[out.length - 1])).toBeLessThan(0.01)
   })
 
@@ -143,10 +151,68 @@ describe('instruments', () => {
   })
 })
 
+describe('loudness', () => {
+  // The built-in recordings, as data URLs.
+  const builtIn = Object.values(import.meta.glob('../runtime/instruments/*.wav', { query: '?inline', import: 'default', eager: true }) as Record<string, string>)
+  const bytes = (url: string) => Uint8Array.from(atob(url.slice(url.indexOf(',') + 1)), (c) => c.charCodeAt(0))
+
+  it('plays every built-in instrument as loud as the others', () => {
+    // Each one's first quarter of a second, after its gain: within 1 dB of the same level.
+    expect(builtIn.length).toBe(20)
+    const levels = builtIn.map((url) => {
+      const inst = instrument(decodeWav(bytes(url)).data, null)
+      return 20 * Math.log10(rms(inst.data, 0, RATE / 4) * inst.gain)
+    })
+    expect(Math.max(...levels) - Math.min(...levels)).toBeLessThan(1)
+  })
+
+  it('turns up a short hit, and down a held tone', () => {
+    const hit = instrument(tone(200, 0.25, RATE, (t) => 0.95 * Math.exp(-t * 30)), null)
+    const held = instrument(tone(frequency(72), 1, RATE, () => 0.95), 72)
+    expect(hit.gain).toBeGreaterThan(1)
+    expect(held.gain).toBeLessThan(1)
+  })
+
+  it('turns an instrument up or down by its volume, in dB', () => {
+    const d = tone(frequency(72), 1)
+    expect(instrument(d, 72, 6).gain / instrument(d, 72).gain).toBeCloseTo(Math.pow(10, 6 / 20), 6)
+    expect(instrument(d, 72, -12).gain / instrument(d, 72).gain).toBeCloseTo(Math.pow(10, -12 / 20), 6)
+  })
+
+  it('reads and writes the volume in the instrument file, leaving out what is unset', () => {
+    expect(parseInstrumentFile('{ "note": "C5", "volume": 4 }')).toEqual({ note: 72, volume: 4 })
+    expect(parseInstrumentFile('{ "note": "C5" }')).toEqual({ note: 72 })
+    // A drum, or a game's file for the engine's instrument: a volume alone.
+    expect(parseInstrumentFile('{ "volume": -3 }')).toEqual({ note: null, volume: -3 })
+    expect(parseInstrumentFile('{ "volume": 40 }').volume).toBe(12)
+    expect(parseInstrumentFile('{ "volume": 2.6 }').volume).toBe(3)
+    expect(serializeInstrumentFile({ note: 72, volume: 4 })).toBe('{ "note": "C5", "volume": 4 }\n')
+    expect(serializeInstrumentFile({ note: 72 })).toBe('{ "note": "C5" }\n')
+    // Set back to 0 over the engine's volume: written, so that it is not the engine's.
+    expect(serializeInstrumentFile({ note: null, volume: 0 })).toBe('{ "volume": 0 }\n')
+    expect(serializeInstrumentFile({ note: null })).toBeNull()
+  })
+
+  it('never goes past 1, and keeps every instrument at its level next to the others', () => {
+    const held = instrument(tone(frequency(60), 2, RATE, () => 0.95), 60)
+    const song: Song = {
+      tempo: 120,
+      time: '4/4',
+      instruments: [60, 64, 67, 72].map((p) => ({ instrument: String(p), notes: [{ step: 0, pitch: p, length: 16 }] })),
+    }
+    const out = renderSong(song, () => held, OUT)
+    expect(Math.max(...out.map(Math.abs))).toBeLessThanOrEqual(1)
+    // Turned down evenly: the chord holds as steady as its notes do.
+    const a = rms(out, Math.round(0.5 * OUT), Math.round(0.6 * OUT))
+    const b = rms(out, Math.round(1.2 * OUT), Math.round(1.3 * OUT))
+    expect(Math.abs(20 * Math.log10(a / b))).toBeLessThan(1)
+  })
+})
+
 describe('rendering a song', () => {
   const flute = instrument(tone(frequency(72), 1), 72)
   // The last beat of the bar: the song is one bar, two seconds.
-  const song: Song = { tempo: 120, time: '4/4', tracks: [{ instrument: 'flute', notes: [{ step: 12, pitch: 72, length: 4 }] }] }
+  const song: Song = { tempo: 120, time: '4/4', instruments: [{ instrument: 'flute', notes: [{ step: 12, pitch: 72, length: 4 }] }] }
 
   it('lasts its whole bars, and what still sounds at the end goes on at the start', () => {
     const out = renderSong(song, () => flute, OUT)
@@ -155,10 +221,10 @@ describe('rendering a song', () => {
     // The note's fade, after the end of the bar, is at the start of the loop.
     expect(rms(out, 0, Math.round(0.02 * OUT))).toBeGreaterThan(0.05)
     expect(rms(out, Math.round(0.2 * OUT), Math.round(1.4 * OUT))).toBe(0)
-    expect(rms(out, Math.round(1.6 * OUT), Math.round(1.9 * OUT))).toBeGreaterThan(0.1)
+    expect(rms(out, Math.round(1.6 * OUT), Math.round(1.9 * OUT))).toBeGreaterThan(0.05)
   })
 
-  it('is silent for a track whose instrument is missing', () => {
+  it('is silent for an instrument that is missing', () => {
     const out = renderSong(song, () => undefined, OUT)
     expect(rms(out, 0, out.length)).toBe(0)
   })
@@ -200,9 +266,9 @@ describe('importing a recording', () => {
   })
 })
 
-describe('a track never covers itself', () => {
+describe('an instrument never covers itself', () => {
   it('cuts a note where the same pitch starts again, and keeps one of two on the same step', () => {
-    const song = parseSong(JSON.stringify({ tracks: [{ instrument: 'harp', notes: [[0, 'G2', 7], [6, 'G2', 7], [6, 'D3', 4], [12, 'G2', 2], [12, 'G2', 5], [3], [3]] }] }))
-    expect(song.tracks[0].notes.map((n) => [n.step, n.pitch, n.length])).toEqual([[0, 43, 6], [3, null, 1], [6, 43, 6], [6, 50, 4], [12, 43, 5]])
+    const song = parseSong(JSON.stringify({ instruments: { harp: [[0, 'G2', 7], [6, 'G2', 7], [6, 'D3', 4], [12, 'G2', 2], [12, 'G2', 5], [3], [3]] } }))
+    expect(song.instruments[0].notes.map((n) => [n.step, n.pitch, n.length])).toEqual([[0, 43, 6], [3, null, 1], [6, 43, 6], [6, 50, 4], [12, 43, 5]])
   })
 })

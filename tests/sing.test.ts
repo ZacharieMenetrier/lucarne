@@ -46,9 +46,24 @@ describe('singing a melody', () => {
   })
 
   it('turns a phrase into notes on the grid', () => {
-    // C4 for a quarter, E4 for a quarter, silence, G4 for a half (at 120: a step is 1/8 s).
-    const t = take(sing([{ pitch: 60, seconds: 0.5 }, { pitch: 64, seconds: 0.5 }, { pitch: null, seconds: 0.25 }, { pitch: 67, seconds: 1 }]))
-    expect(plain(t)).toEqual([[0, 60, 4], [4, 64, 4], [10, 67, 8]])
+    // C4 for a quarter, E4 for a quarter, a rest, G4 for a half (at 120: a step is 1/8 s).
+    const t = take(sing([{ pitch: 60, seconds: 0.5 }, { pitch: 64, seconds: 0.5 }, { pitch: null, seconds: 0.375 }, { pitch: 67, seconds: 1 }]))
+    expect(plain(t)).toEqual([[0, 60, 4], [4, 64, 4], [11, 67, 8]])
+  })
+
+  it('holds a note over a breath before the next', () => {
+    const t = take(sing([{ pitch: 60, seconds: 0.3 }, { pitch: null, seconds: 0.2 }, { pitch: 64, seconds: 0.5 }]))
+    expect(plain(t)).toEqual([[0, 60, 4], [4, 64, 4]])
+  })
+
+  it('hears a voice caught an octave off as the voice', () => {
+    const t = take(sing([{ pitch: 57, seconds: 0.25 }, { pitch: 69, seconds: 0.05 }, { pitch: 57, seconds: 0.2 }]))
+    expect(plain(t)).toEqual([[0, 57, 4]])
+  })
+
+  it('moves a take sung late onto the grid', () => {
+    const t = take(sing([{ pitch: null, seconds: 0.2 }, { pitch: 60, seconds: 0.5 }, { pitch: 62, seconds: 0.5 }, { pitch: 64, seconds: 0.25 }, { pitch: 65, seconds: 0.25 }, { pitch: 67, seconds: 1 }]))
+    expect(plain(t)).toEqual([[0, 60, 4], [4, 62, 4], [8, 64, 2], [10, 65, 2], [12, 67, 8]])
   })
 
   it('takes a slide into a note as that note', () => {
@@ -71,7 +86,7 @@ describe('singing a melody', () => {
   })
 })
 
-describe('clapping a drum track', () => {
+describe('clapping a drum', () => {
   it('turns each attack into a hit', () => {
     const clap = (): { pitch: number | null; seconds: number }[] => [{ pitch: 70, seconds: 0.05 }, { pitch: null, seconds: 0.2 }]
     const t = take(sing([...clap(), ...clap(), ...clap(), ...clap()]), true)

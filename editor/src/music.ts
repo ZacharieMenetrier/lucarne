@@ -1,33 +1,40 @@
-// The Music page's logic, without the DOM: the song open, its tracks, the tool, the notes
-// selected, and every edit, undoable. The page draws it and turns pointers into these calls.
+// The Music page's logic, without the DOM: the song open, its instruments, the tool, the
+// notes selected, and every edit, undoable. The page draws it and turns pointers into these
+// calls.
 //
-// A track is one instrument. The notes of the selected track are the ones edited; the
-// others are only shown. A drum (an instrument without a note) has no pitch: its track is
-// one row of hits, under the notes.
+// A song has each instrument once (runtime/sound.ts). The notes of the selected instrument
+// are the ones edited; the others are only shown. A drum (an instrument without a note) has
+// no pitch: it is one row of hits, under the notes.
 
+import { accompany, type Voice } from './accompany'
 import { History } from './history'
 import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, untangle, type Note, type Song, type Time } from '../../runtime/sound'
 
 export type MusicTool = 'pencil' | 'eraser' | 'select'
 
-/** The pitch a note gets when its track changes from a drum to an instrument with notes. */
+/** The pitch a note gets when a drum's hits go to an instrument with notes. */
 const MIDDLE = 72
 
 export class MusicEditor {
   song: Song | null = null
   /** The song's name (songs/<name>.json). */
   name: string | null = null
-  /** The selected track: the one edited. */
-  track = 0
+  /** The selected instrument, by its place in the song: the one edited. */
+  selected = 0
   tool: MusicTool = 'pencil'
   /** How long a note placed with the pencil lasts: the length last placed or set. */
   length = 4
-  /** Notes of the selected track. */
+  /** Notes of the selected instrument. */
   selection = new Set<Note>()
-  /** Copied notes, their steps from the first one's, with the track they came from. */
+  /** Copied notes, their steps from the first one's, and whether they were a drum's. */
   clipboard: { drum: boolean; notes: Note[] } | null = null
   /** Where playing starts, and where a paste goes, in steps. */
   start = 0
+  /**
+   * The instruments not heard when the song plays, to hear the others. Only for listening
+   * while editing: not in the song, not undone, forgotten when another song opens.
+   */
+  muted = new Set<string>()
   /** Whether an instrument is a drum (it has no note). */
   isDrum: (instrument: string) => boolean = () => false
   /** The song changed: to save it. */
@@ -50,33 +57,35 @@ export class MusicEditor {
   open(name: string | null, song: Song | null) {
     this.name = name
     this.song = song
-    this.track = 0
+    this.selected = 0
     this.selection.clear()
     this.start = 0
+    this.muted.clear()
     this.before = null
     this.emit()
   }
 
   get current() {
-    return this.song?.tracks[this.track] ?? null
+    return this.song?.instruments[this.selected] ?? null
   }
 
-  /** Is the selected track a drum? */
+  /** Is the selected instrument a drum? */
   get drum() {
     const t = this.current
     return !!t && this.isDrum(t.instrument)
   }
 
-  selectTrack(i: number) {
-    if (!this.song || i < 0 || i >= this.song.tracks.length || i === this.track) return
-    this.track = i
+  select(i: number) {
+    if (!this.song || i < 0 || i >= this.song.instruments.length || i === this.selected) return
+    this.selected = i
     this.selection.clear()
     this.emit()
   }
 
   setTool(tool: MusicTool) {
     this.tool = tool
-    if (tool !== 'select') this.selection.clear()
+    // The pencil selects too (a click on a note): only the eraser has nothing to do with a selection.
+    if (tool === 'eraser') this.selection.clear()
     this.emit()
   }
 
@@ -92,10 +101,10 @@ export class MusicEditor {
     const before = this.before
     this.before = null
     if (!this.song || !this.name || before === null) return
-    // A track never covers itself (runtime/sound.ts): settled once the change is done, so a
-    // note dragged over another does not cut it on the way.
-    for (const t of this.song.tracks) untangle(t.notes)
-    for (const n of [...this.selection]) if (!this.song.tracks[this.track]?.notes.includes(n)) this.selection.delete(n)
+    // An instrument never covers itself (runtime/sound.ts): settled once the change is done,
+    // so a note dragged over another does not cut it on the way.
+    for (const p of this.song.instruments) untangle(p.notes)
+    for (const n of [...this.selection]) if (!this.current?.notes.includes(n)) this.selection.delete(n)
     const after = serializeSong(this.song)
     if (after !== before) {
       if (!this.histories.has(this.name)) this.histories.set(this.name, new History())
@@ -128,8 +137,8 @@ export class MusicEditor {
     const restored = parseSong(change[side])
     this.song.tempo = restored.tempo
     this.song.time = restored.time
-    this.song.tracks = restored.tracks
-    this.track = Math.min(this.track, Math.max(0, this.song.tracks.length - 1))
+    this.song.instruments = restored.instruments
+    this.selected = Math.min(this.selected, Math.max(0, this.song.instruments.length - 1))
     this.selection.clear()
     this.onEdit(this.name)
     this.emit()
@@ -147,26 +156,43 @@ export class MusicEditor {
     if (this.name === from) this.name = to
   }
 
-  // --- Tracks ---------------------------------------------------------------
+  // --- Instruments ----------------------------------------------------------
 
-  addTrack(instrument: string) {
-    this.edit((s) => s.tracks.push({ instrument, notes: [] }))
-    if (this.song) this.selectTrack(this.song.tracks.length - 1)
+  /** Whether the song has this instrument already: it can't have it twice. */
+  has(instrument: string) {
+    return !!this.song?.instruments.some((p) => p.instrument === instrument)
   }
 
-  removeTrack(i: number) {
-    this.edit((s) => s.tracks.splice(i, 1))
+  toggleMute(instrument: string) {
+    if (!this.muted.delete(instrument)) this.muted.add(instrument)
+    this.emit()
+  }
+
+  /** Adds an instrument to the song, selected; one it has already is only selected. */
+  addInstrument(instrument: string) {
     if (!this.song) return
-    if (this.track >= this.song.tracks.length) this.track = Math.max(0, this.song.tracks.length - 1)
+    if (!this.has(instrument)) this.edit((s) => s.instruments.push({ instrument, notes: [] }))
+    this.select(this.song.instruments.findIndex((p) => p.instrument === instrument))
+  }
+
+  removeInstrument(i: number) {
+    // Muted no more: added back, it is heard.
+    const name = this.song?.instruments[i]?.instrument
+    if (name) this.muted.delete(name)
+    this.edit((s) => s.instruments.splice(i, 1))
+    if (!this.song) return
+    if (this.selected >= this.song.instruments.length) this.selected = Math.max(0, this.song.instruments.length - 1)
     this.selection.clear()
     this.emit()
   }
 
-  /** Plays the track with another instrument. Going from a drum to notes or back, its notes
-   *  become hits on one row, or notes on the middle of the grid. */
-  setInstrument(i: number, instrument: string) {
+  /** Plays the notes of an instrument with another one, that the song doesn't have yet. Going
+   *  from a drum to notes or back, they become hits on one row, or notes on the middle of the
+   *  grid. */
+  replaceInstrument(i: number, instrument: string) {
+    if (this.has(instrument)) return
     this.edit((s) => {
-      const t = s.tracks[i]
+      const t = s.instruments[i]
       if (!t) return
       const wasDrum = this.isDrum(t.instrument)
       const drum = this.isDrum(instrument)
@@ -189,10 +215,26 @@ export class MusicEditor {
     this.edit((s) => (s.time = time))
   }
 
+  /**
+   * Writes chords for the instrument at `i` under what the others play (accompany.ts): its
+   * notes are replaced, one undo, and it is selected. Says whether there was anything to accompany.
+   */
+  accompany(i: number, voice: Voice) {
+    const song = this.song
+    if (!song || !song.instruments[i] || this.isDrum(song.instruments[i].instrument)) return false
+    const notes = accompany(song, i, voice, this.isDrum)
+    if (!notes.length) return false
+    this.edit((s) => (s.instruments[i].notes = notes))
+    this.selected = i
+    this.selection.clear()
+    this.emit()
+    return true
+  }
+
   // --- Singing --------------------------------------------------------------
 
   /**
-   * A take sung into the selected track over the steps from..to: it replaces what was there
+   * A take sung into the selected instrument over the steps from..to: it replaces what was there
    * (singing a passage again is how it is fixed), and a note that started earlier and still
    * sounds at `from` stops there. One undo. The notes sung come selected, to be moved as one
    * if they landed a little off.
@@ -217,9 +259,9 @@ export class MusicEditor {
 
   // --- Notes ----------------------------------------------------------------
 
-  /** The note of the selected track over a cell (a drum: its hit at that step). */
-  noteAt(step: number, pitch: number | null, track = this.track): Note | null {
-    const t = this.song?.tracks[track]
+  /** The note of an instrument (the selected one) over a cell (a drum: its hit at that step). */
+  noteAt(step: number, pitch: number | null, part = this.selected): Note | null {
+    const t = this.song?.instruments[part]
     if (!t) return null
     const drum = this.isDrum(t.instrument)
     // The last one drawn is on top.
@@ -230,7 +272,7 @@ export class MusicEditor {
     return null
   }
 
-  /** Places a note on the selected track (a hit, on a drum) and returns it. */
+  /** Places a note of the selected instrument (a hit, on a drum) and returns it. */
   place(step: number, pitch: number | null, length = this.length): Note | null {
     const t = this.current
     if (!t || step < 0) return null
@@ -239,19 +281,19 @@ export class MusicEditor {
     return note
   }
 
-  /** A hit on a drum track's row: placed, or taken away if there is one. */
-  toggleHit(track: number, step: number) {
-    const t = this.song?.tracks[track]
+  /** A hit on a drum's row: placed, or taken away if there is one. */
+  toggleHit(part: number, step: number) {
+    const t = this.song?.instruments[part]
     if (!t || step < 0) return
-    const hit = this.noteAt(step, null, track)
+    const hit = this.noteAt(step, null, part)
     this.edit(() => {
       if (hit) t.notes.splice(t.notes.indexOf(hit), 1)
       else t.notes.push({ step, pitch: null, length: 1 })
     })
   }
 
-  remove(notes: Iterable<Note>, track = this.track) {
-    const t = this.song?.tracks[track]
+  remove(notes: Iterable<Note>, part = this.selected) {
+    const t = this.song?.instruments[part]
     if (!t) return
     const gone = new Set(notes)
     if (!gone.size) return
@@ -274,7 +316,7 @@ export class MusicEditor {
         n.step = f.step + ds
         if (f.pitch !== null) n.pitch = f.pitch + dp
       }
-      // Last in the track: dropped on another note, the one moved is the one kept.
+      // Last in the list: dropped on another note, the one moved is the one kept.
       const t = this.current
       if (t) {
         const moved = new Set(notes)
@@ -289,7 +331,7 @@ export class MusicEditor {
     if (note.length !== l) this.edit(() => (note.length = l))
   }
 
-  /** Selects the notes of the selected track in a range of steps and pitches (any pitch on a drum). */
+  /** Selects the notes of the selected instrument in a range of steps and pitches (any pitch on a drum). */
   selectRange(s0: number, s1: number, p0: number | null, p1: number | null) {
     const t = this.current
     this.selection.clear()
@@ -301,6 +343,19 @@ export class MusicEditor {
       if (inTime && inPitch) this.selection.add(n)
     }
     this.emit()
+  }
+
+  /**
+   * A click on a note: it becomes the selection, unless it is already in it (to drag them all);
+   * with add (⇧), it joins the selection or leaves it. Says whether it ends up selected.
+   */
+  pick(note: Note, add = false) {
+    if (add) {
+      if (this.selection.has(note)) this.selection.delete(note)
+      else this.selection.add(note)
+    } else if (!this.selection.has(note)) this.selection = new Set([note])
+    this.emit()
+    return this.selection.has(note)
   }
 
   selectAll() {
@@ -331,7 +386,7 @@ export class MusicEditor {
     if (this.copy()) this.deleteSelection()
   }
 
-  /** Pastes at `at` (where playing starts), into the selected track: the pasted notes are selected. */
+  /** Pastes at `at` (where playing starts), into the selected instrument: the pasted notes are selected. */
   paste(at = this.start) {
     const t = this.current
     const c = this.clipboard

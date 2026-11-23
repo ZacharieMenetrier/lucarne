@@ -1,24 +1,37 @@
 // The instruments a song can use: the engine's (runtime/instruments/, available in every
 // game by name) and the game's own (instruments/), a game's one replacing the engine's of the
 // same name. And the import of a recording as an instrument of the game.
+//
+// Every instrument has a volume (runtime/sound.ts, MIN_VOLUME): the engine's in its .json, a
+// game's in its own .json, where a .json alone sets the volume of the engine's instrument of
+// that name in this game.
 
 import { h, openDialog, toast } from './dialog'
 import type { Project } from './project'
 import { NAME_RE } from './sprite'
-import { HIGHEST, LOWEST, RATE, decodeWav, instrument, noteName, noteNumber, prepareRecording, tuneRecording, type Instrument } from '../../runtime/sound'
+import type { Voice } from './accompany'
+import { HIGHEST, LOWEST, RATE, decodeWav, instrument, noteName, parseInstrumentFile, prepareRecording, tuneRecording, type Instrument } from '../../runtime/sound'
 
 const BUILT_IN_WAVS = import.meta.glob('../../runtime/instruments/*.wav', { query: '?url', import: 'default', eager: true }) as Record<string, string>
-const BUILT_IN_NOTES = import.meta.glob('../../runtime/instruments/*.json', { import: 'default', eager: true }) as Record<string, { note?: string }>
+const BUILT_IN_FILES = import.meta.glob('../../runtime/instruments/*.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
 const baseName = (path: string) => path.replace(/^.*\//, '').replace(/\.[^.]+$/, '')
 
-/** The engine's instruments, by name: where their recording is, and their note. */
+/** The engine's instruments, by name: where their recording is, their note and volume. */
 const BUILT_IN = new Map(
   Object.entries(BUILT_IN_WAVS).map(([path, url]) => {
-    const note = BUILT_IN_NOTES[path.replace(/\.wav$/, '.json')]?.note
-    return [baseName(path), { url, note: note ? noteNumber(note) : null }] as const
+    const json = BUILT_IN_FILES[path.replace(/\.wav$/, '.json')]
+    const { note, volume = 0 } = json ? parseInstrumentFile(json) : { note: null }
+    return [baseName(path), { url, note, volume }] as const
   }),
 )
+
+interface Recording {
+  data: Float32Array
+  note: number | null
+  /** Unset: the engine's (for a built-in one), or 0. */
+  volume?: number
+}
 
 export interface InstrumentEntry {
   name: string
@@ -29,6 +42,11 @@ export interface InstrumentEntry {
 
 export class Instruments {
   private readonly loaded = new Map<string, Instrument>()
+  /** The engine's recordings, then the game's, which replace them. */
+  private readonly builtIn = new Map<string, Recording>()
+  private readonly ownRecordings = new Map<string, Recording>()
+  /** The game's volumes for the engine's instruments (a .json without a recording). */
+  private readonly volumes = new Map<string, number>()
   private own = new Set<string>()
   /** Something was loaded or imported: the page draws again. */
   onChange: () => void = () => {}
@@ -42,9 +60,9 @@ export class Instruments {
         try {
           const res = await fetch(b.url)
           const wav = decodeWav(new Uint8Array(await res.arrayBuffer()))
-          if (!this.own.has(name)) this.loaded.set(name, instrument(wav.data, b.note))
+          this.builtIn.set(name, { data: wav.data, note: b.note })
         } catch {
-          // A missing built-in: the tracks using it are silent.
+          // A missing built-in: the songs using it are silent there.
         }
       }),
     )
@@ -53,17 +71,42 @@ export class Instruments {
 
   /** Reads the game's instruments again (imported, synced). */
   async loadOwn() {
-    const names = await this.project.listInstruments().catch(() => [])
+    const [names, files] = await Promise.all([
+      this.project.listInstruments().catch(() => []),
+      this.project.listInstrumentFiles().catch(() => []),
+    ])
     this.own = new Set(names)
+    this.ownRecordings.clear()
+    this.volumes.clear()
     for (const name of names) {
       try {
-        const { data, note } = await this.project.loadInstrument(name)
-        this.loaded.set(name, instrument(data, note))
+        this.ownRecordings.set(name, await this.project.loadInstrument(name))
       } catch (err) {
         toast((err as Error).message)
       }
     }
+    for (const name of files) {
+      if (this.own.has(name) || !BUILT_IN.has(name)) continue
+      const volume = (await this.project.loadInstrumentFile(name).catch(() => null))?.volume
+      if (volume !== undefined) this.volumes.set(name, volume)
+    }
+    this.loaded.clear()
+    for (const name of new Set([...this.builtIn.keys(), ...this.ownRecordings.keys()])) this.ready(name)
     this.onChange()
+  }
+
+  /** Readies an instrument to play at its volume. */
+  private ready(name: string) {
+    const r = this.ownRecordings.get(name) ?? this.builtIn.get(name)
+    if (r) this.loaded.set(name, instrument(r.data, r.note, this.volume(name)))
+  }
+
+  /** Its volume in this game, in dB. */
+  volume(name: string): number {
+    // The game's own recording, even of a built-in name, is another sound: 0 unless set.
+    const own = this.ownRecordings.get(name)
+    if (own) return own.volume ?? 0
+    return this.volumes.get(name) ?? BUILT_IN.get(name)?.volume ?? 0
   }
 
   get(name: string): Instrument | undefined {
@@ -79,12 +122,29 @@ export class Instruments {
     return this.loaded.has(name)
   }
 
-  isBuiltIn(name: string) {
-    return BUILT_IN.has(name)
+  /**
+   * How it plays an accompaniment (accompany.ts). Held: its recording is still loud at its end,
+   * cut before the player stopped (a bow, a breath), where a strike or a pluck was kept until
+   * it died out (prepareRecording). Low: recorded under C4, a bass.
+   */
+  voice(name: string): Voice {
+    const inst = this.loaded.get(name)
+    if (!inst) return { held: true, low: false }
+    const { data } = inst
+    const win = RATE / 20
+    let top = 0
+    let last = 0
+    for (let s = 0; s + win <= data.length; s += win) {
+      let e = 0
+      for (let i = s; i < s + win; i++) e += data[i] * data[i]
+      last = Math.sqrt(e / win)
+      top = Math.max(top, last)
+    }
+    return { held: last >= top * 0.3, low: (inst.note ?? 60) < 60 }
   }
 
-  isOwn(name: string) {
-    return this.own.has(name)
+  isBuiltIn(name: string) {
+    return BUILT_IN.has(name)
   }
 
   /** Every instrument, the game's first, then by name. */
@@ -156,7 +216,8 @@ export class Instruments {
       return null
     }
     this.own.add(name)
-    this.loaded.set(name, instrument(data, chosen()))
+    this.ownRecordings.set(name, { data, note: chosen() })
+    this.ready(name)
     this.onChange()
     toast(`Instrument “${name}” imported`)
     return name

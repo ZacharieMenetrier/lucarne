@@ -730,6 +730,12 @@ select {
   border-radius: 6px;
   padding: 7px 9px;
 }
+input[type='range'] {
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+}
 input[type='checkbox'] {
   width: 18px;
   height: 18px;
@@ -1922,7 +1928,7 @@ body[data-page='settings'] #settings-page {
 /* --- Music page ------------------------------------------------------------------ */
 
 /* Like the Pixels page: the tools on the left, the song in the middle with its transport
-   under it (as the animation panel is under the board), the tracks and the songs on the right. */
+   under it (as the animation panel is under the board), the instruments and the songs on the right. */
 #music-page {
   position: fixed;
   inset: 0;
@@ -1967,7 +1973,7 @@ body[data-page='music'] #music-page {
 }
 .music-canvas[hidden],
 .music-empty[hidden],
-.music-tracks[hidden] {
+.music-instruments[hidden] {
   display: none;
 }
 .music-empty {
@@ -2067,25 +2073,25 @@ dialog p.sing-label {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-/* The tracks on top, as tall as they are (up to most of the panel); the songs get the rest. */
-.music-tracks {
+/* The instruments on top, as tall as they are (up to most of the panel); the songs get the rest. */
+.music-instruments {
   flex: 0 1 auto;
   max-height: 60%;
 }
 .music-songs {
   flex: 1;
 }
-.music-tracks .world-list,
+.music-instruments .world-list,
 .music-songs .world-list {
   min-height: 0;
 }
-.music-tracks .muted,
+.music-instruments .muted,
 .music-songs .muted {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
 }
-.track-swatch {
+.instrument-swatch {
   flex: none;
   width: 14px;
   height: 14px;
@@ -2093,10 +2099,18 @@ dialog p.sing-label {
   border-radius: 3px;
   background: var(--c);
 }
-.sprite-item > .track-swatch:first-child {
+.sprite-item > .instrument-swatch:first-child {
   width: 14px;
 }
-.track-kind {
+/* Muted: its color as an outline only. Inset, so the square keeps its size. */
+.instrument-swatch.muted {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--c);
+}
+.instrument-swatch:hover {
+  cursor: pointer;
+}
+.instrument-kind {
   font-size: 11px;
   color: var(--muted);
 }
@@ -2147,7 +2161,12 @@ dialog.instrument-dialog {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.instrument-item:hover:not(.active) {
+/* Already in the song: shown, so the list doesn't move, but it can't be taken twice. */
+.instrument-item:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.instrument-item:hover:not(.active):not(:disabled) {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .instrument-item.active,

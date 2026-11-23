@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { RATE, decodeWav, detectPitch, encodeWav, frequency, noteName, noteNumber, prepareRecording, tuneRecording } from '../runtime/sound.ts'
+import { RATE, decodeWav, detectPitch, encodeWav, frequency, noteName, noteNumber, prepareRecording, serializeInstrumentFile, tuneRecording } from '../runtime/sound.ts'
 
 const IOWA = 'University of Iowa Electronic Music Studios, Musical Instrument Samples (theremin.music.uiowa.edu/MIS.html): "freely available … may be downloaded and used for any projects, without restrictions."'
 const VSCO = 'Versilian Studios, VSCO 2 Community Edition (github.com/sgossner/VSCO-2-CE), CC0 1.0.'
@@ -21,7 +21,8 @@ const VSCO = 'Versilian Studios, VSCO 2 Community Edition (github.com/sgossner/V
 /**
  * Every built-in instrument: its source, the note it plays (checked against what is
  * detected), and `cut`, the seconds of recording kept at most, when the player does
- * something at the end that should not repeat (a swell of the bow).
+ * something at the end that should not repeat (a swell of the bow). `volume`, in dB, set by
+ * ear on songs: what the engine's measure of loudness misses (0 when left out).
  */
 const INSTRUMENTS = [
   // Winds
@@ -35,17 +36,17 @@ const INSTRUMENTS = [
   // Strings
   { name: 'violin', note: 'C5', source: 'Violin.arco.ff.sulA.C5', cut: 1.9, by: IOWA },
   { name: 'viola', note: 'C4', source: 'Viola.arco.ff.sulC.C4', by: IOWA },
-  { name: 'cello', note: 'C#3', source: 'Cello.arco.ff.sulC.C3 (the open string, tuned high: it plays C#3)', by: IOWA },
-  { name: 'cello-pizzicato', note: 'C3', source: 'Cello.pizz.ff.sulC.C3', by: IOWA },
-  { name: 'harp', note: 'C5', source: 'Strings/Harp/KSHarp_C5_mf', by: VSCO },
+  { name: 'cello', note: 'C#3', source: 'Cello.arco.ff.sulC.C3 (the open string, tuned high: it plays C#3)', volume: 3, by: IOWA },
+  { name: 'cello-pizzicato', note: 'C3', source: 'Cello.pizz.ff.sulC.C3', volume: 10, by: IOWA },
+  { name: 'harp', note: 'C5', source: 'Strings/Harp/KSHarp_C5_mf', volume: 3, by: VSCO },
   // Struck
-  { name: 'bells', note: 'C6', source: 'bells.brass.ff.C6', by: IOWA },
-  { name: 'marimba', note: 'C5', source: 'Marimba.yarn.ff.C5', by: IOWA },
+  { name: 'bells', note: 'C6', source: 'bells.brass.ff.C6', volume: 2, by: IOWA },
+  { name: 'marimba', note: 'C5', source: 'Marimba.yarn.ff.C5', volume: 7, by: IOWA },
   // Drums: no note, they always play as recorded.
-  { name: 'bass-drum', drum: true, source: 'Percussion/BDrumNewhit_v4_rr1_Sum', by: VSCO },
-  { name: 'tenor-drum', drum: true, source: 'Percussion/timpsnaretenor_f', by: VSCO },
-  { name: 'snare', drum: true, source: 'Percussion/Snare2-HitSN_v5_rr1_Sum', by: VSCO },
-  { name: 'tambourine', drum: true, source: 'Percussion/Tamb1-Hit_v2_rr1_Sum', by: VSCO },
+  { name: 'bass-drum', drum: true, source: 'Percussion/BDrumNewhit_v4_rr1_Sum', volume: 12, by: VSCO },
+  { name: 'tenor-drum', drum: true, source: 'Percussion/timpsnaretenor_f', volume: 2, by: VSCO },
+  { name: 'snare', drum: true, source: 'Percussion/Snare2-HitSN_v5_rr1_Sum', volume: 2, by: VSCO },
+  { name: 'tambourine', drum: true, source: 'Percussion/Tamb1-Hit_v2_rr1_Sum', volume: 4, by: VSCO },
   { name: 'triangle', drum: true, source: 'Percussion/Triangle3-Hit_v1_rr1_Sum', by: VSCO },
   { name: 'claves', drum: true, source: 'Percussion/Claves1_Hit_v2_rr1_Sum', by: VSCO },
 ]
@@ -83,8 +84,10 @@ for (const inst of INSTRUMENTS) {
     const off = 1200 * Math.log2(heard / frequency(noteNumber(note)))
     if (inst.note && note !== inst.note) console.warn(`  ${inst.name}: heard ${note}, expected ${inst.note}`)
     if (Math.abs(off) > 10) console.log(`  ${inst.name}: was ${off.toFixed(0)} cents off ${note}, tuned`)
-    fs.writeFileSync(path.join(out, `${inst.name}.json`), `{ "note": "${note}" }\n`)
-  } else fs.rmSync(path.join(out, `${inst.name}.json`), { force: true })
+  }
+  const json = serializeInstrumentFile({ note: note === null ? null : noteNumber(note), volume: inst.volume })
+  if (json) fs.writeFileSync(path.join(out, `${inst.name}.json`), json)
+  else fs.rmSync(path.join(out, `${inst.name}.json`), { force: true })
   fs.writeFileSync(path.join(out, `${inst.name}.wav`), encodeWav(d))
   credits.push(`- **${inst.name}**${note ? ` (${note})` : ''}: ${inst.source}. ${inst.by}`)
   console.log(`${inst.name.padEnd(16)} ${(d.length / RATE).toFixed(2)} s  ${note ?? 'drum'}`)
