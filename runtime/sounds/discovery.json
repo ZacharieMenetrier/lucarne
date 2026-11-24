@@ -1,0 +1,8 @@
+{
+  "texture": "pluck",
+  "speed": "mid",
+  "grit": "warm",
+  "echo": "some",
+  "pitch": [10, 12, 15, 17, 20],
+  "volume": [20, 21, 22]
+}

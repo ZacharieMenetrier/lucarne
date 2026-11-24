@@ -3,18 +3,23 @@
 // Zoom is a whole number of screen pixels per sprite pixel, so every pixel
 // stays crisp. There is no checkerboard: transparent pixels show the board.
 
-import { colorToCss } from './color'
+import { TRANSPARENT, colorToCss, hexToColor } from './color'
 import { Bitmap, blit } from './bitmap'
 import type { Editor } from './editor'
 import { toImageData } from './png'
-import { isTileset } from './sprite'
+import { isFont, isTileset } from './sprite'
+import { FONT_CHARACTERS, FONT_COLUMNS, Font, measureGlyphs } from '../../runtime/fonts'
+import { fontCell } from './font'
+
+/** Written under the font being edited, with its own pixels: what it looks like as text. */
+const SPECIMEN = 'The quick brown fox jumps over the lazy dog. 0123456789 Élève, garçon, où ? « Déjà ! »'
 import { Viewport, isLight } from './viewport'
 
 export { MAX_ZOOM, MIN_ZOOM } from './viewport'
 
 /** Lines and text that stay visible on the board color. */
-const ON_DARK = { outline: 'rgba(255, 255, 255, 0.08)', active: 'rgba(255, 255, 255, 0.24)', grid: 'rgba(255, 255, 255, 0.07)', check: 'rgba(255, 255, 255, 0.05)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)' }
-const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.1)', active: 'rgba(0, 0, 0, 0.3)', grid: 'rgba(0, 0, 0, 0.09)', check: 'rgba(0, 0, 0, 0.06)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)' }
+const ON_DARK = { outline: 'rgba(255, 255, 255, 0.08)', active: 'rgba(255, 255, 255, 0.24)', grid: 'rgba(255, 255, 255, 0.07)', check: 'rgba(255, 255, 255, 0.05)', cursor: '#ffffff', handle: 'rgba(255, 255, 255, 0.35)', font: '#ffffff', guide: 'rgba(255, 255, 255, 0.16)' }
+const ON_LIGHT = { outline: 'rgba(0, 0, 0, 0.1)', active: 'rgba(0, 0, 0, 0.3)', grid: 'rgba(0, 0, 0, 0.09)', check: 'rgba(0, 0, 0, 0.06)', cursor: '#000000', handle: 'rgba(0, 0, 0, 0.35)', font: '#000000', guide: 'rgba(0, 0, 0, 0.18)' }
 
 const DANGER = '#e0566b'
 
@@ -29,6 +34,8 @@ export class View extends Viewport {
   private live = new Map<string, HTMLCanvasElement>()
   /** Pixels of sprites that are not being edited, ready to draw. */
   private cache = new WeakMap<Bitmap, HTMLCanvasElement>()
+  /** A font's image in the board's ink color, by its image (and that color). */
+  private fontInk = new WeakMap<Bitmap, { color: string; bmp: Bitmap }>()
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -40,6 +47,7 @@ export class View extends Viewport {
   /** Forgets cached sprite images (after changing pixels in place). */
   invalidate() {
     this.cache = new WeakMap()
+    this.fontInk = new WeakMap()
     this.requestRender()
   }
 
@@ -123,6 +131,10 @@ export class View extends Viewport {
         if (isActive && editor.overlay) blit(img, editor.overlay, 0, 0)
         if (name === previewOn) img.set(hv!.x - pl.x, hv!.y - pl.y, tool === 'eraser' ? 0 : editor.color)
       }
+      // A font is ink only (the game chooses its color): shown in the board's ink.
+      // The font being edited changes in place: its ink is made again every frame, as its
+      // pixels are drawn (see drawBitmap).
+      if (isFont(name)) img = this.inked(img, ink.font, isActive || img !== bmp)
       this.drawBitmap(img, x, y, z, isActive || img !== bmp ? name : null)
       if (isActive) this.cache.delete(bmp)
 
@@ -142,6 +154,9 @@ export class View extends Viewport {
           for (let i = t; i < h; i += t) ctx.fillRect(x, Math.round(y + i), w, lw)
         }
       }
+
+      // A font's cells, always shown, with the character each is for when it is empty.
+      if (isFont(name)) this.drawFontCells(img, x, y, z, ink, isActive)
 
       // Outline, just outside the pixels; red while dropped on another sprite
       ctx.strokeStyle = isActive ? (blocked ? DANGER : ink.active) : ink.outline
@@ -216,6 +231,63 @@ export class View extends Viewport {
       ctx.setLineDash([])
       this.requestRender()
     }
+  }
+
+  /** A font's image with its ink in one color (`fresh`: an image that changes every frame). */
+  private inked(bmp: Bitmap, color: string, fresh: boolean): Bitmap {
+    const known = fresh ? undefined : this.fontInk.get(bmp)
+    if (known?.color === color) return known.bmp
+    const c = hexToColor(color)
+    const out = new Bitmap(bmp.width, bmp.height)
+    for (let i = 0; i < bmp.data.length; i++) out.data[i] = bmp.data[i] === TRANSPARENT ? TRANSPARENT : c
+    if (!fresh) this.fontInk.set(bmp, { color, bmp: out })
+    return out
+  }
+
+  /** A font's grid of cells, the character an empty cell is for, and under the font being
+   * edited, a line written with it. */
+  private drawFontCells(img: Bitmap, x: number, y: number, z: number, ink: typeof ON_DARK, active: boolean) {
+    const { ctx } = this
+    const cell = fontCell(img)
+    const cw = cell.width * z
+    const chh = cell.height * z
+    const lw = Math.max(1, Math.round(this.dpr))
+    const w = img.width * z
+    const h = img.height * z
+    ctx.fillStyle = ink.active
+    if (cw >= 4 * this.dpr) for (let i = cw; i < w - 1; i += cw) ctx.fillRect(Math.round(x + i), y, lw, h)
+    if (chh >= 4 * this.dpr) for (let i = chh; i < h - 1; i += chh) ctx.fillRect(x, Math.round(y + i), w, lw)
+    const isInk = (px: number, py: number) => img.get(px, py) !== TRANSPARENT
+    const glyphs = measureGlyphs(cell.width, cell.height, isInk)
+    if (chh >= 12 * this.dpr) {
+      ctx.fillStyle = ink.guide
+      ctx.font = `${Math.round(chh * 0.7)}px system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ;[...FONT_CHARACTERS].forEach((ch, i) => {
+        if (glyphs[i]) return
+        ctx.fillText(ch, x + ((i % FONT_COLUMNS) + 0.5) * cw, y + (Math.floor(i / FONT_COLUMNS) + 0.5) * chh)
+      })
+      ctx.textAlign = 'start'
+      ctx.textBaseline = 'alphabetic'
+    }
+    if (!active || !glyphs.some(Boolean)) return
+    // The specimen: stamped from the font's pixels, as the game does, a line under it.
+    const src = document.createElement('canvas')
+    src.width = img.width
+    src.height = img.height
+    src.getContext('2d')!.putImageData(toImageData(img), 0, 0)
+    const font = new Font({ name: '', sheet: src, width: img.width, height: img.height, ink: isInk })
+    ctx.imageSmoothingEnabled = false
+    font.lines(SPECIMEN, img.width).forEach((line, row) => {
+      let cx = 0
+      const top = y + h + (row + 1) * font.lineHeight * z
+      for (const ch of line) {
+        const g = font.glyph(ch)
+        if (g) ctx.drawImage(src, g.x, g.y, g.width, cell.height, x + cx * z, top, g.width * z, chh)
+        cx += font.advance(ch)
+      }
+    })
   }
 
   /** A solid box: red hatching anchored to the board, and its outline. */

@@ -2184,3 +2184,159 @@ dialog.instrument-dialog {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* --- Sounds page ------------------------------------------------------------------ */
+
+/* Laid out like the Music page (.music-body): the tools, the sound with Play under it, its
+   settings and the sounds on the right. --tc is the sound's texture color. */
+#sounds-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  --tc: var(--accent);
+}
+body[data-page='sounds'] #sounds-page {
+  display: flex;
+}
+#sounds-page .music-body {
+  grid-template-columns: 60px minmax(0, 1fr) 260px;
+}
+.sound-stage {
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+/* The grid, square, as large as the stage allows. */
+.sound-grid {
+  position: relative;
+  width: min(calc(100cqw - 32px), calc(100cqh - 32px));
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  grid-template-rows: repeat(24, 1fr);
+  gap: 2px;
+  touch-action: none;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sound-grid[hidden] {
+  display: none;
+}
+.sound-grid i {
+  display: block;
+  border-radius: 2px;
+  background: var(--panel-2);
+}
+.sound-grid i.octave {
+  background: #2e2e3a;
+}
+/* After the last pixel: not heard. */
+.sound-grid i.after {
+  background: color-mix(in srgb, var(--panel-2) 60%, var(--stage-bg));
+}
+.sound-grid i.on {
+  background: var(--tc);
+}
+.sound-grid.volume {
+  cursor: ns-resize;
+}
+.sound-grid.volume i.on {
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+.sound-grid i.bar {
+  background: color-mix(in srgb, var(--tc) 38%, var(--panel-2));
+}
+.sound-grid i.empty-bar {
+  background: var(--line);
+}
+.sound-playhead {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: calc(100% / 24);
+  border: 2px solid var(--text);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.sound-playhead[hidden] {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sound-playhead {
+    display: none;
+  }
+}
+.sound-settings {
+  flex: none;
+  gap: 10px;
+}
+.sound-settings[hidden] {
+  display: none;
+}
+.sound-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sound-key {
+  font-size: 12px;
+  color: var(--muted);
+}
+.sound-segment {
+  display: grid;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.sound-segment button {
+  padding: 4px 2px;
+  font-size: 12px;
+  background: transparent;
+  border-color: transparent;
+}
+.sound-segment button[aria-pressed='true'] {
+  background: var(--tc);
+  border-color: var(--tc);
+  color: #0d1b2a;
+}
+.sound-field input[type='range'] {
+  width: 100%;
+  accent-color: var(--tc);
+}
+.sound-row {
+  display: flex;
+  gap: 6px;
+}
+.sound-row > * {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+}
+.sound-row input {
+  flex: 3 1 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+.sound-glide[aria-pressed='true'] {
+  background: var(--tc);
+  border-color: var(--tc);
+  color: #0d1b2a;
+}
+.sound-thumb-box {
+  display: contents;
+}
+.sound-thumb {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  shape-rendering: crispEdges;
+}

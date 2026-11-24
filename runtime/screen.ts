@@ -132,7 +132,6 @@ export const screen = {
     const f = options.font ?? gameFont()
     written.push({ text, x, y })
     if (!c) return
-    const w = f.cellWidth
     const h = f.cellHeight
     let line = 0
     for (const content of f.lines(text, options.width)) {
@@ -140,11 +139,8 @@ export const screen = {
       const top = px(y + line * f.lineHeight, originY)
       for (const ch of content) {
         // A space is blank: nothing to stamp.
-        const i = ch === ' ' ? -1 : f.glyph(ch)
-        if (i >= 0) {
-          const at = f.cell(i)
-          c.drawImage(f.tinted(color, i), at.x, at.y, w, h, px(cx, originX), top, w * scale, h * scale)
-        }
+        const g = f.glyph(ch)
+        if (g) c.drawImage(f.tinted(color, g), g.x, g.y, g.width, h, px(cx, originX), top, g.width * scale, h * scale)
         cx += f.advance(ch)
       }
       line++

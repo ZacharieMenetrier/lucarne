@@ -12,9 +12,9 @@ import { createActionsMenu, createEditorSwitch, createMenu, currentPage } from '
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
-import { importFont } from './fontimport'
+import { blankFont, fontFromFile, nameFromFile } from './font'
 import { Player, isPlaying } from './play'
-import { MAX_SIZE, NAME_RE, TILESET_COLUMNS, isTileset, newSprite, tilesetKey, tilesetName, type Sprite } from './sprite'
+import { MAX_SIZE, NAME_RE, TILESET_COLUMNS, defaultMeta, fontKey, fontName, isFont, isStill, isTileset, newSprite, shownName, tilesetKey, tilesetName, type Sprite } from './sprite'
 import { toImageData } from './png'
 import { View } from './view'
 
@@ -173,6 +173,7 @@ export class App {
     $('empty-new').addEventListener('click', () => void this.newSprite())
     $('sprites-new').addEventListener('click', () => void this.newSprite())
     $('tilesets-new').addEventListener('click', () => void this.newTileset())
+    $('fonts-new').addEventListener('click', () => void this.newFont())
     $('palette-edit').addEventListener('click', () => void this.editPalette())
     this.editor.subscribe(() => this.render())
 
@@ -307,12 +308,12 @@ export class App {
     return { el: h('div', {}, row, presets), read, check }
   }
 
-  /** What is wrong with a name typed for a sprite, or for a tileset (`tileset`: the name
-   * typed is without "tiles/", and `current` too). */
-  private nameError(name: string, current?: string, tileset = false) {
+  /** What is wrong with a name typed for a sprite, a tileset or a font (`prefix`: its
+   * folder on the board, "tiles/" or "fonts/"; the name typed is without it, and `current` too). */
+  private nameError(name: string, current?: string, prefix = '') {
     if (!NAME_RE.test(name)) return 'Name: lowercase letters, digits, “-” and “_” (e.g. hero-walk).'
-    const taken = this.spriteNames.includes(tileset ? tilesetKey(name) : name)
-    if (name !== current && taken) return `A ${tileset ? 'tileset' : 'sprite'} with this name already exists.`
+    const kind = prefix === 'tiles/' ? 'tileset' : prefix === 'fonts/' ? 'font' : 'sprite'
+    if (name !== current && this.spriteNames.includes(prefix + name)) return `A ${kind} with this name already exists.`
     return null
   }
 
@@ -333,16 +334,57 @@ export class App {
   }
 
   async newTileset() {
-    const nameInput = h('input', { type: 'text', value: tilesetName(this.uniqueName(tilesetKey('tileset'))), autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const nameInput = h('input', { type: 'text', value: shownName(this.uniqueName(tilesetKey('tileset'))), autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
     const size = this.tileFields(8)
     const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput), size.el)
     const res = await openDialog('New tileset', body, [
       { label: 'Cancel', value: 'cancel' },
       { label: 'Create', value: 'ok', kind: 'primary' },
-    ], () => this.nameError(nameInput.value.trim(), undefined, true) ?? size.check())
+    ], () => this.nameError(nameInput.value.trim(), undefined, 'tiles/') ?? size.check())
     if (!res) return
     const { w, h: hh } = size.read()
     await this.create(newSprite(tilesetKey(nameInput.value.trim()), w, hh))
+  }
+
+  /** A blank font: every cell empty, to draw in (its cells grow from a corner). */
+  async newFont() {
+    const nameInput = h('input', { type: 'text', value: shownName(this.uniqueName(fontKey('font'))), autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput),
+      h('p', { className: 'muted' }, 'Every character has its cell: draw them in. Drag a corner to make the cells bigger.'))
+    const closed = openDialog('New font', body, [
+      { label: 'Import…', value: 'import', kind: 'left' },
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Create', value: 'ok', kind: 'primary' },
+    ], (v) => (v === 'ok' ? this.nameError(nameInput.value.trim(), undefined, 'fonts/') : null))
+    // The file picker opens in the click itself: Safari opens none once the click is over
+    // (the dialog answers a moment later).
+    body.closest('dialog')!.querySelector('button[value="import"]')!.addEventListener('click', () => this.importFont())
+    const res = await closed
+    if (res !== 'ok') return
+    const sheet = blankFont()
+    await this.create({ name: fontKey(nameInput.value.trim()), meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] })
+  }
+
+  /** Asks for a pixel font file (and its license, if it has one) and puts it on the board. */
+  importFont() {
+    const picker = h('input', { type: 'file', multiple: true, accept: '.ttf,.otf,.woff,.woff2,.txt,.md' })
+    picker.addEventListener('change', () => void this.importFontFiles([...(picker.files ?? [])]))
+    picker.click()
+  }
+
+  private async importFontFiles(files: File[]) {
+    const source = files.find((f) => /\.(ttf|otf|woff2?)$/i.test(f.name))
+    if (!source) return toast('Choose a font file: .ttf, .otf or .woff (and its license).')
+    const licenseFile = files.find((f) => f !== source && /\.(txt|md)$/i.test(f.name))
+    let sheet
+    try {
+      sheet = await fontFromFile(await source.arrayBuffer())
+    } catch (err) {
+      return toast(`Could not read the font: ${(err as Error).message}`)
+    }
+    const name = this.uniqueName(fontKey(nameFromFile(source.name)))
+    if (licenseFile) await this.project.saveFontLicense(fontName(name), await licenseFile.text())
+    await this.create({ name, meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] })
   }
 
   async newSprite() {
@@ -413,18 +455,18 @@ export class App {
   }
 
   private async askRename(from: string) {
-    const tileset = isTileset(from)
-    const shown = tileset ? tilesetName(from) : from
+    const shown = shownName(from)
+    const prefix = from.slice(0, from.length - shown.length)
     const nameInput = h('input', { type: 'text', value: shown, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
     const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput))
     queueMicrotask(() => nameInput.select())
-    const res = await openDialog(tileset ? 'Rename tileset' : 'Rename sprite', body, [
+    const res = await openDialog(isTileset(from) ? 'Rename tileset' : isFont(from) ? 'Rename font' : 'Rename sprite', body, [
       { label: 'Cancel', value: 'cancel' },
       { label: 'Rename', value: 'ok', kind: 'primary' },
-    ], () => this.nameError(nameInput.value.trim(), shown, tileset))
+    ], () => this.nameError(nameInput.value.trim(), shown, prefix))
     const name = nameInput.value.trim()
     if (res !== 'ok' || name === shown || !this.editor.sprites.has(from)) return
-    await this.renameSprite(from, tileset ? tilesetKey(name) : name)
+    await this.renameSprite(from, prefix + name)
   }
 
   /** Copies a sprite under a new name, next to it on the board. */
@@ -435,6 +477,7 @@ export class App {
     copy.name = this.uniqueName(`${from}-copy`)
     try {
       await this.project.saveSprite(copy)
+      await this.copyFontLicense(from, copy.name)
     } catch (err) {
       return toast(`Could not duplicate: ${(err as Error).message}`)
     }
@@ -447,6 +490,13 @@ export class App {
     this.focusSprite(copy.name)
   }
 
+  /** A font's license goes with its copies. */
+  private async copyFontLicense(from: string, to: string) {
+    if (!isFont(from)) return
+    const license = await this.project.loadFontLicense(fontName(from))
+    if (license !== null) await this.project.saveFontLicense(fontName(to), license)
+  }
+
   private async renameSprite(from: string, to: string) {
     await this.saver.flush()
     const snapshot = this.editor.snapshot(from)
@@ -454,13 +504,14 @@ export class App {
     snapshot.name = to
     try {
       await this.project.saveSprite(snapshot)
+      await this.copyFontLicense(from, to)
       await this.project.deleteSprite(from)
     } catch (err) {
       return toast(`Could not rename: ${(err as Error).message}`)
     }
     this.editor.renameSprite(from, to)
     this.saver.boardMoved()
-    if (isTileset(from)) await this.onTilesetRenamed(tilesetName(from), tilesetName(to))
+    if (isTileset(from)) await this.onTilesetRenamed(shownName(from), shownName(to))
     const thumb = this.thumbs.get(from)
     this.thumbs.delete(from)
     if (thumb) this.thumbs.set(to, thumb)
@@ -476,11 +527,14 @@ export class App {
         return
       }
     }
+    const shown = shownName(name)
     const ok = await confirmDialog(
-      isTileset(name) ? 'Delete tileset' : 'Delete sprite',
+      isTileset(name) ? 'Delete tileset' : isFont(name) ? 'Delete font' : 'Delete sprite',
       isTileset(name)
-        ? `“${tilesetName(name)}” (tiles/${tilesetName(name)}.png) will be deleted from the game folder. Git keeps the history of versions already committed.`
-        : `“${name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
+        ? `“${shown}” (tiles/${shown}.png) will be deleted from the game folder. Git keeps the history of versions already committed.`
+        : isFont(name)
+          ? `“${shown}” (fonts/${shown}.png, and its license) will be deleted from the game folder. Git keeps the history of versions already committed.`
+          : `“${name}” (PNG and JSON) will be deleted from the game folder. Git keeps the history of versions already committed.`,
       'Delete',
       true,
     )
@@ -780,7 +834,7 @@ export class App {
   // --- Construction ---------------------------------------------------------
 
   private buildTopbar() {
-    $('topbar').prepend(createMenu([{ label: 'Import a font…', run: () => importFont(this.project) }]), createEditorSwitch())
+    $('topbar').prepend(createMenu(), createEditorSwitch())
     const player = new Player(this.project, async () => {
       await this.saver.flush()
       await this.beforePlay()
@@ -793,6 +847,7 @@ export class App {
     this.refreshSync()
     $('sprites-new').innerHTML = icon('add')
     $('tilesets-new').innerHTML = icon('add')
+    $('fonts-new').innerHTML = icon('add')
     $('palette-edit').innerHTML = icon('pencil')
     $('grid').innerHTML = icon('grid')
     $('checker').innerHTML = icon('checker')
@@ -1065,7 +1120,7 @@ export class App {
       el.classList.toggle('playing', ed.playing && i === shown)
     }
     const fpsInput = $<HTMLInputElement>('fps')
-    fpsInput.disabled = !sprite || isTileset(sprite.name)
+    fpsInput.disabled = !sprite || isStill(sprite.name)
     if (document.activeElement !== fpsInput) {
       fpsInput.value = sprite ? String(Math.min(MAX_FPS, Math.max(MIN_FPS, ed.fps))) : ''
       $('fps-value').textContent = sprite ? fpsInput.value : ''
@@ -1079,8 +1134,8 @@ export class App {
       $('play').setAttribute('aria-label', ed.playing ? 'Pause' : 'Play')
     }
     $<HTMLButtonElement>('play').disabled = n < 2
-    // A tileset is one image: no animation.
-    const still = !sprite || isTileset(sprite.name)
+    // A tileset or a font is one image: no animation.
+    const still = !sprite || isStill(sprite.name)
     $<HTMLButtonElement>('frame-add').disabled = still
     $<HTMLButtonElement>('frame-dup').disabled = still
     $<HTMLButtonElement>('frame-del').disabled = n < 2
@@ -1205,16 +1260,18 @@ export class App {
   private renderSprites() {
     const list = $('sprite-list')
     const tilesets = $('tileset-list')
+    const fonts = $('font-list')
     list.replaceChildren()
     tilesets.replaceChildren()
+    fonts.replaceChildren()
     for (const name of this.spriteNames) {
-      const label = isTileset(name) ? tilesetName(name) : name
+      const label = shownName(name)
       const menu = createActionsMenu(`Options for ${label}`, [
         { label: 'Rename', run: () => void this.askRename(name) },
         { label: 'Duplicate', run: () => void this.duplicateSprite(name) },
         { label: 'Delete', run: () => void this.deleteSprite(name), danger: true },
       ])
-      ;(isTileset(name) ? tilesets : list).append(
+      ;(isTileset(name) ? tilesets : isFont(name) ? fonts : list).append(
         h('div', { className: 'sprite-row' },
           h('button', {
             className: 'sprite-item',

@@ -1,0 +1,7 @@
+{
+  "texture": "glass",
+  "speed": "blink",
+  "echo": "some",
+  "pitch": [20],
+  "volume": [17]
+}

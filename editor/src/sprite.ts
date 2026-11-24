@@ -61,6 +61,36 @@ export function tilesetName(boardName: string) {
 export function tilesetKey(name: string) {
   return TILESET_PREFIX + name
 }
+/**
+ * Fonts (fonts/<name>.png) sit on the board like tilesets, under the name "fonts/<name>":
+ * one image, a fixed grid of characters (runtime/fonts.ts), no animation and no origin.
+ */
+export const FONT_PREFIX = 'fonts/'
+
+export function isFont(name: string) {
+  return name.startsWith(FONT_PREFIX)
+}
+
+/** "fonts/small" → "small". */
+export function fontName(boardName: string) {
+  return boardName.slice(FONT_PREFIX.length)
+}
+
+/** "small" → "fonts/small". */
+export function fontKey(name: string) {
+  return FONT_PREFIX + name
+}
+
+/** A tileset or a font: one image, no animation, no origin. */
+export function isStill(name: string) {
+  return isTileset(name) || isFont(name)
+}
+
+/** The name shown for something on the board: without its folder. */
+export function shownName(boardName: string) {
+  return isTileset(boardName) ? tilesetName(boardName) : isFont(boardName) ? fontName(boardName) : boardName
+}
+
 export const MAX_SIZE = 512
 
 export function defaultMeta(frameWidth: number, frameHeight: number): SpriteMeta {

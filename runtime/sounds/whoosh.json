@@ -1,0 +1,8 @@
+{
+  "texture": "noise",
+  "speed": "mid",
+  "glide": true,
+  "echo": "some",
+  "pitch": [8, 11, 14, 16, 15, 12, 9],
+  "volume": [8, 14, 20, 23, 21, 15, 8]
+}

@@ -25,6 +25,7 @@ const PATHS: Record<string, string> = {
   move: 'M480-80 317-243l44-44 89 89v-189h60v189l89-89 44 44L480-80ZM238-322 80-480l159-159 44 44-85 85h189v60H198l84 84-44 44Zm484 0-44-44 84-84H574v-60h188l-84-84 44-44 158 158-158 158ZM450-574v-188l-84 84-44-44 158-158 158 158-44 44-84-84v188h-60Z', // open_with
   frames: 'M320-120v-520h520v520H320Zm60-60h400v-400H380v400ZM120-320v-520h520v100h-60v-40H180v400h140v60H120Z', // stacked frames (custom)
   play: 'M320-200v-560l440 280-440 280Z', // play_arrow
+  volume: 'M200-160v-200h120v200H200Zm220 0v-400h120v400H420Zm220 0v-640h120v640H640Z', // signal_cellular_alt: louder to the right
   stop: 'M240-240v-480h480v480H240Z', // stop (filled)
   record: 'M480-280a200 200 0 1 1 0-400a200 200 0 1 1 0 400Z', // a filled circle (custom, like fiber_manual_record)
   pause: 'M525-200v-560h235v560H525Zm-325 0v-560h235v560H200Z', // pause

@@ -1,20 +1,25 @@
 // The game folder as the editor sees it: the settings, the palette, the sprites, the
-// tilesets, the actor files' values, the maps, the fonts, the instruments and the songs.
+// tilesets, the actor files' values, the maps, the fonts, the instruments, the songs and the
+// sounds.
 
 import { ACTORS_DIR, parseActorFile, serializeActorFile, type Values } from './actors'
 import { Bitmap, resized } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
-import { parseFontMeta, serializeFontMeta, type FontMeta, type ImportedFont } from './font'
+import { whiteInk } from './font'
 import { parseSettings, serializeSettings, type GameSettings } from '../../runtime/game'
 import { parseMap, serializeMap, type GameMap } from './map'
 import { decodeWav, encodeWav, parseInstrumentFile, parseSong, serializeInstrumentFile, serializeSong, type InstrumentFile, type Song } from '../../runtime/sound'
+import { parseSound, serializeSound, type Sound } from '../../runtime/sfx'
 import { decodePng, encodePng } from './png'
 import {
+  FONT_PREFIX,
   NAME_RE,
   TILESET_COLUMNS,
   TILESET_PREFIX,
   composeSheet,
+  fontName,
+  isFont,
   isTileset,
   tilesetName,
   defaultMeta,
@@ -45,6 +50,7 @@ const TILES_DIR = 'tiles'
 const MAPS_DIR = 'maps'
 const INSTRUMENTS_DIR = 'instruments'
 const SONGS_DIR = 'songs'
+const SOUNDS_DIR = 'sounds'
 
 export function parsePalette(text: string): string[] {
   const raw = JSON.parse(text) as unknown
@@ -120,19 +126,32 @@ export class Project {
     return [...names].sort()
   }
 
-  /** What sits on the board: the sprites, then the tilesets ("tiles/<name>"). */
+  /** What sits on the board: the sprites, the tilesets ("tiles/<name>"), then the fonts
+   * ("fonts/<name>"). */
   async listBoard(): Promise<string[]> {
-    const [sprites, tiles] = await Promise.all([this.listSprites(), this.storage.list(TILES_DIR)])
-    const tilesets = tiles
+    const [sprites, tiles, fonts] = await Promise.all([this.listSprites(), this.storage.list(TILES_DIR), this.storage.list(FONTS_DIR)])
+    const images = (files: string[], prefix: string) => files
       .map((f) => /^(.+)\.png$/.exec(f)?.[1])
       .filter((n): n is string => n !== undefined && NAME_RE.test(n))
       .sort()
-      .map((n) => TILESET_PREFIX + n)
-    return [...sprites, ...tilesets]
+      .map((n) => prefix + n)
+    return [...sprites, ...images(tiles, TILESET_PREFIX), ...images(fonts, FONT_PREFIX)]
   }
 
-  /** A sprite, or a tileset ("tiles/<name>": one frame, cut in tiles by the game). */
+  /** Font names: fonts/<name>.png. */
+  async listFonts(): Promise<string[]> {
+    return (await this.listBoard()).filter(isFont).map(fontName)
+  }
+
+  /** A sprite, a tileset ("tiles/<name>": one frame, cut in tiles by the game) or a font
+   * ("fonts/<name>": one frame, cut in characters). */
   async loadSprite(name: string): Promise<Sprite> {
+    if (isFont(name)) {
+      const png = await this.storage.read(`${FONTS_DIR}/${fontName(name)}.png`)
+      if (!png) throw new Error(`Font not found: ${fontName(name)}`)
+      const sheet = await decodePng(png)
+      return { name, meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] }
+    }
     if (isTileset(name)) {
       const base = `${TILES_DIR}/${tilesetName(name)}`
       const [png, json] = await Promise.all([this.storage.read(`${base}.png`), readText(this.storage, `${base}.json`)])
@@ -155,6 +174,10 @@ export class Project {
   }
 
   async saveSprite(sprite: Sprite) {
+    if (isFont(sprite.name)) {
+      await this.storage.write(`${FONTS_DIR}/${fontName(sprite.name)}.png`, await encodePng(whiteInk(sprite.frames[0])))
+      return
+    }
     if (isTileset(sprite.name)) {
       const base = `${TILES_DIR}/${tilesetName(sprite.name)}`
       await this.storage.write(`${base}.png`, await encodePng(sprite.frames[0]))
@@ -169,32 +192,22 @@ export class Project {
     await writeText(this.storage, `${SPRITES_DIR}/${sprite.name}.json`, serializeMeta(sprite.meta))
   }
 
-  /** Font names: fonts/<name>.png with its .json. */
-  async listFonts(): Promise<string[]> {
-    const files = new Set(await this.storage.list(FONTS_DIR))
-    return [...files]
-      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
-      .filter((n): n is string => n !== undefined && files.has(`${n}.png`))
-      .sort()
+  /** A font's license (fonts/<name>.license.txt), null for none. */
+  async loadFontLicense(name: string): Promise<string | null> {
+    return readText(this.storage, `${FONTS_DIR}/${name}.license.txt`)
   }
 
-  async loadFont(name: string): Promise<{ sheet: Bitmap; meta: FontMeta }> {
-    const [png, json] = await Promise.all([
-      this.storage.read(`${FONTS_DIR}/${name}.png`),
-      readText(this.storage, `${FONTS_DIR}/${name}.json`),
-    ])
-    if (!png || json === null) throw new Error(`Font not found: ${name}`)
-    return { sheet: await decodePng(png), meta: parseFontMeta(json) }
-  }
-
-  /** Saves a font, and its license when there is one (it travels with the font). */
-  async saveFont(name: string, font: ImportedFont, license: string | null) {
-    await this.storage.write(`${FONTS_DIR}/${name}.png`, await encodePng(font.sheet))
-    await writeText(this.storage, `${FONTS_DIR}/${name}.json`, serializeFontMeta(font.meta))
-    if (license !== null) await writeText(this.storage, `${FONTS_DIR}/${name}.license.txt`, license)
+  /** Saves a font's license: it travels with the font. */
+  async saveFontLicense(name: string, license: string) {
+    await writeText(this.storage, `${FONTS_DIR}/${name}.license.txt`, license)
   }
 
   async deleteSprite(name: string) {
+    if (isFont(name)) {
+      await this.storage.remove(`${FONTS_DIR}/${fontName(name)}.png`)
+      await this.storage.remove(`${FONTS_DIR}/${fontName(name)}.license.txt`)
+      return
+    }
     if (isTileset(name)) {
       await this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.png`)
       await this.storage.remove(`${TILES_DIR}/${tilesetName(name)}.json`)
@@ -332,6 +345,32 @@ export class Project {
 
   async deleteSong(name: string) {
     await this.storage.remove(`${SONGS_DIR}/${name}.json`)
+  }
+
+  /** Sound names: sounds/<name>.json (the game's own; the engine's are in runtime/sounds/). */
+  async listSounds(): Promise<string[]> {
+    return (await this.storage.list(SOUNDS_DIR))
+      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
+      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
+      .sort()
+  }
+
+  async loadSound(name: string): Promise<Sound> {
+    const text = await readText(this.storage, `${SOUNDS_DIR}/${name}.json`)
+    if (text === null) throw new Error(`Sound not found: ${name}`)
+    try {
+      return parseSound(text)
+    } catch (err) {
+      throw new Error(`The sound "${name}" could not be read: ${(err as Error).message}`)
+    }
+  }
+
+  async saveSound(name: string, sound: Sound) {
+    await writeText(this.storage, `${SOUNDS_DIR}/${name}.json`, serializeSound(sound))
+  }
+
+  async deleteSound(name: string) {
+    await this.storage.remove(`${SOUNDS_DIR}/${name}.json`)
   }
 }
 

@@ -9,6 +9,27 @@ import { renderNote, renderSong, songSteps, stepSeconds, type Instrument, type S
 /** Seconds of crossfade when the song changes while it plays. */
 const SWAP = 0.02
 
+let shared: AudioContext | null = null
+
+/** The editor's audio context, made on the first sound (a browser only starts one after a click
+ *  or a key): one for every page, as an iPad wants. */
+export function audioContext(): AudioContext {
+  if (!shared) {
+    try {
+      // Plays even with an iPhone's or iPad's silent switch on (set once: singing switches
+      // it to play-and-record for a while, microphone.ts).
+      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession
+      if (session) session.type = 'playback'
+    } catch {}
+    shared = new AudioContext()
+  }
+  // Not only "suspended": Safari also has "interrupted", which is where a change of audio
+  // session (singing, microphone.ts) or another app taking the sound leaves it, and it
+  // stays silent until resumed.
+  if (shared.state !== 'running' && shared.state !== 'closed') void shared.resume()
+  return shared
+}
+
 interface Voice {
   source: AudioBufferSourceNode
   gain: GainNode
@@ -26,22 +47,9 @@ export class MusicPlayer {
     return this.voice !== null
   }
 
-  /** The audio context, made on the first sound (a browser only starts one after a click or a key). */
+  /** The audio context (shared with the Sounds page). */
   audio(): AudioContext {
-    if (!this.ctx) {
-      try {
-        // Plays even with an iPhone's or iPad's silent switch on (set once: singing switches
-        // it to play-and-record for a while, microphone.ts).
-        const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession
-        if (session) session.type = 'playback'
-      } catch {}
-      this.ctx = new AudioContext()
-    }
-    // Not only "suspended": Safari also has "interrupted", which is where a change of audio
-    // session (singing, microphone.ts) or another app taking the sound leaves it, and it
-    // stays silent until resumed.
-    if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') void this.ctx.resume()
-    return this.ctx
+    return (this.ctx = audioContext())
   }
 
   /** Plays the song from a step, in a loop. */

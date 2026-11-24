@@ -1,0 +1,6 @@
+{
+  "texture": "water",
+  "echo": "a-little",
+  "pitch": [10, null, 13, 12, null, null, 16, null, 14],
+  "volume": [17, 23, 20, 14, 23, 23, 18, 23, 12]
+}

@@ -1,0 +1,7 @@
+{
+  "texture": "water",
+  "speed": "blink",
+  "echo": "some",
+  "pitch": [14],
+  "volume": [20]
+}

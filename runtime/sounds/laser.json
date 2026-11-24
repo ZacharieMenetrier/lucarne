@@ -1,0 +1,7 @@
+{
+  "texture": "retro",
+  "grit": "crunchy",
+  "glide": true,
+  "pitch": [23, 21, 19, 17, 15, 13, 11, 9],
+  "volume": [23, 23, 22, 20, 17, 14, 10, 6]
+}

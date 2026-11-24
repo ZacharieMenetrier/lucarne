@@ -169,7 +169,7 @@ export class MusicPage {
       })))
     this.root = h('div', { id: 'music-page' },
       h('header', { className: 'page-bar' },
-        createMenu([{ label: 'Import an instrument…', run: () => void this.importInstrument() }]),
+        createMenu(),
         createEditorSwitch(),
         h('span', { className: 'spacer' }),
         this.status,

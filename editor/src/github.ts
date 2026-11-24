@@ -58,9 +58,10 @@ export function isEditorFile(path: string) {
     /^tiles\/[^/]+\.(png|json)$/.test(path) ||
     /^maps\/[^/]+\.json$/.test(path) ||
     /^actors\/[^/]+\.json$/.test(path) ||
-    /^fonts\/[^/]+\.(png|json|license\.txt)$/.test(path) ||
+    /^fonts\/[^/]+\.(png|license\.txt)$/.test(path) ||
     /^instruments\/[^/]+\.(wav|json|license\.txt)$/.test(path) ||
-    /^songs\/[^/]+\.json$/.test(path)
+    /^songs\/[^/]+\.json$/.test(path) ||
+    /^sounds\/[^/]+\.json$/.test(path)
   )
 }
 
@@ -251,6 +252,7 @@ export async function syncWithGitHub(
     ...(await storage.list('actors')).map((n) => `actors/${n}`),
     ...(await storage.list('instruments')).map((n) => `instruments/${n}`),
     ...(await storage.list('songs')).map((n) => `songs/${n}`),
+    ...(await storage.list('sounds')).map((n) => `sounds/${n}`),
   ].filter(isEditorFile)
   for (const path of localPaths) {
     const data = await storage.read(path)

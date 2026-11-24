@@ -1,0 +1,7 @@
+{
+  "texture": "noise",
+  "speed": "blink",
+  "grit": "warm",
+  "pitch": [9, 6, 4],
+  "volume": [23, 16, 8]
+}

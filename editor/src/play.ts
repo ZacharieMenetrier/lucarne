@@ -15,14 +15,14 @@ import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { time } from '../../runtime/time'
 import { actorName, camera, cameraMapName, drawWorld, modalActor, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
-import type { FontMeta } from './font'
+import { TRANSPARENT } from './color'
 import { h } from './dialog'
 import { icon } from './icons'
 import { currentPage } from './menu'
 import { NO_GAME_SIZE, noGame } from './nogame'
 import { toImageData } from './png'
 import type { Project } from './project'
-import { composeSheet, isTileset, tilesetName, type Sprite } from './sprite'
+import { composeSheet, fontKey, isTileset, tilesetName, type Sprite } from './sprite'
 import { readText, type Storage } from './storage'
 
 const GAME_FILE = 'game.js'
@@ -341,7 +341,7 @@ async function loadFonts(project: Project): Promise<FontData[]> {
   return Promise.all(
     names.map(async (name) => {
       try {
-        return toFontData(name, await project.loadFont(name))
+        return toFontData(name, (await project.loadSprite(fontKey(name))).frames[0])
       } catch (err) {
         throw new Error(`The font "${name}" could not be read: ${describe(err)}`)
       }
@@ -368,8 +368,8 @@ function toSpriteData(sprite: Sprite): SpriteData {
   }
 }
 
-function toFontData(name: string, font: { sheet: Bitmap; meta: FontMeta }): FontData {
-  return { name, ...font.meta, sheet: toCanvas(font.sheet) }
+export function toFontData(name: string, sheet: Bitmap): FontData {
+  return { name, sheet: toCanvas(sheet), width: sheet.width, height: sheet.height, ink: (x, y) => sheet.get(x, y) !== TRANSPARENT }
 }
 
 /**

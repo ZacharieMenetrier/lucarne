@@ -1,0 +1,9 @@
+{
+  "texture": "wood",
+  "speed": "blink",
+  "grit": "warm",
+  "echo": "a-little",
+  "ring": "very-ringing",
+  "pitch": [11],
+  "volume": [21]
+}

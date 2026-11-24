@@ -4,6 +4,7 @@ import { MusicPage } from './musicpage'
 import { Project } from './project'
 import { isTileset } from './sprite'
 import { buildSettingsPage } from './settings'
+import { SoundsPage } from './sfxpage'
 import { openStorage } from './storage'
 import { WorldPage } from './worldpage'
 
@@ -18,6 +19,7 @@ async function main() {
   const world = new WorldPage(project, app, actors.files)
   await world.load()
   await new MusicPage(project, app).load()
+  await new SoundsPage(project, app).load()
   buildSettingsPage(storage, () => app.refreshSync(), {
     settings: () => project.settings,
     maps: () => world.mapSizes,

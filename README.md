@@ -2,7 +2,7 @@
 
 A pixel art game engine where you draw, compose, code and play in one place.
 
-For now: the **pixel art editor**, the **world editor** and the **music editor**.
+For now: the **pixel art editor**, the **world editor**, the **music editor** and the **sound editor**.
 
 Every sprite of the game sits on one board, at the same scale, so you can check
 that they look consistent and draw on any of them directly. In the same way, every map of
@@ -37,7 +37,7 @@ The token stays in the browser, on that device only.
 
 When the editor works from the browser's storage, a sync button shows in the top bar.
 It compares `game.json`, `palette.json`, `board.json`, `sprites/*`, `tiles/*`, `maps/*`,
-`actors/*.json`, `fonts/*`, `instruments/*` and `songs/*` on the device, on GitHub, and
+`actors/*.json`, `fonts/*`, `instruments/*`, `songs/*` and `sounds/*` on the device, on GitHub, and
 as they were at the last sync: changes on one side follow that side, changes sent to
 GitHub go out as one commit. A file (or sprite) changed on both sides is a conflict: the
 editor asks which version to keep. On Mac with `lucarne dev`, use git in the game folder.
@@ -56,8 +56,7 @@ my-game/
   tiles/outdoor.png  a tileset: 8 tiles wide, whole rows of the tile size
   tiles/outdoor.json its solid tiles (see "Walls"), only when it has some
   maps/town.json     a map: its place in the world and its tiles (see "Maps")
-  fonts/name.png     a font: its characters in white, in a grid (made by importing one)
-  fonts/name.json    which character is in which cell, and how far the next one starts
+  fonts/name.png     a font: its characters in white, 16 to a row, in a fixed order (see "Text and UI")
   fonts/name.license.txt   the font's license, when it has one
   actors/hero.ts     an actor: its code (TypeScript), a class that extends Actor (see "Actors")
   actors/hero.json   its values set in the editor, its box among them, only when it has some
@@ -66,6 +65,7 @@ my-game/
                          drum) and its volume in dB, each only when it has one
   instruments/snare.json { "volume": 6 } alone, with no .wav: the engine's snare's volume in this game
   songs/town.json    a song: its tempo, its time and its instruments' notes (see "Music")
+  sounds/jump.json   a sound effect: how it is drawn and its settings (see "Sounds")
   code/main.ts       the rest of the game's code, optional: the game itself, helpers
   game.js            built from actors/ and code/ by `lucarne dev`: commit it, never edit it
 ```
@@ -379,10 +379,25 @@ spawn(Menu, { items: ['Yes', 'No'], onChoose: (i) => { … } })   // up, down, a
 
 Text is stamped from the font's own pixels: the browser never draws it, so it is as crisp
 as the sprites, on every device. There is no font in the engine: a game that writes brings
-its own, in `fonts/`. The menu has **Import a font…**: choose a pixel font file (.ttf,
-.otf, .woff) together with its license file. It is read once, at the size it is drawn for
-(its page says: often 8, 12 or 16), pixel by pixel. With one font in
-`fonts/`, `font()` and `screen.text` use it; with several, name one: `font('small')`.
+its own, in `fonts/`. With one font there, `font()` and `screen.text` use it; with several,
+name one: `font('small')`.
+
+A font is only its image, `fonts/<name>.png`, and it sits on the board with the sprites, in
+the **Fonts** panel under Tilesets. Every font has the same characters in the same cells:
+ASCII, Latin-1 (French accents among them) and a few more (`Œ œ € … ' " – ← ↑ → ↓ ♥`), 16
+to a row. An empty cell shows faintly which character it is for; under the font being
+edited, a line is written with it. Draw a character in its cell, in any color (text takes
+the color the game writes it in), and it is in the font:
+
+- a character starts at its first column of ink, and the next one starts one pixel after
+  its last: redraw a letter wider and the text makes room for it;
+- a line is one cell high, a space half a cell wide;
+- a character the font does not have (its cell is empty) is written as `?`.
+
+**+** makes a blank font, with cells of 8 × 8 pixels; drag a corner to change the size of
+every cell. **Import…**, in the same window, takes a pixel font file (.ttf, .otf, .woff) together with
+its license file: it finds the size the font is drawn for and reads it pixel by pixel. A
+font that is not made of pixels comes out as it can, to be fixed by hand.
 
 Some pixel fonts that work well, and what their license asks:
 
@@ -494,7 +509,7 @@ usable by name in every game (`runtime/instruments/`, from the University of Iow
 Musical Instrument Samples and VSCO 2 Community Edition, see `SOURCES.md`): winds (flute,
 alto-flute, oboe, bassoon, horn, trumpet, organ), strings (violin, viola, cello,
 cello-pizzicato, harp), struck (bells, marimba) and drums (bass-drum, tenor-drum, snare,
-tambourine, triangle, claves). **Import an instrument…** (in the menu, or in the instrument
+tambourine, triangle, claves). **Import an instrument…** (in the instrument
 list) turns any recording of one note into one of the game's (`instruments/<name>.wav`):
 it starts at the note, is cut before the player stops (a held sound, whose end then
 repeats) or once it has died out (a strike, a pluck), is tuned exactly to its note, and is
@@ -502,6 +517,49 @@ stored at 16 kHz, 8-bit. Its `.json` holds that note; without one, it is a drum.
 instrument with the name of a built-in one replaces it in that game.
 
 How a game plays its music comes later.
+
+### Sounds
+
+Sound effects are drawn, not recorded: a jump, a coin or an explosion is a shape in time.
+The **Sounds** page (after Music) makes them: the tools on the left, the sound in the
+middle with Play under it (Space), its settings and the game's sounds on the right.
+
+- **The grid** is 24 columns of time by 24 rows of pitch, at most one pixel per column. The
+  rows are a pentatonic scale (no wrong note), from C2 at the bottom to G6, a lighter row at
+  every C. **The pencil** places pixels (a click on one, or the right button, erases), **the
+  eraser** takes them away, and **volume** sets how loud each column is, as bars: from
+  the loudest at the top down to 40 dB under it. A pixel plays as it is placed.
+- **The settings** are for the whole sound, and changing one plays it. **Texture**, its
+  source: Soft, Retro and Noise hold, neighbouring pixels joined in one line; Pluck, Glass,
+  Wood, Water, Metal and Click are struck, every pixel a hit. **Speed**, how long a column
+  lasts (Blink 1/60 s, Fast 1/30, Mid 1/20, Slow 1/12). **Grit** (Clean, Warm, Crunchy).
+  **Echo**, from Off to Huge. **Ring**: a struck texture rings shorter or longer, a held one
+  is cut shorter (dry) or gets a tail. **Glide** slides the pitch from pixel to pixel (a
+  struck sound bends rather than being struck again). **Random** makes one up, **Clear**
+  takes the pixels away. Undo and redo are under the tools (⌘Z, ⇧⌘Z).
+- **The code** under the settings is the sound in 55 characters, to copy, or to paste one in.
+
+```json
+{
+  "texture": "retro",
+  "grit": "crunchy",
+  "pitch": [19, 19, 21, 21, 21, 21, 21, 21, 21],
+  "volume": [23, 23, 23, 22, 20, 17, 13, 9, 5]
+}
+```
+
+The texture, then each setting only when it is not the default (`"speed": "fast"`, `"grit":
+"clean"`, `"glide": false`, `"echo": "off"`, `"ring": "normal"`), each column's row up to the
+last pixel (`null`: empty), and its volume (0 to 23) only when one is not the loudest.
+
+The engine makes the sound from that file, and it sounds like the music: mono, 16 kHz,
+8-bit. It varies a little each time it is made (a struck pitch, noise), so repeats are not
+identical. The engine has 25 sounds, usable by name in every game (`runtime/sounds/`: coin,
+jump, laser, bomb, footstep, water-drop…). Editing one makes it the game's own
+(`sounds/<name>.json`), which replaces the engine's in that game; **Back to the engine's**
+in its menu deletes the game's file.
+
+How a game plays its sounds comes later.
 
 ### Driving a game from a script
 
@@ -586,7 +644,8 @@ The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: 
 smooth motion between updates), variables and how a value is checked (`values.ts`), walls (`collision.ts`), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
 `fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), songs and
 instruments (`sound.ts`: the song format, how a note plays, importing a recording; the
-built-in instruments in `instruments/`, made by `scripts/instruments.mjs`), and the
+built-in instruments in `instruments/`, made by `scripts/instruments.mjs`), sound effects
+(`sfx.ts`: the format and how a sound is made; the built-in ones in `sounds/`), and the
 game's settings (`game.ts`, read from `game.json`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
@@ -595,7 +654,7 @@ Editor code lives in `editor/src/`:
 - `bitmap.ts`, `color.ts`: pixels and operations (line, fill, flip…)
 - `sprite.ts`, `png.ts`: sprite format, and tilesets (`tiles/<name>` on the board)
 - `map.ts`: map format (tested in `tests/world.test.ts`)
-- `font.ts`, `fontimport.ts`: font format, and importing a pixel font (tested in `tests/font.test.ts`)
+- `font.ts`, `ttf.ts`: fonts on the board (`fonts/<name>`), and importing a pixel font, its numbers read from the file (tested in `tests/font.test.ts`)
 - `storage.ts`, `project.ts`: reading and writing the game folder (local server or OPFS)
 - `board.ts`: sprite positions (`board.json`), automatic placement, resizing by a corner
 - `editor.ts`: the board, tools, selection, history — no DOM, tested in `tests/`
@@ -609,6 +668,7 @@ Editor code lives in `editor/src/`:
 - `accompany.ts`: Accompany, the key and chords found under a song and the notes played on them — no DOM, tested in `tests/accompany.test.ts`
 - `musicpage.ts`, `musicplayer.ts`, `instruments.ts`: the Music page, playing a song in a loop, the instruments and their import
 - `sing.ts`: a voice made notes (pitch tracking, notes) — no DOM, tested in `tests/sing.test.ts` and scored on recorded takes in `tests/sing-takes.test.mjs`; `singdialog.ts` the popup it is sung in, `microphone.ts` hears it
+- `sfx.ts`: the Sounds page's sound, strokes, settings, sound code and history — no DOM, tested in `tests/sfx.test.ts`; `sfxpage.ts` the page
 - `app.ts`: interface, shortcuts, autosave
 - `menu.ts`, `settings.ts`: the burger menu, pages, and the settings page (`game.json`, GitHub)
 - `play.ts`: play mode (loads `game.js`, runs it, pause and stop, `?play` and `window.lucarne`)

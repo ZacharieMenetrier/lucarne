@@ -26,7 +26,9 @@ import {
 import { boundsOf, findFreeSpot, overlaps, resizeRect, resolveOverlaps, type BoardFile, type Corner, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
-import { MAX_SIZE, isTileset, sortTileBoxes, type Sprite, type TileBox } from './sprite'
+import { MAX_SIZE, isFont, isStill, isTileset, sortTileBoxes, type Sprite, type TileBox } from './sprite'
+import { FONT_COLUMNS, FONT_ROWS } from '../../runtime/fonts'
+import { relayoutFont } from './font'
 
 export const MIN_FPS = 2
 export const MAX_FPS = 24
@@ -320,19 +322,19 @@ export class Editor {
   // Tools and color
 
   /**
-   * Can this tool work on the image being edited? The origin is a sprite's, walls are a
-   * tileset's: on the other kind (or with nothing to edit), the tool stays where it is,
+   * Can this tool work on the image being edited? The origin is a sprite's (not a
+   * tileset's or a font's), walls are a tileset's: on the other kind (or with nothing to edit), the tool stays where it is,
    * greyed out, and a click says why instead of doing nothing.
    */
   toolApplies(tool: ToolId, name = this.active): boolean {
-    if (tool === 'origin') return name !== null && !isTileset(name)
+    if (tool === 'origin') return name !== null && !isStill(name)
     if (tool === 'box') return name !== null && isTileset(name)
     return true
   }
 
   /** Why a tool cannot work on the image being edited (see `toolApplies`). */
   whyNot(tool: ToolId): string {
-    return tool === 'origin' ? 'The origin is for sprites: a tileset has none' : 'Walls are for tilesets: pick one to set its solid tiles'
+    return tool === 'origin' ? 'The origin is for sprites: a tileset or a font has none' : 'Walls are for tilesets: pick one to set its solid tiles'
   }
 
   setTool(tool: ToolId) {
@@ -464,10 +466,16 @@ export class Editor {
     this.emit()
   }
 
-  /** New footprint while dragging a corner: at least 1×1 (a tile, for a tileset), at most
-   * MAX_SIZE, and stopped by the other sprites (they may touch). A tileset keeps its width
-   * (TILESET_COLUMNS tiles): only its rows change. */
+  /** New footprint while dragging a corner: at least 1×1 (a tile, for a tileset; a cell,
+   * for a font), at most MAX_SIZE, and stopped by the other sprites (they may touch). A
+   * tileset keeps its width (TILESET_COLUMNS tiles): only its rows change. A font keeps its
+   * grid of characters: its cells change, a pixel at a time. */
   private resizeRect(d: Extract<Drag, { kind: 'resize' }>, p: Point): Rect {
+    if (isFont(d.name)) {
+      const step = { w: FONT_COLUMNS, h: FONT_ROWS }
+      const max = { w: Math.floor(MAX_SIZE / FONT_COLUMNS) * FONT_COLUMNS, h: Math.floor(MAX_SIZE / FONT_ROWS) * FONT_ROWS }
+      return resizeRect(d.origin, d.corner, p.x - d.start.x, p.y - d.start.y, this.othersThan(d.name), { step, min: step, max })
+    }
     // A tileset is whole tiles: its edges move a tile at a time.
     const tileset = isTileset(d.name)
     const step = tileset ? this.tileSize : 1
@@ -486,7 +494,7 @@ export class Editor {
     d.rect = r
     const ox = d.origin.x - r.x
     const oy = d.origin.y - r.y
-    d.frames.forEach((b, f) => this.setFrame(pl, f, r.w === b.width && r.h === b.height && !ox && !oy ? b : resized(b, r.w, r.h, ox, oy)))
+    d.frames.forEach((b, f) => this.setFrame(pl, f, r.w === b.width && r.h === b.height && !ox && !oy ? b : this.resizedImage(d.name, b, r.w, r.h, ox, oy)))
     pl.x = r.x
     pl.y = r.y
   }
@@ -982,7 +990,7 @@ export class Editor {
   private editFrames(change: (state: FrameState) => void) {
     const pl = this.placed
     const name = this.active
-    if (!pl || !name || isTileset(name)) return
+    if (!pl || !name || isStill(name)) return
     this.stop()
     this.commitFloating()
     this.drag = null
@@ -1086,6 +1094,13 @@ export class Editor {
     }
   }
 
+  /** An image at a new size: the old one at (ox, oy), or for a font, each character
+   * in its cell, now of the new size. */
+  private resizedImage(name: string, b: Bitmap, w: number, h: number, ox: number, oy: number) {
+    if (isFont(name)) return relayoutFont(b, Math.max(1, Math.floor(w / FONT_COLUMNS)), Math.max(1, Math.floor(h / FONT_ROWS)))
+    return resized(b, w, h, ox, oy)
+  }
+
   /** Resizes the active image; the old image goes at (ox, oy), and the sprite
    * moves on the board so the drawing stays where it was. */
   resize(w: number, h: number, ox: number, oy: number) {
@@ -1099,7 +1114,7 @@ export class Editor {
     const items: Change[] = []
     pl.sprite.frames.forEach((b, f) => {
       const before = b.clone()
-      this.setFrame(pl, f, resized(b, w, h, ox, oy))
+      this.setFrame(pl, f, this.resizedImage(name, b, w, h, ox, oy))
       items.push({ kind: 'pixels', name, f, before, after: pl.sprite.frames[f].clone() })
     })
     // A tileset's solid tiles stay with their pixels; those cut off go with them.

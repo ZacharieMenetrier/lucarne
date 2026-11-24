@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { Font, setFonts } from '../runtime/fonts'
+import { FONT_CHARACTERS, FONT_COLUMNS, FONT_ROWS, Font, setFonts, type FontData } from '../runtime/fonts'
 import { parseSettings, screenSize, serializeSettings, settingsError } from '../runtime/game'
 import { input } from '../runtime/input'
 import { map as mapRect, mapAt, setMaps, type MapData } from '../runtime/maps'
@@ -561,24 +561,34 @@ describe('runner pacing', () => {
   })
 })
 
-/** A font of 4 × 6 cells: the next character starts 3 pixels after a space, 4 after "a", 5 after "b". */
-function testFont() {
-  setFonts([{
-    name: 'test',
-    cellWidth: 4,
-    cellHeight: 6,
-    columns: 2,
-    characters: ' ab?',
-    advances: [3, 4, 5, 4],
+/**
+ * A font of 6 × 6 cells: "a" is inked on columns 0 to 2 of its cell (the next character
+ * starts 4 pixels after it), "b" on 1 to 4 (5 after), "?" on 0 to 2; a space is 3 wide.
+ */
+function testFontData(name = 'test'): FontData {
+  const inked: Record<string, [number, number]> = { a: [0, 2], b: [1, 4], '?': [0, 2] }
+  const cells = [...FONT_CHARACTERS]
+  return {
+    name,
+    width: 6 * FONT_COLUMNS,
+    height: 6 * FONT_ROWS,
     sheet: {} as CanvasImageSource,
-  }])
+    ink: (x, y) => {
+      const [from, to] = inked[cells[Math.floor(y / 6) * FONT_COLUMNS + Math.floor(x / 6)]] ?? [1, 0]
+      return x % 6 >= from && x % 6 <= to
+    },
+  }
+}
+
+function testFont() {
+  setFonts([testFontData()])
 }
 
 describe('text', () => {
   beforeEach(testFont)
 
   it('measures and wraps between words', () => {
-    const f = new Font({ name: 't', cellWidth: 4, cellHeight: 6, columns: 2, characters: ' ab?', advances: [3, 4, 5, 4], sheet: {} as CanvasImageSource })
+    const f = new Font(testFontData('t'))
     expect(f.lineWidth('ab')).toBe(4 + 5)
     expect(f.lines('ab ab ab', 21)).toEqual(['ab ab', 'ab'])
     expect(f.lines('a\nb')).toEqual(['a', 'b'])
@@ -588,14 +598,15 @@ describe('text', () => {
   it('stamps each character on whole pixels, from its cell', () => {
     const calls = screenAt(100, 100, 2)
     drawWorld(1, () => screen.text('ab a\nzb', 10, 20, '#fff'))
-    // Cells: " " 0, "a" 1, "b" 2, "?" 3 (2 per row). An unknown character draws "?".
+    // Cells: "a" column 1 of row 4, "b" column 2, "?" column 15 of row 1, each stamped from
+    // its first column of ink. An unknown character draws "?".
     // "a" at 10, "b" at 10 + 4, a space (not drawn) at 19, "a" at 19 + 3, at ×2.
     expect(calls.map((c) => c.slice(1))).toEqual([
-      [4, 0, 4, 6, 20, 40, 8, 12],
-      [0, 6, 4, 6, 28, 40, 8, 12],
-      [4, 0, 4, 6, 44, 40, 8, 12],
-      [4, 6, 4, 6, 20, 52, 8, 12],
-      [0, 6, 4, 6, 28, 52, 8, 12],
+      [6, 24, 3, 6, 20, 40, 6, 12],
+      [13, 24, 4, 6, 28, 40, 8, 12],
+      [6, 24, 3, 6, 44, 40, 6, 12],
+      [90, 6, 3, 6, 20, 52, 6, 12],
+      [13, 24, 4, 6, 28, 52, 8, 12],
     ])
     expect(writtenText().map((t) => t.text)).toEqual(['ab a\nzb'])
   })

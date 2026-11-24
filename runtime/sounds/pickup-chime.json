@@ -1,0 +1,6 @@
+{
+  "texture": "glass",
+  "echo": "some",
+  "pitch": [12, null, 15, null, 17, null, 20],
+  "volume": [16, 23, 20, 23, 22]
+}

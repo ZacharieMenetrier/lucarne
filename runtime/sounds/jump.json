@@ -1,0 +1,7 @@
+{
+  "texture": "soft",
+  "grit": "warm",
+  "glide": true,
+  "pitch": [6, 8, 10, 12, 13, 14],
+  "volume": [18, 23, 23, 21, 16, 10]
+}

@@ -1,0 +1,6 @@
+{
+  "texture": "noise",
+  "echo": "a-little",
+  "pitch": [16, 8, 5, 3, 2],
+  "volume": [23, 21, 15, 9, 4]
+}
