@@ -5,10 +5,15 @@
 // A song has each instrument once (runtime/sound.ts). The notes of the selected instrument
 // are the ones edited; the others are only shown. A drum (an instrument without a note) has
 // no pitch: it is one row of hits, under the notes.
+//
+// Bars can be selected instead (dragged across in the ruler): a section of the song, every
+// instrument at once. Copy, cut, paste, duplicate, delete and moves act on the whole section,
+// and the song plays it in a loop. A section pasted or moved replaces what was there: the
+// bars it lands on are its own, in every instrument.
 
 import { accompany, type Voice } from './accompany'
 import { History } from './history'
-import { HIGHEST, LOWEST, noteEnd, parseSong, serializeSong, untangle, type Note, type Song, type Time } from '../../runtime/sound'
+import { barSteps, HIGHEST, LOWEST, noteEnd, parseSong, songSteps, serializeSong, untangle, type Note, type Song, type Time } from '../../runtime/sound'
 
 export type MusicTool = 'pencil' | 'eraser' | 'select'
 
@@ -26,9 +31,21 @@ export class MusicEditor {
   length = 4
   /** Notes of the selected instrument. */
   selection = new Set<Note>()
-  /** Copied notes, their steps from the first one's, and whether they were a drum's. */
-  clipboard: { drum: boolean; notes: Note[] } | null = null
-  /** Where playing starts, and where a paste goes, in steps. */
+  /**
+   * Bars selected, every instrument at once: from the first one's first step to the step after
+   * the last one. The notes that start there are in it. Null: the notes of `selection` instead.
+   */
+  bars: Bars | null = null
+  /**
+   * What was copied: notes, their steps from the first one's, and whether they were a drum's;
+   * or bars, each instrument's notes that started there, their steps from the first bar's.
+   */
+  clipboard: { drum: boolean; notes: Note[] } | { length: number; parts: { instrument: string; notes: Note[] }[] } | null = null
+  /**
+   * The flag: where playing starts, and where a paste goes, in steps. Always the start of a bar
+   * (the first of the bars selected, if any): + and − at the right of its bar (of the bars
+   * selected) add a bar after it and take them out.
+   */
   start = 0
   /**
    * The instruments not heard when the song plays, to hear the others. Only for listening
@@ -59,6 +76,7 @@ export class MusicEditor {
     this.song = song
     this.selected = 0
     this.selection.clear()
+    this.bars = null
     this.start = 0
     this.muted.clear()
     this.before = null
@@ -335,6 +353,7 @@ export class MusicEditor {
   selectRange(s0: number, s1: number, p0: number | null, p1: number | null) {
     const t = this.current
     this.selection.clear()
+    this.bars = null
     if (!t) return this.emit()
     const [a, b] = [Math.min(s0, s1), Math.max(s0, s1)]
     for (const n of t.notes) {
@@ -350,6 +369,7 @@ export class MusicEditor {
    * with add (⇧), it joins the selection or leaves it. Says whether it ends up selected.
    */
   pick(note: Note, add = false) {
+    this.bars = null
     if (add) {
       if (this.selection.has(note)) this.selection.delete(note)
       else this.selection.add(note)
@@ -359,21 +379,34 @@ export class MusicEditor {
   }
 
   selectAll() {
+    this.bars = null
     this.selection = new Set(this.current?.notes ?? [])
     this.emit()
   }
 
   deselect() {
-    if (!this.selection.size) return
+    if (!this.selection.size && !this.bars) return
     this.selection.clear()
+    this.bars = null
     this.emit()
   }
 
   deleteSelection() {
+    const b = this.bars
+    if (b) return this.edit((s) => s.instruments.forEach((t) => (t.notes = t.notes.filter((n) => !within(n, b)))))
     this.remove([...this.selection])
   }
 
   copy() {
+    const b = this.bars
+    if (b && this.song) {
+      this.clipboard = {
+        length: b.to - b.from,
+        parts: this.song.instruments.map((t) => ({ instrument: t.instrument, notes: t.notes.filter((n) => within(n, b)).map((n) => ({ ...n, step: n.step - b.from })) })),
+      }
+      this.emit()
+      return true
+    }
     if (!this.selection.size) return false
     const notes = [...this.selection]
     const first = Math.min(...notes.map((n) => n.step))
@@ -391,6 +424,8 @@ export class MusicEditor {
     const t = this.current
     const c = this.clipboard
     if (!t || !c) return
+    if ('parts' in c) return this.pasteBars(c, at)
+    this.bars = null
     const drum = this.drum
     const notes = c.notes.map((n) => ({ step: n.step + at, pitch: drum ? null : (n.pitch ?? MIDDLE), length: drum ? 1 : n.length }))
     this.edit(() => t.notes.push(...notes))
@@ -401,6 +436,12 @@ export class MusicEditor {
 
   /** Copies the selection right after itself. */
   duplicate() {
+    const b = this.bars
+    if (b) {
+      this.begin()
+      this.moveBars(b, b.to - b.from, true)
+      return this.end()
+    }
     if (!this.selection.size) return
     const notes = [...this.selection]
     const first = Math.min(...notes.map((n) => n.step))
@@ -408,6 +449,102 @@ export class MusicEditor {
     this.copy()
     this.paste(first + (end - first))
   }
+
+  // --- Bars -----------------------------------------------------------------
+
+  /** Selects the bars from the one at step a to the one at step b (either way), up to the song's end. */
+  selectBars(a: number, b: number) {
+    const song = this.song
+    if (!song) return
+    const bar = barSteps(song)
+    const last = songSteps(song) / bar - 1
+    const first = Math.max(0, Math.min(last, Math.floor(Math.min(a, b) / bar)))
+    const end = Math.max(first, Math.min(last, Math.floor(Math.max(a, b) / bar)))
+    this.selection.clear()
+    this.bars = { from: first * bar, to: (end + 1) * bar }
+    this.start = this.bars.from
+    this.emit()
+  }
+
+  /**
+   * Moves the bars `from` by `by` steps (a copy of them, with copy), in every instrument: the
+   * bars they land on are replaced. Inside a gesture (begin), it starts again from the song as
+   * it was then, so a drag can go back and forth. They stay selected where they land.
+   */
+  moveBars(from: Bars, by: number, copy = false) {
+    if (!this.song) return
+    const d = Math.max(-from.from, by)
+    const to: Bars = { from: from.from + d, to: from.to + d }
+    this.edit((s) => {
+      if (this.before !== null) s.instruments = parseSong(this.before).instruments
+      for (const t of s.instruments) {
+        const moved = t.notes.filter((n) => within(n, from)).map((n) => ({ ...n, step: n.step + d }))
+        t.notes = t.notes.filter((n) => !within(n, to) && (copy || !within(n, from))).concat(moved)
+      }
+    })
+    this.bars = to
+    this.start = to.from
+    this.emit()
+  }
+
+  /** The bars + and − act on: the ones selected, or the flag's. */
+  private get barsAt(): Bars | null {
+    if (!this.song) return null
+    if (this.bars) return this.bars
+    const bar = barSteps(this.song)
+    const from = Math.floor(this.start / bar) * bar
+    return { from, to: from + bar }
+  }
+
+  /**
+   * + : one empty bar right after the flag's bar (after the bars selected): everything from
+   * there moves right, in every instrument. A note still sounding there keeps its length.
+   */
+  addBar() {
+    const b = this.barsAt
+    if (!b || !this.song) return
+    const by = barSteps(this.song)
+    this.edit((s) => s.instruments.forEach((t) => t.notes.forEach((n) => n.step >= b.to && (n.step += by))))
+    this.emit()
+  }
+
+  /** − : takes the flag's bar (the bars selected) out of the song: what came after moves left, into its place. */
+  removeBars() {
+    const b = this.barsAt
+    if (!b || !this.song) return
+    const by = b.to - b.from
+    this.edit((s) => {
+      for (const t of s.instruments) {
+        t.notes = t.notes.filter((n) => !within(n, b))
+        for (const n of t.notes) if (n.step >= b.to) n.step -= by
+      }
+    })
+    this.bars = null
+    // The flag stays where it was (on the bar that came next), within the song.
+    this.start = Math.min(b.from, Math.max(0, songSteps(this.song) - barSteps(this.song)))
+    this.emit()
+  }
+
+  /** Bars copied, at `at`: in each instrument of the song they were copied from, replacing what was there. */
+  private pasteBars(c: { length: number; parts: { instrument: string; notes: Note[] }[] }, at: number) {
+    const to: Bars = { from: at, to: at + c.length }
+    this.edit((s) => {
+      for (const t of s.instruments) {
+        const part = c.parts.find((p) => p.instrument === t.instrument)
+        if (!part) continue
+        t.notes = t.notes.filter((n) => !within(n, to)).concat(part.notes.map((n) => ({ ...n, step: n.step + at })))
+      }
+    })
+    this.selection.clear()
+    this.bars = to
+    this.start = to.from
+    this.emit()
+  }
 }
+
+/** Bars, in steps: from the first one's first step to the step after the last one. */
+export type Bars = { from: number; to: number }
+
+const within = (n: Note, b: Bars) => n.step >= b.from && n.step < b.to
 
 const clampPitch = (p: number) => Math.max(LOWEST, Math.min(HIGHEST, Math.round(p)))

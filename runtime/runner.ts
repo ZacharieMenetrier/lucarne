@@ -10,6 +10,7 @@
 import { DEFAULT_SETTINGS, TICK_RATE, screenSize, type GameConfig } from './game'
 import { forceInput, listenInput, sampleInput, type Button } from './input'
 import { attachScreen } from './screen'
+import { quietSounds, stopSounds } from './sounds'
 import { resetTime, tickTime } from './time'
 import { drawWorld, settleCamera, updateWorld } from './world'
 
@@ -111,6 +112,7 @@ export class Runner {
     this._paused = true
     cancelAnimationFrame(this.frame)
     listenInput(false)
+    stopSounds()
   }
 
   resume() {
@@ -127,22 +129,26 @@ export class Runner {
     this.stopped = true
     cancelAnimationFrame(this.frame)
     listenInput(false)
+    stopSounds()
     attachScreen(null)
   }
 
   /**
    * Runs `count` updates at once, with these buttons held instead of the player's, then
    * shows the result. The game stays paused: a script drives it, update by update, the
-   * same way every time (the AI handle, tests).
+   * same way every time (the AI handle, tests). Its sounds are not heard, only listed
+   * (`heardSounds`): played all at once, they would be noise.
    */
   step(count: number, buttons: Iterable<Button> = []) {
     if (this.stopped) return
     this.pause()
     forceInput(buttons)
+    quietSounds(true)
     try {
       for (let i = 0; i < count; i++) if (!this.update()) return
     } finally {
       forceInput(null)
+      quietSounds(false)
     }
     this.alpha = 1
     this.present()

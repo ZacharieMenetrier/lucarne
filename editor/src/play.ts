@@ -12,6 +12,7 @@ import type { Button } from '../../runtime/input'
 import { Runner } from '../../runtime/runner'
 import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
+import { heardSounds, setSounds } from '../../runtime/sounds'
 import { time } from '../../runtime/time'
 import { actorName, camera, cameraMapName, drawWorld, modalActor, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
@@ -155,6 +156,7 @@ export class Player {
         : h('p', {}, 'Write an actor in ', h('code', {}, 'actors/'), ' on the Mac, push it, then sync here.')
     resetWorld()
     setMaps(16, [], [])
+    setSounds([])
     setActorFiles({})
     this.run(noGame, NO_GAME_SIZE, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
   }
@@ -294,12 +296,13 @@ export async function fetchGameCode(storage: Storage): Promise<{ code: string } 
   return code === null ? { missing: true, built } : { code }
 }
 
-/** Hands the engine every sprite, font, tileset, actor file and map of the game, as saved,
+/** Hands the engine every sprite, font, sound, tileset, actor file and map of the game, as saved,
  * before its code runs. Returns the game's settings. */
 export async function loadGameData(project: Project) {
   const settings = await project.loadSettings()
   setSprites(await loadSprites(project))
   setFonts(await loadFonts(project))
+  setSounds(await loadSounds(project))
   setMaps(settings.tileSize, await loadTilesets(project), await loadMaps(project))
   setActorFiles(Object.fromEntries(await project.loadActorFiles()))
   return settings
@@ -333,6 +336,11 @@ async function loadSprites(project: Project): Promise<SpriteData[]> {
       }
     }),
   )
+}
+
+/** Every sound of the game (sounds/), for the engine's `sound()`. */
+async function loadSounds(project: Project) {
+  return Promise.all((await project.listSounds()).map(async (name) => ({ name, sound: await project.loadSound(name) })))
 }
 
 /** Every font of the game (fonts/), for the engine's `font()`. */
@@ -377,6 +385,7 @@ export function toFontData(name: string, sheet: Bitmap): FontData {
  * mode. Everything works with the page hidden: the game only moves when told to.
  *
  *   lucarne.step(60, ['right'])   // one second with "right" held, then shows the result
+ *                                 // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
  *   lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, box: { x, y, width, height }, … }]
  *   lucarne.picture()             // the frame at game resolution, as a PNG data URL
  *   lucarne.ui()                  // the text on screen, and the modal actor in charge
@@ -391,8 +400,9 @@ function installHandle(player: Player) {
   }
   ;(window as unknown as { lucarne: unknown }).lucarne = {
     step(count = 1, buttons: Button[] = []) {
+      heardSounds()
       runner().step(count, buttons)
-      return { ticks: time.ticks, actors: describeActors() }
+      return { ticks: time.ticks, actors: describeActors(), sounds: heardSounds() }
     },
     pause() {
       runner().pause()

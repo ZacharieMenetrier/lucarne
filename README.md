@@ -201,6 +201,20 @@ screen.panel(sprite('panel'), 8, 8, 120, 40)             // a box of any size
 `screen.panel` draws a sprite at any size by stretching its middle row and middle column:
 a window frame drawn once fits any text.
 
+A moment of an animation (a footstep on the frame where a foot lands) belongs to the actor,
+which knows when its animation started: it plays the sound when the frame it draws changes to
+that one (frames count from 0). `frameAt(ms)` is the frame shown `ms` into the animation:
+
+```ts
+#frame = -1   // the frame shown last; -1 when not walking
+
+update() {
+  const frame = this.walking ? walk.frameAt(time.ms - this.walkedSince) : -1
+  if (frame !== this.#frame && (frame === 1 || frame === 3)) footstep.play()   // the feet land
+  this.#frame = frame
+}
+```
+
 Positions are in game pixels and may have decimals. Actors are drawn on the display's own
 pixels: a whole number puts them on the game's pixel grid, a fraction places them between
 its pixels, so a hero running at 1.5 pixels per update moves smoothly instead of stepping
@@ -394,17 +408,15 @@ the color the game writes it in), and it is in the font:
 - a line is one cell high, a space half a cell wide;
 - a character the font does not have (its cell is empty) is written as `?`.
 
-**+** makes a blank font, with cells of 8 × 8 pixels; drag a corner to change the size of
-every cell. **Import…**, in the same window, takes a pixel font file (.ttf, .otf, .woff) together with
-its license file: it finds the size the font is drawn for and reads it pixel by pixel. A
-font that is not made of pixels comes out as it can, to be fixed by hand.
-
-Some pixel fonts that work well, and what their license asks:
-
-- [m5x7](https://managore.itch.io/m5x7) by Daniel Linssen: CC0, nothing asked (small,
-  accents included).
-- [BoldPixels](https://yukipixels.itch.io/boldpixels) by YukiPixels: CC BY-SA 4.0, credit
-  the author with the game.
+**+** makes a font: blank, with cells of 8 × 8 pixels (drag a corner to change the size
+of every cell), or a copy of a preset, each shown writing a line. The presets are free
+pixel fonts that are the editor's, not the engine's (`editor/fonts/`): picking one copies
+it into the game's `fonts/` with its license, to use or redraw.
+They are [m5x7](https://managore.itch.io/m5x7) by Daniel Linssen (CC0: nothing asked)
+and [Tiny5](https://github.com/Gissio/font_tiny5) (SIL Open Font License: free, the license
+travels with it). **Import…**, in the same window, takes a pixel font file (.ttf, .otf, .woff)
+together with its license file: it finds the size the font is drawn for and reads it pixel
+by pixel. A font that is not made of pixels comes out as it can, to be fixed by hand.
 
 An actor whose `modal` is true (a menu, a dialogue) stops the world while it is there: only
 the last modal actor created updates, the camera and the world's clock (`time.ms`) stop,
@@ -428,8 +440,9 @@ left (pencil, eraser, select), the song in the middle, and on the right the song
 - **A song has each instrument once**, and each one a color. + adds one: a click on a name
   plays it, as often as wanted, and Add takes it; one already in the song can't be picked.
   **Replace…** in an instrument's menu plays its notes with another. Every instrument is on
-  the grid: the selected one filled, the others as thin outlines over it, so no note hides
-  another (they are edited by picking them in the list). Several notes at once are a chord,
+  the grid: the selected one filled with its color, the others as faint gray shadows behind
+  it (they are edited by picking them in the list; hovering one there outlines its notes in
+  its color). Several notes at once are a chord,
   but an instrument never covers itself: when a note starts while the same pitch still
   sounds there, the earlier one stops, as a string struck again starts over. A drum (an
   instrument without a note) has no pitch: it is a row of hits, under the notes.
@@ -464,8 +477,21 @@ left (pencil, eraser, select), the song in the middle, and on the right the song
   beside it is part of it. On a drum, each attack (a clap, "ts", "k") is a hit. The take is one undo;
   Escape cancels it. The notes stay in the octave sung: ⇧↑ moves them an octave. Humming
   tracks better than words. The browser only gives the microphone on localhost or https.
+- **Bars** are selected by dragging across the ruler: a section, every instrument at once.
+  ⌘C, ⌘X, ⌘V (where playing starts), ⌘D, Delete act on the whole section; dragging it in the
+  ruler, or ← →, moves it by bars. A section pasted, duplicated or moved replaces what was on
+  the bars it lands on. A click in the grid or on a note goes back to selecting notes.
+- **The flag** in the ruler is always on the start of a bar: a click on a bar puts it there,
+  and selecting bars puts it on the first one. **+** at the right end of its bar (of the bars
+  selected) adds an empty bar right after it and pushes the rest of the song right; **−** takes its
+  bar (the bars selected) out and pulls the rest left. Keys: I and ⇧Delete.
+- **The selection bar** floats over the grid with the select tool, or while bars are
+  selected, as on the Pixels page: Copy, Cut, Paste, Duplicate, Clear, and Done (Enter),
+  which lets the selection go.
 - **The song loops** while it is painted (Space, or Play under the grid), and a note plays as
-  it is placed. The ruler on top shows the bars; a click on it sets where playing starts.
+  it is placed. The ruler on top shows the bars. Play plays from the flag: the whole song in a loop, or only the bars selected.
+  Play again stops, and the flag stays where it was, to hear the same passage again. **Stop** (■, or Enter with nothing
+  selected) goes back to the beginning with nothing selected, to hear the song from its start.
   A song ends with the bar of its last note: it grows as it is painted. It has two
   settings, under the grid: its **tempo**, in quarter notes per minute (120 unless set),
   and its **time**: 4/4 (bars of 16 sixteenths, the default), 3/4 (12 sixteenths in 3
@@ -534,10 +560,11 @@ middle with Play under it (Space), its settings and the game's sounds on the rig
   Wood, Water, Metal and Click are struck, every pixel a hit. **Speed**, how long a column
   lasts (Blink 1/60 s, Fast 1/30, Mid 1/20, Slow 1/12). **Grit** (Clean, Warm, Crunchy).
   **Echo**, from Off to Huge. **Ring**: a struck texture rings shorter or longer, a held one
-  is cut shorter (dry) or gets a tail. **Glide** slides the pitch from pixel to pixel (a
+  is cut shorter (dry) or gets a tail. **Volume**, the whole sound's, from the loudest down
+  to 40 dB under it: the columns' volumes only set how loud each is next to the others.
+  **Glide** slides the pitch from pixel to pixel (a
   struck sound bends rather than being struck again). **Random** makes one up, **Clear**
   takes the pixels away. Undo and redo are under the tools (⌘Z, ⇧⌘Z).
-- **The code** under the settings is the sound in 55 characters, to copy, or to paste one in.
 
 ```json
 {
@@ -549,26 +576,52 @@ middle with Play under it (Space), its settings and the game's sounds on the rig
 ```
 
 The texture, then each setting only when it is not the default (`"speed": "fast"`, `"grit":
-"clean"`, `"glide": false`, `"echo": "off"`, `"ring": "normal"`), each column's row up to the
+"clean"`, `"glide": false`, `"echo": "off"`, `"ring": "normal"`, `"level": 23`, the volume), each column's row up to the
 last pixel (`null`: empty), and its volume (0 to 23) only when one is not the loudest.
 
 The engine makes the sound from that file, and it sounds like the music: mono, 16 kHz,
 8-bit. It varies a little each time it is made (a struck pitch, noise), so repeats are not
-identical. The engine has 25 sounds, usable by name in every game (`runtime/sounds/`: coin,
-jump, laser, bomb, footstep, water-drop…). Editing one makes it the game's own
-(`sounds/<name>.json`), which replaces the engine's in that game; **Back to the engine's**
-in its menu deletes the game's file.
+identical. A game has only its own sounds, the ones in its `sounds/` folder. **+** next to
+Sounds names a new one and picks what it starts from: empty, or one of 25 presets (coin,
+jump, laser, bomb, footstep, water-drop…), each played when pressed. A preset is copied
+into the game; the presets themselves are the editor's (`editor/sounds/`).
 
-How a game plays its sounds comes later.
+A game plays a sound by its name, as it draws a sprite:
+
+```ts
+import { Actor, input, sound } from 'lucarne'
+
+const jump = sound('jump')            // sounds/jump.json; a wrong name fails here
+
+export default class Hero extends Actor {
+  update() {
+    if (input.pressed('action')) jump.play()
+  }
+}
+```
+
+`play()` has no settings: how loud it is and how it sounds are in the file. The engine
+decides the rest:
+
+- **A sound played again while it still rings starts over** (the earlier one stops, without
+  a click), as a string struck again does in the music: picking up coins in a row never piles
+  up into something louder. Different sounds play together.
+- **Repeats are not identical**: each sound is made four times (the first when the game
+  loads, the others right after, in the background), and a play picks one that was not the
+  last.
+- **Sounds stop when the game is paused**, and wait for the first key or touch when the game
+  was opened without one (`?play`): a browser plays nothing before.
 
 ### Driving a game from a script
 
 `?play` at the end of the editor's address opens straight into the game. In play mode,
 `window.lucarne` drives it, one update at a time, the same way every time, even with the
-page hidden (what an AI uses to test a game):
+page hidden (what an AI uses to test a game). Sounds played during `step` are not heard
+(many updates run at once): `step` lists them instead.
 
 ```js
 lucarne.step(60, ['right'])   // 60 updates with "right" held, then shows the result
+                              // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
 lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, speed: 1.25, box: { x: 262, y: 114, width: 10, height: 6 }, … }]
 lucarne.ui()                  // { modal: 'Menu', text: ['Yes', 'No', '>'] }
 lucarne.camera()              // { x: 96, y: 0, map: 'town' }
@@ -645,7 +698,9 @@ smooth motion between updates), variables and how a value is checked (`values.ts
 `fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), songs and
 instruments (`sound.ts`: the song format, how a note plays, importing a recording; the
 built-in instruments in `instruments/`, made by `scripts/instruments.mjs`), sound effects
-(`sfx.ts`: the format and how a sound is made; the built-in ones in `sounds/`), and the
+(`sfx.ts`: the format and how a sound is made; the presets are in `editor/sounds/`; `sounds.ts`:
+`sound()` and how a game plays them, `soundworker.ts` making their takes, `audio.ts` the page's
+one audio context), and the
 game's settings (`game.ts`, read from `game.json`). `game.js` holds only the game's code: the editor
 provides the engine when it plays it (`server/build.mjs` explains how).
 
@@ -654,7 +709,7 @@ Editor code lives in `editor/src/`:
 - `bitmap.ts`, `color.ts`: pixels and operations (line, fill, flip…)
 - `sprite.ts`, `png.ts`: sprite format, and tilesets (`tiles/<name>` on the board)
 - `map.ts`: map format (tested in `tests/world.test.ts`)
-- `font.ts`, `ttf.ts`: fonts on the board (`fonts/<name>`), and importing a pixel font, its numbers read from the file (tested in `tests/font.test.ts`)
+- `font.ts`, `ttf.ts`: fonts on the board (`fonts/<name>`), the presets (`editor/fonts/`), and importing a pixel font, its numbers read from the file (tested in `tests/font.test.ts`)
 - `storage.ts`, `project.ts`: reading and writing the game folder (local server or OPFS)
 - `board.ts`: sprite positions (`board.json`), automatic placement, resizing by a corner
 - `editor.ts`: the board, tools, selection, history — no DOM, tested in `tests/`

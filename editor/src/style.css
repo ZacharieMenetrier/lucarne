@@ -338,7 +338,8 @@ button.active {
   cursor: nesw-resize;
 }
 
-#selbar {
+#selbar,
+.music-selbar {
   position: absolute;
   top: 10px;
   left: 50%;
@@ -355,10 +356,12 @@ button.active {
   width: max-content;
   max-width: calc(100% - 20px);
 }
-#selbar[hidden] {
+#selbar[hidden],
+.music-selbar[hidden] {
   display: none;
 }
-#selbar button {
+#selbar button,
+.music-selbar button {
   display: flex;
   align-items: center;
   white-space: nowrap;
@@ -1963,6 +1966,11 @@ body[data-page='music'] #music-page {
   overflow: hidden;
   background: var(--stage-bg);
 }
+.music-selbar {
+  /* Under the ruler, which is dragged across to select bars. */
+  top: 34px;
+  z-index: 1;
+}
 .music-canvas {
   position: absolute;
   inset: 0;
@@ -2027,7 +2035,8 @@ body[data-page='music'] #music-page {
   display: flex;
   gap: 6px;
 }
-.music-record {
+.music-record,
+.music-stop {
   width: 40px;
 }
 /* Singing a melody (singdialog.ts): the beat, the count, the voice's level. */
@@ -2183,6 +2192,50 @@ dialog.instrument-dialog {
 .instrument-item small {
   color: var(--muted);
   font-size: 11px;
+}
+
+/* The New font dialog: blank, or a preset writing a line with its own pixels, twice as big. */
+.fields .field-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.font-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.font-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  overflow: hidden;
+}
+.font-preset:hover:not(.active) {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.font-preset.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.font-preset:focus {
+  outline: none;
+}
+.font-preset:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.font-sample {
+  zoom: 2;
+  image-rendering: pixelated;
+  max-width: 100%;
 }
 
 /* --- Sounds page ------------------------------------------------------------------ */

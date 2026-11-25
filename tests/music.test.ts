@@ -100,6 +100,74 @@ describe('music editor', () => {
     expect(songSteps(song)).toBe(32)
   })
 
+  it('selects bars across every instrument: copies, pastes, duplicates, moves and deletes them', () => {
+    const { ed, song } = editor()
+    ed.place(0, 72, 2)
+    ed.place(18, 76, 2)
+    ed.toggleHit(1, 4)
+    ed.toggleHit(1, 20)
+    const steps = () => song.instruments.map((t) => t.notes.map((n) => n.step).sort((a, b) => a - b))
+    // Bar 2, dragged either way; never past the song's end.
+    ed.selectBars(30, 17)
+    expect(ed.bars).toEqual({ from: 16, to: 32 })
+    ed.selectBars(0, 200)
+    expect(ed.bars).toEqual({ from: 0, to: 32 })
+    ed.selectBars(0, 15)
+    ed.duplicate()
+    expect(ed.bars).toEqual({ from: 16, to: 32 })
+    // The copy replaces what was in bar 2, in every instrument.
+    expect(steps()).toEqual([[0, 16], [4, 20]])
+    ed.copy()
+    ed.start = 32
+    ed.paste()
+    expect(steps()).toEqual([[0, 16, 32], [4, 20, 36]])
+    expect(ed.bars).toEqual({ from: 32, to: 48 })
+    // Moved onto bar 1: it replaces it, and leaves its own bar empty.
+    ed.begin()
+    ed.moveBars(ed.bars!, -16)
+    ed.moveBars({ from: 32, to: 48 }, -32)
+    ed.end()
+    expect(steps()).toEqual([[0, 16], [4, 20]])
+    expect(ed.bars).toEqual({ from: 0, to: 16 })
+    ed.undo()
+    expect(steps()).toEqual([[0, 16, 32], [4, 20, 36]])
+    ed.selectBars(16, 16)
+    ed.deleteSelection()
+    expect(steps()).toEqual([[0, 32], [4, 36]])
+    // Picking a note goes back to the notes.
+    ed.select(0)
+    ed.pick(song.instruments[0].notes[0])
+    expect(ed.bars).toBeNull()
+  })
+
+  it('adds a bar after the bar of the flag, pushing the rest right, and removes bars, pulling it left', () => {
+    const { ed, song } = editor()
+    ed.place(0, 72, 20)
+    ed.place(18, 76, 2)
+    ed.toggleHit(1, 20)
+    const steps = () => song.instruments.map((t) => t.notes.map((n) => n.step).sort((a, b) => a - b))
+    // The flag on bar 1: + is a new bar 2.
+    ed.addBar()
+    expect(steps()).toEqual([[0, 34], [36]])
+    // A note held over it keeps its length.
+    expect(song.instruments[0].notes.find((n) => n.step === 0)!.length).toBe(20)
+    // − on the flag's bar (bar 3 now).
+    ed.start = 32
+    ed.removeBars()
+    expect(steps()).toEqual([[0], []])
+    expect(ed.start).toBe(16)
+    // Bars selected: + after the last one, − takes them all.
+    ed.undo()
+    ed.selectBars(16, 40)
+    expect(ed.start).toBe(16)
+    ed.addBar()
+    expect(steps()).toEqual([[0, 34], [36]])
+    ed.selectBars(16, 40)
+    ed.removeBars()
+    expect(steps()).toEqual([[0], []])
+    expect(ed.bars).toBeNull()
+  })
+
   it('turns notes into hits when an instrument is replaced by a drum, and back', () => {
     const { ed, song } = editor()
     ed.place(0, 60, 3)

@@ -347,7 +347,7 @@ export class Project {
     await this.storage.remove(`${SONGS_DIR}/${name}.json`)
   }
 
-  /** Sound names: sounds/<name>.json (the game's own; the engine's are in runtime/sounds/). */
+  /** Sound names: sounds/<name>.json (the game's own). */
   async listSounds(): Promise<string[]> {
     return (await this.storage.list(SOUNDS_DIR))
       .map((f) => /^(.+)\.json$/.exec(f)?.[1])

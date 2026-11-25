@@ -6,6 +6,8 @@ import { map as mapRect, mapAt, setMaps, type MapData } from '../runtime/maps'
 import { Runner } from '../runtime/runner'
 import { attachScreen, screen, writtenText } from '../runtime/screen'
 import { Sprite, setSprites, sprite } from '../runtime/sprites'
+import { heardSounds, setSounds, sound } from '../runtime/sounds'
+import { emptySound } from '../runtime/sfx'
 import { time } from '../runtime/time'
 import { Dialogue, Menu } from '../runtime/ui'
 import type { Box } from '../runtime/collision'
@@ -460,6 +462,41 @@ describe('runner', () => {
     }
     expect(run()).toEqual([10 + 75 - 12.5, 20])
     expect(run()).toEqual(run())
+  })
+})
+
+describe('sounds', () => {
+  const drawn = () => {
+    const s = emptySound()
+    s.pitch[0] = 12
+    return s
+  }
+
+  it('are found by name, with the names there are when one is missing', () => {
+    setSounds([{ name: 'jump', sound: drawn() }, { name: 'coin', sound: drawn() }])
+    expect(sound('jump').name).toBe('jump')
+    expect(sound('jump').takes.length).toBe(1)
+    expect(() => sound('jmup')).toThrow('No sound named "jmup" in sounds/ (there are: jump, coin).')
+  })
+
+  it('are listed, not heard, while a script steps the game', () => {
+    resetWorld()
+    setSounds([{ name: 'jump', sound: drawn() }, { name: 'empty', sound: emptySound() }])
+    class Jumper extends Actor {
+      update() {
+        if (input.pressed('action')) sound('jump').play()
+        sound('empty').play()
+      }
+    }
+    spawn(Jumper)
+    const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
+    r.start()
+    heardSounds()
+    r.step(1, ['action'])
+    r.step(1, ['action'])
+    expect(heardSounds()).toEqual(['jump', 'empty', 'empty'])
+    expect(heardSounds()).toEqual([])
+    r.stop()
   })
 })
 

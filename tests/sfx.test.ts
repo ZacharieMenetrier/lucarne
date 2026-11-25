@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { RATE } from '../runtime/sound'
-import { COLUMNS, LOUDEST, SPEED_SECONDS, TEXTURES, emptySound, lastColumn, parseSound, renderDry, renderSound, rowFrequency, serializeSound, synthesize } from '../runtime/sfx'
-import { SoundEditor, fromCode, randomSound, soundCode } from '../editor/src/sfx'
+import { COLUMNS, LOUDEST, SPEED_SECONDS, TEXTURES, emptySound, lastColumn, parseSound, renderDry, renderSound, rowFrequency, serializeSound, synthesize, volumeGain } from '../runtime/sfx'
+import { SoundEditor } from '../editor/src/sfx'
 
 const FILES = Object.fromEntries(
-  Object.entries(import.meta.glob('../runtime/sounds/*.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>).map(([p, t]) => [p.replace(/^.*\//, '').replace(/\.json$/, ''), t]),
+  Object.entries(import.meta.glob('../editor/sounds/*.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>).map(([p, t]) => [p.replace(/^.*\//, '').replace(/\.json$/, ''), t]),
 )
-const builtIn = (name: string) => parseSound(FILES[name])
+const preset = (name: string) => parseSound(FILES[name])
 
 describe('sound files', () => {
   it('round-trip, writing only what is not the default', () => {
@@ -28,30 +28,13 @@ describe('sound files', () => {
     expect(s.volume[0]).toBe(LOUDEST)
   })
 
-  it('the built-in sounds all read and make a sound', () => {
+  it('the preset sounds all read and make a sound', () => {
     expect(Object.keys(FILES).length).toBe(25)
     for (const [name, text] of Object.entries(FILES)) {
       const s = parseSound(text)
       expect(lastColumn(s), name).toBeGreaterThanOrEqual(0)
       expect(serializeSound(s)).toBe(text)
     }
-  })
-})
-
-describe('sound codes', () => {
-  it('match the tool the sounds were made in', () => {
-    expect(soundCode(builtIn('coin'))).toBe('310022/jnjnlnlmlklhldl9l5' + '.n'.repeat(15))
-  })
-
-  it('round-trip, and read the older formats', () => {
-    const s = randomSound()
-    expect(fromCode(soundCode(s))).toEqual(s)
-    const v5 = fromCode('31002/jnjn' + '.n'.repeat(22))!
-    expect(v5.ring).toBe('normal')
-    expect(v5.pitch.slice(0, 3)).toEqual([19, 19, null])
-    const old = fromCode('31002:j3j1' + '.3'.repeat(22))!
-    expect(old.volume.slice(0, 2)).toEqual([23, 10])
-    expect(fromCode('nope')).toBeNull()
   })
 })
 
@@ -68,7 +51,7 @@ describe('making a sound', () => {
 
   it('every texture makes a sound at 16 kHz in 8-bit steps, as long as drawn at least', async () => {
     for (const texture of TEXTURES) {
-      const s = builtIn('jump')
+      const s = preset('jump')
       s.texture = texture
       const d = renderSound(s)!
       expect(d.length, texture).toBeGreaterThanOrEqual(Math.floor(5 * SPEED_SECONDS[s.speed] * RATE))
@@ -105,6 +88,22 @@ describe('making a sound', () => {
     const col = Math.round(SPEED_SECONDS.fast * RATE)
     const peak = (a: number) => Math.max(...d.slice(a, a + col).map(Math.abs))
     expect(peak(10 * col)).toBeLessThan(peak(0) / 10)
+  })
+
+  it('the level makes the whole sound quieter, even one pixel', () => {
+    const s = emptySound()
+    s.pitch[0] = 12
+    const peak = (d: Float32Array) => Math.max(...d.map(Math.abs))
+    const loud = peak(renderSound(s)!)
+    s.level = LOUDEST - 13
+    expect(peak(renderSound(s)!) / loud).toBeCloseTo(volumeGain(s.level), 1)
+  })
+
+  it('the level is kept in the file only when it is not the loudest', () => {
+    const s = emptySound()
+    expect(serializeSound(s)).not.toContain('level')
+    s.level = 10
+    expect(parseSound(serializeSound(s)).level).toBe(10)
   })
 })
 
@@ -166,7 +165,7 @@ describe('SoundEditor', () => {
     expect(heard).toEqual([[7, LOUDEST], [7, 11]])
   })
 
-  it('settings, clear and a pasted code are each one undo', () => {
+  it('settings, clear and a replaced sound are each one undo', () => {
     const { ed, edits } = open()
     ed.set('texture', 'metal')
     ed.set('texture', 'metal')
@@ -176,8 +175,7 @@ describe('SoundEditor', () => {
     ed.clear()
     expect(ed.sound!.texture).toBe('metal')
     expect(lastColumn(ed.sound!)).toBe(-1)
-    expect(ed.paste('not a code')).toBe(false)
-    expect(ed.paste(soundCode(builtIn('coin')))).toBe(true)
+    ed.replace(preset('coin'))
     expect(ed.sound!.texture).toBe('retro')
     ed.undo()
     ed.undo()

@@ -46,6 +46,12 @@ export interface Sound {
   pitch: (number | null)[]
   /** Each column's volume, 0 to LOUDEST: COLUMNS of them, kept for empty columns too. */
   volume: number[]
+  /**
+   * The whole sound's volume, 0 to LOUDEST, on the columns' scale. The columns only set how
+   * loud each is next to the others (the sound is always brought to its peak), so this is
+   * what makes a sound quiet.
+   */
+  level: number
 }
 
 /** Seconds per column. */
@@ -64,6 +70,7 @@ export function emptySound(): Sound {
     ring: 'normal',
     pitch: Array(COLUMNS).fill(null),
     volume: Array(COLUMNS).fill(LOUDEST),
+    level: LOUDEST,
   }
 }
 
@@ -108,6 +115,7 @@ export function parseSound(text: string): Sound {
     s.pitch[i] = pitch[i] === null || pitch[i] === undefined ? null : clampInt(pitch[i], 0, ROWS - 1, 0)
     s.volume[i] = clampInt(volume[i], 0, LOUDEST, LOUDEST)
   }
+  s.level = clampInt(j.level, 0, LOUDEST, LOUDEST)
   return s
 }
 
@@ -129,6 +137,7 @@ export function serializeSound(s: Sound): string {
   if (s.glide) out.glide = true
   if (s.echo !== d.echo) out.echo = s.echo
   if (s.ring !== d.ring) out.ring = s.ring
+  if (s.level !== d.level) out.level = s.level
   out.pitch = pitch
   if (lastQuiet >= 0) out.volume = s.volume.slice(0, lastQuiet + 1)
   // One line each for the arrays: they read as the drawing does, left to right.
@@ -565,10 +574,10 @@ function addEcho(dry: Float32Array, echo: Echo): Float32Array {
 }
 
 /**
- * As it plays, from the sound at RATE: at its loudest (0.9), its silent end cut off (20 ms
- * kept, faded), in 8-bit steps.
+ * As it plays, from the sound at RATE: its peak at 0.9, then lowered to its level, its silent
+ * end cut off (20 ms kept, faded), in 8-bit steps.
  */
-function finish(d: Float32Array): Float32Array {
+function finish(d: Float32Array, level: number): Float32Array {
   let pk = 0, end = 0
   for (let i = 0; i < d.length; i++) pk = Math.max(pk, Math.abs(d[i]))
   for (let i = d.length - 1; i >= 0; i--) {
@@ -578,7 +587,7 @@ function finish(d: Float32Array): Float32Array {
     }
   }
   const n = Math.max(1, Math.min(d.length, end + Math.floor(0.02 * RATE)))
-  const m = pk > 0 ? 0.9 / pk : 1, fl = Math.floor(0.02 * RATE)
+  const m = pk > 0 ? (0.9 * volumeGain(level)) / pk : 1, fl = Math.floor(0.02 * RATE)
   const out = new Float32Array(n)
   for (let i = 0; i < n; i++) out[i] = Math.round(d[i] * m * (i > n - fl ? (n - i) / fl : 1) * 127) / 127
   return out
@@ -587,11 +596,11 @@ function finish(d: Float32Array): Float32Array {
 /** The sound, as it plays: mono, at RATE, 8-bit steps; null when nothing is drawn. */
 export function renderSound(s: Sound): Float32Array | null {
   const dry = synthesize(s)
-  return dry ? finish(addEcho(resample(dry, SR, RATE), s.echo)) : null
+  return dry ? finish(addEcho(resample(dry, SR, RATE), s.echo), s.level) : null
 }
 
 /** The sound without its echo: a pixel heard as it is drawn. */
 export function renderDry(s: Sound): Float32Array | null {
   const dry = synthesize(s)
-  return dry ? finish(resample(dry, SR, RATE)) : null
+  return dry ? finish(resample(dry, SR, RATE), s.level) : null
 }

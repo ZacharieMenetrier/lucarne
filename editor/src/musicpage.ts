@@ -4,17 +4,21 @@
 //
 // The song is one grid: time from left to right, in sixteenths (a line at every bar), the
 // notes from bottom to top (a line at every octave). Every instrument of the song is on it: the
-// one selected filled with its color, the others as thin outlines of theirs, over it, so that
-// no note hides another (they are not edited there: an instrument is picked in the list). A
-// drum has no pitch: it is a row of its own, under the notes. The ruler on top shows the bars, and where playing starts.
-// Under the grid, the tempo, the time and Play: the song loops while it is painted, and a note plays
-// as it is placed.
+// one selected filled with its color, the others behind it as faint gray shadows, so that the
+// one edited is the only color in the grid (they are not edited there: an instrument is picked
+// in the list; hovering it in the list outlines its notes in its color, over the others). A
+// drum has no pitch: it is a row of its own, under the notes. The ruler on top shows the bars, and where playing starts
+// (a click); dragging across it selects bars, every instrument at once (music.ts), and dragging
+// them moves them.
+// Under the grid, the tempo, the time, Play and Stop: Play plays from the flag, the song or the
+// bars selected in a loop, and stops (the flag stays where it was); Stop goes back to the
+// beginning, nothing selected, to hear the song from its start. A note plays as it is placed.
 
 import type { App } from './app'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { icon } from './icons'
 import { Instruments } from './instruments'
-import { MusicEditor, type MusicTool } from './music'
+import { MusicEditor, type Bars, type MusicTool } from './music'
 import { MusicPlayer } from './musicplayer'
 import { createActionsMenu, createEditorSwitch, createMenu, currentPage, goTo, onPage } from './menu'
 import { isPlaying } from './play'
@@ -57,6 +61,24 @@ const MIN_STEP = 6
 const MAX_STEP = 48
 /** How close to the end of a note the pencil resizes it rather than moving it. */
 const EDGE = 6
+/** CSS pixels a pointer moves on the ruler before a click becomes a drag (selecting bars). */
+const DRAG = 4
+/**
+ * Dragging this close to an edge of the grid (CSS pixels), or past it, scrolls it: slowly at
+ * the edge, faster further out. Inside the edge, so that it works full screen too, where the
+ * pointer cannot leave the window.
+ */
+const SCROLL_ZONE = 24
+/** Pixels scrolled per frame, for each pixel into the zone; and at most. */
+const SCROLL_RATE = 0.4
+const SCROLL_MAX = 40
+/**
+ * The + and − buttons in the ruler, at the right end of the flag's bar (of the bars selected):
+ * their size, and where each starts before that end (CSS pixels).
+ */
+const BAR_BUTTON = 14
+const MINUS_AT = BAR_BUTTON + 4
+const PLUS_AT = MINUS_AT + BAR_BUTTON + 3
 /** Bars of grid after the end of the song, to paint further. */
 const AFTER = 2
 const ROWS = HIGHEST - LOWEST + 1
@@ -74,7 +96,8 @@ type Drag =
   | { kind: 'erase' }
   | { kind: 'box'; step: number; pitch: number | null; to: { step: number; pitch: number | null }; lane: boolean }
   | { kind: 'hits'; part: number; add: boolean; done: Set<number>; last: number | null }
-  | { kind: 'start' }
+  | { kind: 'ruler'; step: number; x: number; moved: boolean }
+  | { kind: 'bars'; origin: Bars; step: number; moved: boolean }
   | { kind: 'pan'; x: number; y: number; sx: number; sy: number }
 
 export class MusicPage {
@@ -93,6 +116,9 @@ export class MusicPage {
   private readonly time: HTMLSelectElement
   private readonly playButton: HTMLButtonElement
   private readonly recordButton: HTMLButtonElement
+  private readonly stopButton: HTMLButtonElement
+  /** What can be done with the selection, floating over the grid, as on the Pixels page. */
+  private readonly selbar: HTMLElement
   private singing = false
   private readonly length: HTMLElement
   private readonly songs = new Map<string, Song>()
@@ -105,7 +131,14 @@ export class MusicPage {
   private stepWidth = 18
   private drag: Drag | null = null
   private hover: { step: number; pitch: number | null; lane: number | null } | null = null
+  /** The instrument hovered in the list: its notes are shown in its color. */
+  private shown: number | null = null
   private readonly pointers = new Map<number, { x: number; y: number }>()
+  /** Where the pointer is while dragging, and the frame that scrolls when it is near an edge. */
+  private dragAt: { x: number; y: number } | null = null
+  /** The + or − next to the flag under the pointer. */
+  private barButton: 'add' | 'remove' | null = null
+  private scrollFrame = 0
   private renderTimer = 0
   private frame = 0
   private listKey = ''
@@ -153,6 +186,10 @@ export class MusicPage {
       // Space plays and stops: the button must not keep the focus, or it would click too.
       this.playButton.blur()
     } })
+    this.stopButton = h('button', { type: 'button', className: 'small icon-btn music-stop', title: 'Back to the beginning (Enter, with nothing selected)', 'aria-label': 'Back to the beginning', html: icon('stop'), onclick: () => {
+      this.rewind()
+      this.stopButton.blur()
+    } })
     this.recordButton = h('button', { type: 'button', className: 'small icon-btn music-record', title: 'Sing into the instrument (R)', 'aria-label': 'Sing into the instrument', html: icon('record'), onclick: () => {
       void this.sing()
       this.recordButton.blur()
@@ -176,12 +213,12 @@ export class MusicPage {
         h('button', { type: 'button', className: 'run-game', title: 'Play the game (⌘↵)', html: `${icon('play')}<span>Play</span>`, onclick: () => this.app.play() })),
       h('div', { className: 'music-body' },
         tools,
-        this.stage = h('main', { className: 'music-stage' }, this.canvas, this.empty),
+        this.stage = h('main', { className: 'music-stage' }, this.canvas, this.selbar = this.buildSelectionBar(), this.empty),
         h('div', { className: 'music-transport' },
           h('div', { className: 'bar-side' },
             h('label', { className: 'music-tempo', title: 'Quarter notes per minute' }, 'Tempo', this.tempo),
             h('label', { className: 'music-tempo' }, 'Time', this.time)),
-          h('div', { className: 'music-buttons' }, this.playButton, this.recordButton),
+          h('div', { className: 'music-buttons' }, this.playButton, this.stopButton, this.recordButton),
           h('div', { className: 'bar-side end' }, this.length)),
         h('aside', { className: 'world-side' },
           this.instrumentsPanel = h('section', { className: 'music-instruments' },
@@ -485,13 +522,27 @@ export class MusicPage {
     return (name: string): Instrument | undefined => (this.editor.muted.has(name) ? undefined : this.instruments.get(name))
   }
 
+  /**
+   * Plays from the flag (the bars selected, in a loop, if any), or stops: the flag stays where
+   * it was, so that playing again hears the same passage again.
+   */
   private togglePlay() {
-    const song = this.editor.song
+    const ed = this.editor
+    const song = ed.song
     if (!song) return
     if (this.player.playing) return this.stop()
-    this.player.play(song, this.lookup, this.editor.start)
+    this.player.play(song, this.lookup, ed.start, ed.bars)
     this.tick()
     this.renderTransport()
+  }
+
+  /** Stop: back to the beginning, nothing selected, so that Play is the whole song from its start. */
+  private rewind() {
+    this.stop()
+    this.editor.start = 0
+    this.sx = 0
+    this.editor.deselect()
+    this.draw()
   }
 
   private stop() {
@@ -634,7 +685,7 @@ export class MusicPage {
   /** What is under a point of the canvas (CSS pixels). */
   private at(x: number, y: number): Hit {
     const step = Math.floor((x - GUTTER + this.sx) / this.stepWidth)
-    if (y < RULER) return { area: 'ruler', step: Math.max(0, Math.round((x - GUTTER + this.sx) / this.stepWidth)) }
+    if (y < RULER) return { area: 'ruler', step: Math.max(0, step) }
     if (y >= this.lanesTop && this.lanes().length) {
       const lane = Math.max(0, Math.min(this.lanes().length - 1, Math.floor((y - this.lanesTop) / LANE)))
       return { area: x < GUTTER ? 'gutter' : 'lane', step, lane, part: this.lanes()[lane] }
@@ -684,7 +735,11 @@ export class MusicPage {
         this.clampScroll()
         return this.draw()
       }
-      if (this.drag) return this.moveDrag(p.x, p.y)
+      if (this.drag) {
+        this.dragAt = p
+        this.autoScroll()
+        return this.moveDrag(p.x, p.y)
+      }
       this.hoverAt(p.x, p.y)
     })
     const up = (e: PointerEvent) => {
@@ -703,6 +758,7 @@ export class MusicPage {
     c.addEventListener('pointerleave', () => {
       if (this.drag) return
       this.hover = null
+      this.barButton = null
       this.draw()
     })
     c.addEventListener('wheel', (e) => {
@@ -755,8 +811,16 @@ export class MusicPage {
     if (!song) return
     const hit = this.at(x, y)
     if (hit.area === 'ruler') {
-      this.setStart(hit.step)
-      this.drag = { kind: 'start' }
+      const button = this.barButtonAt(x, y)
+      if (button === 'add') return ed.addBar()
+      if (button === 'remove') return ed.removeBars()
+      // In the bars selected: they move. Anywhere else: a click sets where playing starts, a
+      // drag selects bars.
+      const b = ed.bars
+      if (b && hit.step >= b.from && hit.step < b.to) {
+        ed.begin()
+        this.drag = { kind: 'bars', origin: b, step: hit.step, moved: false }
+      } else this.drag = { kind: 'ruler', step: hit.step, x, moved: false }
       return
     }
     if (hit.area === 'keys') return this.hear(hit.pitch, 4)
@@ -858,7 +922,20 @@ export class MusicPage {
     const d = this.drag!
     const ed = this.editor
     const hit = this.at(x, Math.max(RULER, Math.min(this.lanesTop - 1, y)))
-    if (d.kind === 'start') return this.setStart(this.at(x, 0).step)
+    if (d.kind === 'ruler' || d.kind === 'bars') {
+      const step = this.at(x, 0).step
+      const bar = this.bar
+      // Selecting: as soon as the pointer really moves, even within one bar (that bar alone).
+      if (d.kind === 'ruler') {
+        if (!d.moved && Math.abs(x - d.x) < DRAG) return
+        d.moved = true
+        return ed.selectBars(d.step, step)
+      }
+      if (!d.moved && Math.floor(step / bar) === Math.floor(d.step / bar)) return
+      d.moved = true
+      // By whole bars: a section stays on the bars.
+      return ed.moveBars(d.origin, (Math.floor(step / bar) - Math.floor(d.step / bar)) * bar)
+    }
     if (d.kind === 'hits') {
       const lane = this.at(x, Math.max(this.lanesTop, y))
       return this.paintHit(lane.step)
@@ -894,9 +971,46 @@ export class MusicPage {
     }
   }
 
+  /**
+   * Scrolls the grid while a drag is near or past its edges, every frame, and goes on with the
+   * drag where the pointer now is over the song: the selection, the notes moved follow. Up and
+   * down only over the notes (the ruler and the drums' rows are as high as they are).
+   */
+  private autoScroll() {
+    if (this.scrollFrame) return
+    const frame = () => {
+      this.scrollFrame = 0
+      const d = this.drag
+      const p = this.dragAt
+      if (!d || d.kind === 'pan' || !p) return
+      const speed = (into: number) => (into <= 0 ? 0 : Math.min(SCROLL_MAX, into * SCROLL_RATE))
+      const W = this.canvas.clientWidth
+      const vx = speed(GUTTER + SCROLL_ZONE - p.x) ? -speed(GUTTER + SCROLL_ZONE - p.x) : speed(p.x - (W - SCROLL_ZONE))
+      const vertical = d.kind === 'move' || d.kind === 'erase' || (d.kind === 'box' && !d.lane)
+      const vy = !vertical ? 0 : speed(RULER + SCROLL_ZONE - p.y) ? -speed(RULER + SCROLL_ZONE - p.y) : speed(p.y - (this.lanesTop - SCROLL_ZONE))
+      const sx = this.sx
+      const sy = this.sy
+      // Not further right than the grid goes (the song and a few bars after it).
+      const song = this.editor.song
+      const end = ((song ? songSteps(song) : 0) + AFTER * this.bar) * this.stepWidth - (W - GUTTER)
+      this.sx = Math.min(this.sx + vx, Math.max(sx, end))
+      this.sy += vy
+      this.clampScroll()
+      // Against an edge of the song: nothing left to scroll, until the pointer moves again.
+      if (this.sx === sx && this.sy === sy) return
+      this.moveDrag(p.x, p.y)
+      this.draw()
+      this.scrollFrame = requestAnimationFrame(frame)
+    }
+    this.scrollFrame = requestAnimationFrame(frame)
+  }
+
   private endDrag() {
     const d = this.drag!
     this.drag = null
+    this.dragAt = null
+    cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
     const ed = this.editor
     if (d.kind === 'box') {
       ed.selectRange(d.step, d.to.step, d.pitch, d.to.pitch)
@@ -907,17 +1021,50 @@ export class MusicPage {
       if (ed.selection.size > 1) ed.selection = new Set([d.picked])
       if (ed.tool === 'pencil') this.hear(d.picked.pitch, d.picked.length)
     }
-    if (d.kind !== 'start') ed.end()
+    if (d.kind === 'ruler' || (d.kind === 'bars' && !d.moved)) {
+      if (!d.moved) {
+        ed.deselect()
+        this.setStart(d.step)
+      }
+      if (d.kind === 'ruler') return
+    }
+    ed.end()
+  }
+
+  /** Where + and − are: the right end of the bars selected, or of the flag's bar (canvas x). */
+  private barButtonsEnd(): number | null {
+    const ed = this.editor
+    if (!ed.song) return null
+    const end = ed.bars ? ed.bars.to : Math.floor(ed.start / this.bar) * this.bar + this.bar
+    const x = GUTTER + end * this.stepWidth - this.sx
+    // Scrolled out of view, or too narrow for them (zoomed out a lot): none.
+    return x - PLUS_AT < GUTTER || this.bar * this.stepWidth < PLUS_AT + 30 ? null : x
+  }
+
+  /** The + or − at a point of the canvas. */
+  private barButtonAt(x: number, y: number): 'add' | 'remove' | null {
+    const end = this.barButtonsEnd()
+    if (y < 0 || y >= RULER || end === null) return null
+    if (x >= end - PLUS_AT - 2 && x < end - PLUS_AT + BAR_BUTTON + 1) return 'add'
+    if (x >= end - MINUS_AT - 1 && x < end - MINUS_AT + BAR_BUTTON + 2) return 'remove'
+    return null
   }
 
   private hoverAt(x: number, y: number) {
+    const button = this.barButtonAt(x, y)
+    if (button !== this.barButton) {
+      this.barButton = button
+      this.draw()
+    }
     const hit = this.at(x, y)
     const next = hit.area === 'notes' ? { step: hit.step, pitch: hit.pitch, lane: null } : hit.area === 'lane' && hit.lane !== undefined ? { step: hit.step, pitch: null, lane: hit.lane } : null
     const same = JSON.stringify(next) === JSON.stringify(this.hover)
     this.hover = next
     // The cursor: resizing at the end of a note, with the pencil.
     let cursor = ''
-    if (hit.area === 'ruler') cursor = 'pointer'
+    const b = this.editor.bars
+    if (button) cursor = 'pointer'
+    else if (hit.area === 'ruler') cursor = b && hit.step >= b.from && hit.step < b.to ? 'grab' : 'pointer'
     else if (hit.area === 'notes' && this.editor.tool === 'pencil' && !this.editor.drum) {
       const note = this.editor.noteAt(hit.step, hit.pitch)
       if (note && GUTTER + noteEnd(note) * this.stepWidth - this.sx - x <= EDGE) cursor = 'ew-resize'
@@ -930,8 +1077,11 @@ export class MusicPage {
   private setStart(step: number) {
     const song = this.editor.song
     if (!song) return
-    this.editor.start = Math.max(0, Math.min(songSteps(song) - 1, step))
-    if (this.player.playing) this.player.play(song, this.lookup, this.editor.start)
+    // On the start of a bar, up to the end of the song itself, so that a paste can go after its
+    // last note; playing from there wraps to the beginning (MusicPlayer loops `from` over the song).
+    const bar = this.bar
+    this.editor.start = Math.max(0, Math.min(songSteps(song), Math.floor(step / bar) * bar))
+    if (this.player.playing) this.player.play(song, this.lookup, this.editor.start, this.editor.bars)
     this.draw()
   }
 
@@ -956,15 +1106,27 @@ export class MusicPage {
         } else if (k === 's') void this.flush()
         else return
       } else if (e.altKey) return
-      else if (e.key === ' ' || e.key === 'Enter') this.togglePlay()
+      else if (e.key === ' ') this.togglePlay()
+      else if (e.key === 'Enter') {
+        // Done with the selection, as on the Pixels page; nothing selected: back to the beginning.
+        if (ed.selection.size || ed.bars) ed.deselect()
+        else this.rewind()
+      } else if (k === 'i') ed.addBar()
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && e.shiftKey) ed.removeBars()
       else if (k === 'b') ed.setTool('pencil')
       else if (k === 'e') ed.setTool('eraser')
       else if (k === 'm') ed.setTool('select')
       else if (k === 'r' && !e.repeat) void this.sing()
       else if (e.key === 'Delete' || e.key === 'Backspace') ed.deleteSelection()
-      else if (e.key.startsWith('Arrow') && ed.selection.size) this.nudge(e.key, e.shiftKey)
+      else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && ed.bars) {
+        // The bars selected move by bars.
+        const b = ed.bars
+        ed.begin()
+        ed.moveBars(b, (e.key === 'ArrowLeft' ? -1 : 1) * this.bar)
+        ed.end()
+      } else if (e.key.startsWith('Arrow') && ed.selection.size) this.nudge(e.key, e.shiftKey)
       else if (e.key === 'Escape') {
-        if (ed.selection.size) ed.deselect()
+        if (ed.selection.size || ed.bars) ed.deselect()
         else if (this.player.playing) this.stop()
         else goTo('editor')
       } else return
@@ -999,8 +1161,41 @@ export class MusicPage {
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-music-tool]')) el.classList.toggle('active', el.dataset.musicTool === ed.tool)
     this.renderLists()
     this.renderTransport()
+    this.renderSelectionBar()
+    // Bars selected or let go while playing: the loop follows, from where it is.
+    const song = ed.song
+    if (song && this.player.playing && JSON.stringify(this.player.looping) !== JSON.stringify(ed.bars)) {
+      this.player.play(song, this.lookup, this.player.position() ?? ed.start, ed.bars)
+    }
     this.clampScroll()
     this.draw()
+  }
+
+  /** The selection bar: shown with the select tool, or while bars are selected (whatever the tool). */
+  private buildSelectionBar() {
+    const ed = this.editor
+    const btn = (label: string, title: string, run: () => void, needs: string) =>
+      h('button', { type: 'button', title, 'data-needs': needs, onclick: (e: Event) => {
+        run()
+        ;(e.currentTarget as HTMLElement).blur()
+      } }, label)
+    return h('div', { className: 'selbar music-selbar', hidden: true },
+      btn('Copy', 'Copy (⌘C)', () => ed.copy(), 'sel'),
+      btn('Cut', 'Cut (⌘X)', () => ed.cut(), 'sel'),
+      btn('Paste', 'Paste where playing starts (⌘V)', () => ed.paste(), 'clip'),
+      btn('Duplicate', 'Duplicate (⌘D)', () => ed.duplicate(), 'sel'),
+      btn('Clear', 'Clear (Delete)', () => ed.deleteSelection(), 'sel'),
+      h('button', { type: 'button', className: 'primary', title: 'Done (Enter)', 'data-needs': 'sel', onclick: () => ed.deselect() }, 'Done'))
+  }
+
+  private renderSelectionBar() {
+    const ed = this.editor
+    const bars = !!ed.bars
+    this.selbar.hidden = !ed.song || (ed.tool !== 'select' && !bars)
+    for (const el of this.selbar.querySelectorAll<HTMLButtonElement>('[data-needs]')) {
+      const needs = el.dataset.needs
+      el.disabled = needs === 'clip' ? !ed.clipboard : !bars && !ed.selection.size
+    }
   }
 
   private renderTransport() {
@@ -1010,17 +1205,24 @@ export class MusicPage {
     this.time.value = song?.time ?? DEFAULT_TIME
     this.time.disabled = !song
     this.playButton.disabled = !song
-    const state = this.player.playing ? 'stop' : 'play'
+    this.stopButton.disabled = !song
+    const state = this.player.playing ? 'pause' : 'play'
     if (this.playButton.dataset.state !== state) {
       this.playButton.dataset.state = state
       this.playButton.innerHTML = icon(state)
-      this.playButton.setAttribute('aria-label', state === 'stop' ? 'Stop' : 'Play')
+      this.playButton.setAttribute('aria-label', state === 'pause' ? 'Stop, back to the flag' : 'Play')
     }
     this.playButton.classList.toggle('active', this.player.playing)
     this.recordButton.disabled = !song || !this.editor.current
     const bars = song ? songSteps(song) / this.bar : 0
     const seconds = song ? songSteps(song) * stepSeconds(song.tempo) : 0
     this.length.textContent = song ? `${bars} bar${bars > 1 ? 's' : ''} · ${seconds.toFixed(1)} s` : ''
+  }
+
+  private show(part: number | null) {
+    if (this.shown === part) return
+    this.shown = part
+    this.draw()
   }
 
   /** The instruments and the songs, built again only when they change. */
@@ -1031,6 +1233,8 @@ export class MusicPage {
     if (key === this.listKey) return
     this.listKey = key
 
+    // Rebuilt rows get no pointerleave: nothing stays shown from the old ones.
+    this.shown = null
     this.instrumentList.replaceChildren()
     if (song && !song.instruments.length) this.instrumentList.append(h('p', { className: 'muted' }, 'Add an instrument to play notes.'))
     song?.instruments.forEach((t, i) => {
@@ -1042,7 +1246,11 @@ export class MusicPage {
         { label: 'Remove', run: () => void this.removeInstrument(i), danger: true },
       ])
       this.instrumentList.append(
-        h('div', { className: 'sprite-row' },
+        h('div', {
+          className: 'sprite-row',
+          onpointerenter: () => this.show(i),
+          onpointerleave: () => this.show(null),
+        },
           h('button', {
             className: 'sprite-item' + (i === ed.selected ? ' active' : ''),
             title: missing ? `${t.instrument}: no such instrument, it is silent` : t.instrument,
@@ -1136,6 +1344,9 @@ export class MusicPage {
     // from 6/8), stronger again at every bar and under every C.
     const bar = this.bar
     const beat = this.beat
+    // Every other bar a little lighter, so that bars read as blocks and can be counted.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.018)'
+    for (let s = Math.ceil(first / bar) * bar - bar; s <= last; s += bar) if ((s / bar) % 2) ctx.fillRect(X(s), RULER, bar * SW, lanesTop - RULER)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.035)'
     for (let p = LOWEST; p <= HIGHEST; p++) ctx.fillRect(GUTTER, Math.round(Y(p) + ROW) - px, W, px)
     if (SW >= 8) for (let s = first; s <= last; s++) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
@@ -1143,7 +1354,15 @@ export class MusicPage {
     for (let s = Math.ceil(first / beat) * beat; s <= last; s += beat) if (s % bar) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.11)'
     for (let p = LOWEST; p <= HIGHEST; p++) if (p % 12 === 0) ctx.fillRect(GUTTER, Math.round(Y(p) + ROW) - px, W, px)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'
     for (let s = Math.ceil(first / bar) * bar; s <= last; s += bar) ctx.fillRect(Math.round(X(s)), RULER, px, lanesTop - RULER)
+
+    // The bars selected: a band across every instrument.
+    const sel = ed.bars
+    if (sel) {
+      ctx.fillStyle = withAlpha(C.accent, 0.1)
+      ctx.fillRect(X(sel.from), RULER, (sel.to - sel.from) * SW, lanesTop - RULER)
+    }
 
     // The row and step under the pointer.
     if (this.hover && this.hover.pitch !== null && !ed.drum && !this.drag) {
@@ -1155,10 +1374,28 @@ export class MusicPage {
       }
     }
 
-    // The selected instrument, solid; then the others over it, as thin outlines of their color:
-    // nothing hides anything, and the one edited stays the one filled.
+    // The others first, as faint gray shadows behind; then the selected instrument, solid: it is
+    // the only color in the grid. The one hovered in the list, last, as outlines of its color.
+    // Bars selected: every instrument's notes there are selected, so in their color and outlined.
     const pitched = (i: number) => !!song.instruments[i] && !this.instruments.isDrum(song.instruments[i].instrument)
     const visible = (n: Note) => n.pitch !== null && noteEnd(n) >= first && n.step <= last
+    const inBars = (n: Note) => !!sel && n.step >= sel.from && n.step < sel.to
+    const selected = (n: Note) => ed.selection.has(n) || inBars(n)
+    const outline = (x: number, y: number, w: number, h: number) => {
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 2 * px
+      ctx.strokeRect(x - px, y - px, w + 2 * px, h + 2 * px)
+    }
+    song.instruments.forEach((t, i) => {
+      if (i === ed.selected || !pitched(i)) return
+      for (const n of t.notes) {
+        if (!visible(n)) continue
+        const [x, y, w] = [X(n.step) + 1, Y(n.pitch!) + 1, Math.max(2, n.length * SW - 2)]
+        ctx.fillStyle = inBars(n) ? instrumentColor(i) : 'rgba(255, 255, 255, 0.1)'
+        ctx.fillRect(x, y, w, ROW - 2)
+        if (inBars(n)) outline(x, y, w, ROW - 2)
+      }
+    })
     if (pitched(ed.selected)) {
       for (const n of song.instruments[ed.selected].notes) {
         if (!visible(n)) continue
@@ -1167,23 +1404,23 @@ export class MusicPage {
         const w = Math.max(2, n.length * SW - 2)
         ctx.fillStyle = instrumentColor(ed.selected)
         ctx.fillRect(x, y, w, ROW - 2)
-        if (ed.selection.has(n)) {
+        if (selected(n)) {
           ctx.strokeStyle = '#fff'
           ctx.lineWidth = 2 * px
           ctx.strokeRect(x - px, y - px, w + 2 * px, ROW - 2 + 2 * px)
         }
       }
     }
-    ctx.lineWidth = px
-    song.instruments.forEach((t, i) => {
-      if (i === ed.selected || !pitched(i)) return
-      ctx.strokeStyle = instrumentColor(i)
-      for (const n of t.notes) {
+    const shown = this.shown
+    if (shown !== null && shown !== ed.selected && pitched(shown)) {
+      ctx.lineWidth = 2 * px
+      ctx.strokeStyle = instrumentColor(shown)
+      for (const n of song.instruments[shown].notes) {
         if (!visible(n)) continue
         const w = Math.max(2, n.length * SW - 2)
-        ctx.strokeRect(X(n.step) + 1 + px / 2, Y(n.pitch!) + 1 + px / 2, w - px, ROW - 2 - px)
+        ctx.strokeRect(X(n.step) + 1 + px, Y(n.pitch!) + 1 + px, w - 2 * px, ROW - 2 - 2 * px)
       }
-    })
+    }
     ctx.restore()
 
     // --- The drums' rows.
@@ -1196,6 +1433,10 @@ export class MusicPage {
       ctx.fillRect(GUTTER, lanesTop, W, H - lanesTop)
       ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'
       ctx.fillRect(end, lanesTop, W - end, H - lanesTop)
+      if (sel) {
+        ctx.fillStyle = withAlpha(C.accent, 0.1)
+        ctx.fillRect(X(sel.from), lanesTop, (sel.to - sel.from) * SW, H - lanesTop)
+      }
       lanes.forEach((part, k) => {
         const y = lanesTop + k * LANE
         if (part === ed.selected) {
@@ -1204,7 +1445,7 @@ export class MusicPage {
         }
         ctx.fillStyle = 'rgba(255, 255, 255, 0.05)'
         if (SW >= 8) for (let s = first; s <= last; s++) ctx.fillRect(Math.round(X(s)), y, px, LANE)
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.11)'
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'
         for (let s = Math.ceil(first / bar) * bar; s <= last; s += bar) ctx.fillRect(Math.round(X(s)), y, px, LANE)
         // Beats, so the hits can be counted.
         ctx.fillStyle = 'rgba(255, 255, 255, 0.06)'
@@ -1215,9 +1456,9 @@ export class MusicPage {
         for (const n of song.instruments[part].notes) {
           if (n.step < first - 1 || n.step > last) continue
           const x = X(n.step) + 2
-          ctx.fillStyle = front ? instrumentColor(part) : withAlpha(instrumentColor(part), 0.55)
+          ctx.fillStyle = front || inBars(n) ? instrumentColor(part) : withAlpha(instrumentColor(part), 0.55)
           ctx.fillRect(x, y + 4, Math.max(2, SW - 4), LANE - 8)
-          if (front && ed.selection.has(n)) {
+          if ((front && ed.selection.has(n)) || inBars(n)) {
             ctx.strokeStyle = '#fff'
             ctx.lineWidth = 2 * px
             ctx.strokeRect(x - px, y + 4 - px, Math.max(2, SW - 4) + 2 * px, LANE - 8 + 2 * px)
@@ -1302,6 +1543,10 @@ export class MusicPage {
     ctx.font = '11px -apple-system, BlinkMacSystemFont, system-ui, sans-serif'
     ctx.textBaseline = 'middle'
     ctx.textAlign = 'left'
+    if (sel) {
+      ctx.fillStyle = withAlpha(C.accent, 0.35)
+      ctx.fillRect(X(sel.from), 0, (sel.to - sel.from) * SW, RULER - px)
+    }
     for (let s = Math.floor(first / bar) * bar; s <= last; s += bar) {
       ctx.fillStyle = s < steps ? C.muted : withAlpha(C.muted, 0.45)
       ctx.fillText(String(s / bar + 1), X(s) + (s === ed.start ? 11 : 5), RULER / 2)
@@ -1322,6 +1567,20 @@ export class MusicPage {
     ctx.closePath()
     ctx.fill()
     ctx.fillRect(sx, 6, 1.5, RULER - 7)
+    // + and −, at the right of its bar (of the bars selected): a bar added after it, the bars taken out.
+    const top = Math.round((RULER - BAR_BUTTON) / 2)
+    const buttonsEnd = this.barButtonsEnd()
+    if (buttonsEnd !== null) for (const [kind, at] of [['add', PLUS_AT], ['remove', MINUS_AT]] as const) {
+      const bx = Math.round(buttonsEnd) - at
+      ctx.fillStyle = withAlpha(C.text, this.barButton === kind ? 0.22 : 0.09)
+      ctx.beginPath()
+      ctx.roundRect(bx, top, BAR_BUTTON, BAR_BUTTON, 3)
+      ctx.fill()
+      ctx.fillStyle = C.text
+      const m = bx + BAR_BUTTON / 2
+      ctx.fillRect(m - 4, top + BAR_BUTTON / 2 - 0.75, 8, 1.5)
+      if (kind === 'add') ctx.fillRect(m - 0.75, top + BAR_BUTTON / 2 - 4, 1.5, 8)
+    }
     ctx.restore()
 
     // --- The playhead.

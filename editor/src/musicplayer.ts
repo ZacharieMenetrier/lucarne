@@ -4,31 +4,14 @@
 // every edit renders it again, and the new sound takes over where the old one was, with a
 // short crossfade so the change is not heard as a click.
 
+import type { Bars } from './music'
+import { audioContext } from '../../runtime/audio'
 import { renderNote, renderSong, songSteps, stepSeconds, type Instrument, type Song } from '../../runtime/sound'
 
 /** Seconds of crossfade when the song changes while it plays. */
 const SWAP = 0.02
 
-let shared: AudioContext | null = null
-
-/** The editor's audio context, made on the first sound (a browser only starts one after a click
- *  or a key): one for every page, as an iPad wants. */
-export function audioContext(): AudioContext {
-  if (!shared) {
-    try {
-      // Plays even with an iPhone's or iPad's silent switch on (set once: singing switches
-      // it to play-and-record for a while, microphone.ts).
-      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession
-      if (session) session.type = 'playback'
-    } catch {}
-    shared = new AudioContext()
-  }
-  // Not only "suspended": Safari also has "interrupted", which is where a change of audio
-  // session (singing, microphone.ts) or another app taking the sound leaves it, and it
-  // stays silent until resumed.
-  if (shared.state !== 'running' && shared.state !== 'closed') void shared.resume()
-  return shared
-}
+export { audioContext }
 
 interface Voice {
   source: AudioBufferSourceNode
@@ -39,10 +22,13 @@ export class MusicPlayer {
   private ctx: AudioContext | null = null
   private voice: Voice | null = null
   private preview: Voice | null = null
-  /** When the song's step 0 played, last time round (context time), and its length then. */
+  /** When the song's step 0 played, first time round (context time), and its length then. */
   private t0 = 0
   private duration = 0
   private step = 0
+  /** What loops, in seconds: the whole song, or the bars selected. */
+  private loop = { from: 0, to: 0 }
+  private bars: Bars | null = null
   get playing() {
     return this.voice !== null
   }
@@ -52,10 +38,19 @@ export class MusicPlayer {
     return (this.ctx = audioContext())
   }
 
-  /** Plays the song from a step, in a loop. */
-  play(song: Song, instruments: (name: string) => Instrument | undefined, from: number) {
+  /**
+   * Plays the song from a step, in a loop: the whole song, or only the bars given (from their
+   * first step, unless `from` is in them).
+   */
+  play(song: Song, instruments: (name: string) => Instrument | undefined, from: number, bars: Bars | null = null) {
     this.stop()
-    this.start(song, instruments, from)
+    this.bars = bars
+    this.start(song, instruments, bars && (from < bars.from || from >= bars.to) ? bars.from : from)
+  }
+
+  /** The bars it loops, as given to play. */
+  get looping(): Bars | null {
+    return this.bars
   }
 
   /** The song changed while playing: goes on with the new one, from where it is. */
@@ -75,7 +70,9 @@ export class MusicPlayer {
   /** Where the song is, in steps (with a fraction), or null when it is not playing. */
   position(): number | null {
     if (!this.voice || !this.ctx || !this.duration) return null
-    const t = (((this.ctx.currentTime - this.t0) % this.duration) + this.duration) % this.duration
+    const { from, to } = this.loop
+    let t = this.ctx.currentTime - this.t0
+    if (t >= to) t = from + ((t - from) % (to - from))
     return t / this.step
   }
 
@@ -105,7 +102,7 @@ export class MusicPlayer {
     const ctx = this.audio()
     if (this.preview) this.fadeOut(this.preview)
     const data = renderNote(inst, pitch, seconds, ctx.sampleRate)
-    this.preview = this.voiceOf(data, false, 0)
+    this.preview = this.voiceOf(data, null, 0)
   }
 
   private start(song: Song, instruments: (name: string) => Instrument | undefined, from: number) {
@@ -114,20 +111,27 @@ export class MusicPlayer {
     this.step = stepSeconds(song.tempo)
     this.duration = data.length / ctx.sampleRate
     const steps = songSteps(song)
-    const offset = (((from % steps) + steps) % steps) * this.step
+    // The bars selected, if they are still in the song (it may have got shorter).
+    const b = this.bars
+    this.loop = b && b.from < steps ? { from: b.from * this.step, to: Math.min(b.to, steps) * this.step } : { from: 0, to: this.duration }
+    const offset = Math.max(this.loop.from, Math.min(this.loop.to - 1e-3, (((from % steps) + steps) % steps) * this.step))
     const old = this.voice
-    this.voice = this.voiceOf(data, true, offset, old ? SWAP : 0)
+    this.voice = this.voiceOf(data, this.loop, offset, old ? SWAP : 0)
     this.t0 = ctx.currentTime - offset
     if (old) this.fadeOut(old)
   }
 
-  private voiceOf(data: Float32Array, loop: boolean, offset: number, fadeIn = 0): Voice {
+  private voiceOf(data: Float32Array, loop: { from: number; to: number } | null, offset: number, fadeIn = 0): Voice {
     const ctx = this.audio()
     const buffer = ctx.createBuffer(1, Math.max(1, data.length), ctx.sampleRate)
     buffer.getChannelData(0).set(data)
     const source = ctx.createBufferSource()
     source.buffer = buffer
-    source.loop = loop
+    if (loop) {
+      source.loop = true
+      source.loopStart = loop.from
+      source.loopEnd = Math.min(loop.to, buffer.duration)
+    }
     const gain = ctx.createGain()
     if (fadeIn) {
       gain.gain.setValueAtTime(0, ctx.currentTime)

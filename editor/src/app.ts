@@ -12,7 +12,7 @@ import { createActionsMenu, createEditorSwitch, createMenu, currentPage } from '
 import { BUNDLED_PALETTES, bundledColors } from './palettes'
 import { attachInput } from './input'
 import { PALETTE_WARNING, normalizeHex, type Project } from './project'
-import { blankFont, fontFromFile, nameFromFile } from './font'
+import { blankFont, fontFromFile, fontSample, nameFromFile, presetFonts, type PresetFont } from './font'
 import { Player, isPlaying } from './play'
 import { MAX_SIZE, NAME_RE, TILESET_COLUMNS, defaultMeta, fontKey, fontName, isFont, isStill, isTileset, newSprite, shownName, tilesetKey, tilesetName, type Sprite } from './sprite'
 import { toImageData } from './png'
@@ -346,23 +346,50 @@ export class App {
     await this.create(newSprite(tilesetKey(nameInput.value.trim()), w, hh))
   }
 
-  /** A blank font: every cell empty, to draw in (its cells grow from a corner). */
+  /**
+   * A new font: blank (every cell empty, to draw in; its cells grow from a corner), or a copy
+   * of a preset, each shown writing a line. Picking one names the font after it, unless a
+   * name was typed.
+   */
   async newFont() {
-    const nameInput = h('input', { type: 'text', value: shownName(this.uniqueName(fontKey('font'))), autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
-    const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput),
-      h('p', { className: 'muted' }, 'Every character has its cell: draw them in. Drag a corner to make the cells bigger.'))
+    const unique = (base: string) => shownName(this.uniqueName(fontKey(base)))
+    let auto = unique('font')
+    let chosen: PresetFont | null = null
+    const nameInput = h('input', { type: 'text', value: auto, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const items: HTMLButtonElement[] = []
+    const item = (preset: PresetFont | null) => {
+      const b = h('button', {
+        type: 'button',
+        className: 'font-preset' + (preset === chosen ? ' active' : ''),
+        onclick: () => {
+          chosen = preset
+          for (const i of items) i.classList.toggle('active', i === b)
+          if (nameInput.value.trim() === auto) nameInput.value = auto = unique(preset?.name ?? 'font')
+        },
+      },
+      h('span', {}, preset?.name ?? 'Blank'),
+      preset ? fontSample(preset.sheet) : h('small', { className: 'muted' }, 'Draw every character in its cell.'))
+      items.push(b)
+      return b
+    }
+    const list = h('div', { className: 'font-presets' }, item(null))
+    const body = h('div', { className: 'fields' }, h('label', {}, 'Name', nameInput), h('h3', { className: 'field-title' }, 'Start from'), list)
+    void presetFonts().then((all) => list.append(...all.map(item)), (err: Error) => toast(`Could not read the fonts: ${err.message}`))
     const closed = openDialog('New font', body, [
       { label: 'Import…', value: 'import', kind: 'left' },
       { label: 'Cancel', value: 'cancel' },
       { label: 'Create', value: 'ok', kind: 'primary' },
-    ], (v) => (v === 'ok' ? this.nameError(nameInput.value.trim(), undefined, 'fonts/') : null))
+    ], (v) => (v === 'ok' ? this.nameError(nameInput.value.trim(), undefined, 'fonts/') : null), 'instrument-dialog')
     // The file picker opens in the click itself: Safari opens none once the click is over
     // (the dialog answers a moment later).
     body.closest('dialog')!.querySelector('button[value="import"]')!.addEventListener('click', () => this.importFont())
     const res = await closed
     if (res !== 'ok') return
-    const sheet = blankFont()
-    await this.create({ name: fontKey(nameInput.value.trim()), meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] })
+    const name = fontKey(nameInput.value.trim())
+    const preset = chosen as PresetFont | null
+    const sheet = preset ? preset.sheet.clone() : blankFont()
+    if (preset?.license) await this.project.saveFontLicense(fontName(name), preset.license)
+    await this.create({ name, meta: defaultMeta(sheet.width, sheet.height), frames: [sheet] })
   }
 
   /** Asks for a pixel font file (and its license, if it has one) and puts it on the board. */

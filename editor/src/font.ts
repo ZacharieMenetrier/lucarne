@@ -11,8 +11,58 @@
 
 import { Bitmap } from './bitmap'
 import { hexToColor, TRANSPARENT } from './color'
-import { FONT_CHARACTERS, FONT_COLUMNS, FONT_ROWS } from '../../runtime/fonts'
+import { FONT_CHARACTERS, FONT_COLUMNS, FONT_ROWS, Font } from '../../runtime/fonts'
 import { readFontFile } from './ttf'
+import { decodePng, toImageData } from './png'
+
+const PRESET_IMAGES = import.meta.glob('../fonts/*.png', { query: '?url', import: 'default', eager: true }) as Record<string, string>
+const PRESET_LICENSES = import.meta.glob('../fonts/*.license.txt', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+
+export interface PresetFont {
+  name: string
+  sheet: Bitmap
+  license: string | null
+}
+
+let presets: Promise<PresetFont[]> | null = null
+
+/**
+ * The fonts a new font can start from (editor/fonts/): free pixel fonts, read once from
+ * their files. Only the editor has them: a game writes only with its own fonts, so the board
+ * shows exactly what is in its folder; a preset picked is copied there, with its license.
+ */
+export function presetFonts(): Promise<PresetFont[]> {
+  presets ??= Promise.all(Object.entries(PRESET_IMAGES).sort(([a], [b]) => a.localeCompare(b)).map(async ([path, url]) => {
+    const name = path.replace(/^.*\//, '').replace(/\.png$/, '')
+    const sheet = await decodePng(new Uint8Array(await (await fetch(url)).arrayBuffer()))
+    return { name, sheet, license: PRESET_LICENSES[`../fonts/${name}.license.txt`] ?? null }
+  }))
+  return presets
+}
+
+/** A line written with a font, stamped from its pixels as the game does, in the page's text color. */
+export function fontSample(sheet: Bitmap, text = 'The quick brown fox, déjà vu ! 0123') {
+  const src = document.createElement('canvas')
+  src.width = sheet.width
+  src.height = sheet.height
+  src.getContext('2d')!.putImageData(toImageData(sheet), 0, 0)
+  const font = new Font({ name: '', sheet: src, width: sheet.width, height: sheet.height, ink: (x, y) => sheet.get(x, y) !== TRANSPARENT })
+  const out = document.createElement('canvas')
+  out.className = 'font-sample'
+  out.width = Math.max(1, font.measure(text).width)
+  out.height = font.lineHeight
+  const ctx = out.getContext('2d')!
+  let x = 0
+  for (const ch of text) {
+    const g = font.glyph(ch)
+    if (g) ctx.drawImage(src, g.x, g.y, g.width, font.lineHeight, x, 0, g.width, font.lineHeight)
+    x += font.advance(ch)
+  }
+  ctx.globalCompositeOperation = 'source-in'
+  ctx.fillStyle = getComputedStyle(document.body).color
+  ctx.fillRect(0, 0, out.width, out.height)
+  return out
+}
 
 const WHITE = hexToColor('#ffffff')
 

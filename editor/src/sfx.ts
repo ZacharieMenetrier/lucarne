@@ -1,10 +1,9 @@
 // The Sounds page's logic, without the DOM: the sound open, the tool, strokes on its grid,
-// its settings, the sound code, and every edit, undoable. The page draws it and turns
+// its settings, and every edit, undoable. The page draws it and turns
 // pointers into these calls.
 //
-// The engine's sounds (runtime/sounds/) can be used by name in every game; a game's sound of
-// the same name (sounds/<name>.json) replaces it. Editing one of the engine's makes it the
-// game's: its first change writes the game's file.
+// A game has only its own sounds (sounds/<name>.json). The presets (editor/sounds/) are
+// starting points: a new sound is a copy of one, or empty.
 
 import { History } from './history'
 import {
@@ -26,43 +25,7 @@ import {
 export type SoundTool = 'pencil' | 'volume' | 'eraser'
 
 /** The settings, which apply to the whole sound. */
-export type Setting = 'texture' | 'speed' | 'grit' | 'glide' | 'echo' | 'ring'
-
-const B24 = '0123456789abcdefghijklmn'
-
-/**
- * The sound code: a sound in 55 characters, to copy and paste. Six digits (texture, speed,
- * glide, echo, grit, ring), "/", then each column's pitch ("." when empty) and volume.
- */
-export function soundCode(s: Sound): string {
-  const head = `${TEXTURES.indexOf(s.texture)}${SPEEDS.indexOf(s.speed)}${s.glide ? 1 : 0}${ECHOES.indexOf(s.echo)}${GRITS.indexOf(s.grit)}${RINGS.indexOf(s.ring)}`
-  return `${head}/` + s.pitch.map((r, i) => (r === null ? '.' : B24[r]) + B24[s.volume[i]]).join('')
-}
-
-/** A sound from its code, or null. Older codes are read too: five digits (no ring) with "/",
- *  or with ":" and three shades of volume. */
-export function fromCode(text: string): Sound | null {
-  let t = (text || '').trim().toLowerCase()
-  const old = /^[0-8][0-3][01][0-4][0-2]:(?:[.0-9a-n][1-3]){24}$/.test(t)
-  const v5 = /^[0-8][0-3][01][0-4][0-2]\/(?:[.0-9a-n][0-9a-n]){24}$/.test(t)
-  const v6 = /^[0-8][0-3][01][0-4][0-2][0-4]\/(?:[.0-9a-n][0-9a-n]){24}$/.test(t)
-  if (!old && !v5 && !v6) return null
-  const s = emptySound()
-  s.texture = TEXTURES[+t[0]]
-  s.speed = SPEEDS[+t[1]]
-  s.glide = t[2] === '1'
-  s.echo = ECHOES[+t[3]]
-  s.grit = GRITS[+t[4]]
-  s.ring = v6 ? RINGS[+t[5]] : 'normal'
-  if (v6) t = t.slice(0, 5) + t.slice(6)
-  const b = t.slice(6)
-  for (let i = 0; i < COLUMNS; i++) {
-    const c = b[i * 2]
-    s.pitch[i] = c === '.' ? null : B24.indexOf(c)
-    s.volume[i] = old ? [0, 10, 17, 23][+b[i * 2 + 1]] : B24.indexOf(b[i * 2 + 1])
-  }
-  return s
-}
+export type Setting = 'texture' | 'speed' | 'grit' | 'glide' | 'echo' | 'ring' | 'level'
 
 /** A random sound: a short run going up or down, an arpeggio or a zigzag, fading out. */
 export function randomSound(random = Math.random): Sound {
@@ -245,16 +208,9 @@ export class SoundEditor {
     })
   }
 
-  /** Replaces the sound with another (a random one, a pasted code). */
+  /** Replaces the sound with another (a random one). */
   replace(next: Sound) {
     this.edit((s) => Object.assign(s, structuredClone(next)))
   }
 
-  /** Reads a pasted sound code into the sound; false if it is not one. */
-  paste(code: string): boolean {
-    const s = fromCode(code)
-    if (!s) return false
-    this.replace(s)
-    return true
-  }
 }

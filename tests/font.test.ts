@@ -133,3 +133,21 @@ describe('reading a font file', () => {
     expect(await readFontFile(new Uint8Array([1, 2, 3, 4]).buffer, 'a')).toBeNull()
   })
 })
+
+describe('preset fonts', () => {
+  const images = import.meta.glob('../editor/fonts/*.png', { query: '?inline', import: 'default', eager: true }) as Record<string, string>
+  const licenses = import.meta.glob('../editor/fonts/*.license.txt', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+
+  it('each has its license and a whole grid of cells', () => {
+    expect(Object.keys(images).length).toBeGreaterThan(0)
+    for (const [path, url] of Object.entries(images)) {
+      expect(licenses[path.replace(/\.png$/, '.license.txt')]).toBeTruthy()
+      // The PNG's size, from its header.
+      const bytes = Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0))
+      const view = new DataView(bytes.buffer)
+      const width = view.getUint32(16), height = view.getUint32(20)
+      expect(width % FONT_COLUMNS).toBe(0)
+      expect(height % FONT_ROWS).toBe(0)
+    }
+  })
+})

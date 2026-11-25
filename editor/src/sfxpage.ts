@@ -14,7 +14,7 @@ import { createActionsMenu, createEditorSwitch, createMenu, currentPage, goTo, o
 import { audioContext } from './musicplayer'
 import { isPlaying } from './play'
 import type { Project } from './project'
-import { SoundEditor, randomSound, soundCode, type SoundTool } from './sfx'
+import { SoundEditor, randomSound, type Setting, type SoundTool } from './sfx'
 import { NAME_RE } from './sprite'
 import { RATE } from '../../runtime/sound'
 import {
@@ -38,10 +38,13 @@ import {
   type Texture,
 } from '../../runtime/sfx'
 
-const BUILT_IN_FILES = import.meta.glob('../../runtime/sounds/*.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+const PRESET_FILES = import.meta.glob('../sounds/*.json', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
-/** The engine's sounds, by name: usable in every game, replaced by a game's sound of the same name. */
-const BUILT_IN = new Map(Object.entries(BUILT_IN_FILES).map(([path, text]) => [path.replace(/^.*\//, '').replace(/\.json$/, ''), parseSound(text)] as const))
+/**
+ * The presets, by name: what a new sound can start from. Only the editor has them: a game
+ * plays only its own sounds, so the list shows exactly what is in its folder.
+ */
+const PRESETS = new Map(Object.entries(PRESET_FILES).map(([path, text]) => [path.replace(/^.*\//, '').replace(/\.json$/, ''), parseSound(text)] as const))
 
 const TOOLS: { id: SoundTool; label: string; key: string; icon: string }[] = [
   { id: 'pencil', label: 'Pencil', key: 'B', icon: 'pencil' },
@@ -64,6 +67,9 @@ const COLORS: Record<Texture, string> = {
 
 const words = (s: string) => s[0].toUpperCase() + s.slice(1).replace(/-/g, ' ')
 
+/** The whole sound's volume, in dB under the loudest (the scale volumeGain uses). */
+const levelName = (v: number) => (v === LOUDEST ? 'Loudest' : `−${Math.round((40 * (LOUDEST - v)) / LOUDEST)} dB`)
+
 /** A pixel's opacity for its volume: a quiet one is faint, never invisible. */
 const opacity = (v: number) => 0.3 + (0.7 * v) / LOUDEST
 
@@ -79,7 +85,7 @@ function thumbnail(s: Sound): string {
 
 export class SoundsPage {
   readonly editor = new SoundEditor()
-  /** The game's own sounds (sounds/), over the engine's. */
+  /** The game's sounds (sounds/). */
   private readonly own = new Map<string, Sound>()
   private readonly root: HTMLElement
   private readonly grid: HTMLElement
@@ -93,9 +99,10 @@ export class SoundsPage {
   private readonly playButton: HTMLButtonElement
   private readonly echo: HTMLInputElement
   private readonly ring: HTMLInputElement
+  private readonly level: HTMLInputElement
   private readonly echoLabel: HTMLElement
   private readonly ringLabel: HTMLElement
-  private readonly code: HTMLInputElement
+  private readonly levelLabel: HTMLElement
   private readonly segments = new Map<'texture' | 'speed' | 'grit', HTMLButtonElement[]>()
   private readonly glide: HTMLButtonElement
   private readonly pending = new Set<string>()
@@ -139,34 +146,26 @@ export class SoundsPage {
       this.segments.set(key, buttons)
       return h('div', { className: 'sound-segment', style: `grid-template-columns: repeat(${columns}, minmax(0, 1fr))` }, ...buttons)
     }
-    const slider = (label: string, values: readonly string[], key: 'echo' | 'ring') => {
+    const slider = (label: string, max: number, name: (i: number) => string, set: (i: number) => void) => {
       const value = h('span', {})
       const input = h('input', {
-        type: 'range', min: 0, max: values.length - 1, step: 1, 'aria-label': label,
+        type: 'range', min: 0, max, step: 1, 'aria-label': label,
         // The name follows the slider; the sound changes (and plays) when it is let go.
-        oninput: () => (value.textContent = words(values[+input.value])),
-        onchange: () => this.setting(key, values[+input.value] as never),
+        oninput: () => (value.textContent = name(+input.value)),
+        onchange: () => set(+input.value),
       })
       return { input, value, el: h('label', { className: 'sound-field' }, h('span', { className: 'sound-key' }, `${label}: `, value), input) }
     }
-    const echo = slider('Echo', ECHOES, 'echo')
-    const ring = slider('Ring', RINGS, 'ring')
+    const echo = slider('Echo', ECHOES.length - 1, (i) => words(ECHOES[i]), (i) => this.setting('echo', ECHOES[i]))
+    const ring = slider('Ring', RINGS.length - 1, (i) => words(RINGS[i]), (i) => this.setting('ring', RINGS[i]))
+    const level = slider('Volume', LOUDEST, levelName, (i) => this.setting('level', i))
     this.echo = echo.input
     this.echoLabel = echo.value
     this.ring = ring.input
     this.ringLabel = ring.value
+    this.level = level.input
+    this.levelLabel = level.value
     this.glide = h('button', { type: 'button', className: 'sound-glide', 'aria-pressed': 'false', title: 'Pitch slides between neighbouring pixels', onclick: () => this.setting('glide', !this.editor.sound?.glide) }, 'Glide')
-    this.code = h('input', {
-      type: 'text', spellcheck: false, autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Sound code',
-      oninput: () => {
-        if (this.editor.paste(this.code.value)) this.play()
-      },
-      onblur: () => this.render(),
-      onkeydown: (e: KeyboardEvent) => {
-        e.stopPropagation()
-        if (e.key === 'Enter') this.code.blur()
-      },
-    })
     this.settings = h('section', { className: 'sound-settings' },
       h('div', { className: 'panel-head' }, h('h2', {}, 'Sound')),
       h('div', { className: 'sound-field' }, h('span', { className: 'sound-key' }, 'Texture'), segment('texture', TEXTURES, 3)),
@@ -174,13 +173,11 @@ export class SoundsPage {
       h('div', { className: 'sound-field' }, h('span', { className: 'sound-key' }, 'Grit'), segment('grit', GRITS, 3)),
       echo.el,
       ring.el,
+      level.el,
       h('div', { className: 'sound-row' },
         this.glide,
         h('button', { type: 'button', title: 'A random sound', onclick: () => this.random() }, 'Random'),
-        h('button', { type: 'button', title: 'Take every pixel away', onclick: () => this.editor.clear() }, 'Clear')),
-      h('label', { className: 'sound-field' }, h('span', { className: 'sound-key' }, 'Code: copy it, or paste one'),
-        h('div', { className: 'sound-row' }, this.code,
-          h('button', { type: 'button', onclick: () => void this.copyCode() }, 'Copy'))))
+        h('button', { type: 'button', title: 'Take every pixel away', onclick: () => this.editor.clear() }, 'Clear')))
     this.list = h('div', { className: 'world-list' })
 
     this.root = h('div', { id: 'sounds-page' },
@@ -252,19 +249,16 @@ export class SoundsPage {
 
   // --- Sounds -----------------------------------------------------------------
 
-  /** Every sound a game can play: the engine's and its own. */
   private names() {
-    return [...new Set([...BUILT_IN.keys(), ...this.own.keys()])].sort()
+    return [...this.own.keys()].sort()
   }
 
   private has(name: string) {
-    return this.own.has(name) || BUILT_IN.has(name)
+    return this.own.has(name)
   }
 
-  /** The sound of that name: the game's, or a copy of the engine's (editing it makes it the game's). */
   private soundOf(name: string): Sound | null {
-    const s = this.own.get(name) ?? BUILT_IN.get(name)
-    return s ? (this.own.has(name) ? s : structuredClone(s)) : null
+    return this.own.get(name) ?? null
   }
 
   private get lastKey() {
@@ -296,7 +290,6 @@ export class SoundsPage {
   private nameError(name: string, current?: string) {
     if (!NAME_RE.test(name)) return 'Name: lowercase letters, digits, “-” and “_” (e.g. jump).'
     if (name !== current && this.own.has(name)) return 'A sound with this name already exists.'
-    if (name !== current && BUILT_IN.has(name)) return 'The engine has a sound with this name: open it to make it the game’s own.'
     return null
   }
 
@@ -319,9 +312,54 @@ export class SoundsPage {
     this.openSound(name)
   }
 
+  /**
+   * Asks for a name and what the sound starts from: empty, or a copy of a preset. Pressing a
+   * preset plays it and selects it, as many times as wanted, and names the sound after it
+   * unless a name was typed.
+   */
   private async newSound() {
-    const name = await this.askName('New sound', this.unique('sound'), 'Create')
-    if (name) await this.add(name, emptySound())
+    let chosen: string | null = null
+    let auto = this.unique('sound')
+    const input = h('input', { type: 'text', value: auto, autocapitalize: 'off', autocomplete: 'off', spellcheck: false })
+    const items: HTMLButtonElement[] = []
+    const item = (preset: string | null) => {
+      const b = h('button', {
+        type: 'button',
+        className: 'instrument-item' + (preset === chosen ? ' active' : ''),
+        onclick: () => {
+          chosen = preset
+          for (const i of items) i.classList.toggle('active', i === b)
+          if (input.value.trim() === auto) input.value = auto = this.unique(preset ?? 'sound')
+          if (preset) this.listen(PRESETS.get(preset)!)
+          else this.stop()
+        },
+      },
+      h('span', { className: 'sound-thumb-box', html: thumbnail(preset ? PRESETS.get(preset)! : emptySound()) }),
+      preset ?? 'Empty')
+      items.push(b)
+      return b
+    }
+    const body = h('div', { className: 'fields' },
+      h('label', {}, 'Name', input),
+      h('div', { className: 'instrument-list' },
+        h('h3', {}, 'Start from'),
+        h('div', { className: 'instrument-grid' }, item(null), ...[...PRESETS.keys()].sort().map(item))))
+    const res = await openDialog('New sound', body, [
+      { label: 'Cancel', value: 'cancel' },
+      { label: 'Create', value: 'ok', kind: 'primary' },
+    ], () => this.nameError(input.value.trim()), 'instrument-dialog')
+    this.stop()
+    if (res !== 'ok') return
+    await this.add(input.value.trim(), chosen ? structuredClone(PRESETS.get(chosen)!) : emptySound())
+  }
+
+  /** A preset, heard in the dialog. */
+  private listen(s: Sound) {
+    const data = renderSound(s)
+    if (!data) return
+    this.stop()
+    this.source = this.start(data, 1)
+    this.source.start()
   }
 
   private async duplicate(from: string) {
@@ -348,13 +386,8 @@ export class SoundsPage {
     else this.render()
   }
 
-  /** Deletes the game's file: the engine's sound of that name, if there is one, comes back. */
   private async remove(name: string) {
-    const engine = BUILT_IN.has(name)
-    const ok = engine
-      ? await confirmDialog('Back to the engine’s sound', `The game’s “${name}” (sounds/${name}.json) will be deleted: the engine’s “${name}” plays instead.`, 'Delete', true)
-      : await confirmDialog('Delete sound', `“${name}” (sounds/${name}.json) will be deleted from the game folder. Git keeps the history of versions already committed.`, 'Delete', true)
-    if (!ok) return
+    if (!(await confirmDialog('Delete sound', `“${name}” (sounds/${name}.json) will be deleted from the game folder. Git keeps the history of versions already committed.`, 'Delete', true))) return
     this.pending.delete(name)
     try {
       await this.project.deleteSound(name)
@@ -363,15 +396,13 @@ export class SoundsPage {
     }
     this.own.delete(name)
     this.editor.forget(name)
-    if (this.editor.name === name) this.openSound(engine ? name : (this.names()[0] ?? null))
+    if (this.editor.name === name) this.openSound(this.names()[0] ?? null)
     else this.render()
   }
 
   // --- Saving -----------------------------------------------------------------
 
   private schedule(name: string) {
-    // The engine's sound, edited, becomes the game's.
-    if (!this.own.has(name) && this.editor.name === name && this.editor.sound) this.own.set(name, this.editor.sound)
     this.pending.add(name)
     this.setStatus('pending')
     clearTimeout(this.timer)
@@ -408,7 +439,7 @@ export class SoundsPage {
   // --- Editing ------------------------------------------------------------------
 
   /** A setting changed: the sound plays, to hear it. */
-  private setting<K extends 'texture' | 'speed' | 'grit' | 'glide' | 'echo' | 'ring'>(key: K, value: Sound[K]) {
+  private setting<K extends Setting>(key: K, value: Sound[K]) {
     if (!this.editor.sound) return
     this.editor.set(key, value)
     this.play()
@@ -418,17 +449,6 @@ export class SoundsPage {
     if (!this.editor.sound) return
     this.editor.replace(randomSound())
     this.play()
-  }
-
-  private async copyCode() {
-    const s = this.editor.sound
-    if (!s) return
-    try {
-      await navigator.clipboard.writeText(soundCode(s))
-      toast('Code copied.')
-    } catch {
-      this.code.select()
-    }
   }
 
   private cellAt(e: PointerEvent): [number, number] {
@@ -542,7 +562,7 @@ export class SoundsPage {
     this.lastBlip = now
     const s = this.editor.sound!
     const one = emptySound()
-    Object.assign(one, { texture: s.texture, grit: s.grit, ring: s.ring, speed: 'slow' })
+    Object.assign(one, { texture: s.texture, grit: s.grit, ring: s.ring, level: s.level, speed: 'slow' })
     one.pitch[0] = row
     const data = renderDry(one)
     if (data) this.start(data, 0.75 * volumeGain(volume) + 0.03).start()
@@ -580,7 +600,8 @@ export class SoundsPage {
     this.echoLabel.textContent = words(s.echo)
     this.ring.value = String(RINGS.indexOf(s.ring))
     this.ringLabel.textContent = words(s.ring)
-    if (document.activeElement !== this.code) this.code.value = soundCode(s)
+    this.level.value = String(s.level)
+    this.levelLabel.textContent = levelName(s.level)
     const n = last + 1
     this.length.textContent = n ? `${n} column${n > 1 ? 's' : ''} · ${Math.round(drawnSeconds(s) * 1000)} ms` : 'Empty'
   }
@@ -588,7 +609,7 @@ export class SoundsPage {
   /** The list, built again only when its sounds change; the open sound's thumbnail follows it. */
   private renderList() {
     const ed = this.editor
-    const key = JSON.stringify([ed.name, this.names(), [...this.own.keys()]])
+    const key = JSON.stringify([ed.name, this.names()])
     if (key === this.listKey) {
       const thumb = ed.name && ed.sound ? this.thumbs.get(ed.name) : null
       if (thumb) thumb.innerHTML = thumbnail(ed.sound!)
@@ -597,28 +618,26 @@ export class SoundsPage {
     this.listKey = key
     this.list.replaceChildren()
     this.thumbs.clear()
+    if (!this.own.size) this.list.append(h('p', { className: 'muted' }, 'Add a sound: + next to Sounds.'))
     for (const name of this.names()) {
-      const own = this.own.has(name)
-      const engine = BUILT_IN.has(name)
-      const s = name === ed.name && ed.sound ? ed.sound : (this.own.get(name) ?? BUILT_IN.get(name)!)
+      const s = name === ed.name && ed.sound ? ed.sound : this.own.get(name)!
       const menu = createActionsMenu(`Options for ${name}`, [
-        ...(own && !engine ? [{ label: 'Rename', run: () => void this.rename(name) }] : []),
+        { label: 'Rename', run: () => void this.rename(name) },
         { label: 'Duplicate', run: () => void this.duplicate(name) },
-        ...(own ? [{ label: engine ? 'Back to the engine’s' : 'Delete', run: () => void this.remove(name), danger: true }] : []),
+        { label: 'Delete', run: () => void this.remove(name), danger: true },
       ])
       this.list.append(
         h('div', { className: 'sprite-row' },
           h('button', {
             className: 'sprite-item' + (name === ed.name ? ' active' : ''),
-            title: own ? `${name} (sounds/${name}.json)` : `${name}: the engine’s`,
+            title: `${name} (sounds/${name}.json)`,
             onclick: () => {
               this.openSound(name)
               this.play()
             },
           },
           this.thumbs.set(name, h('span', { className: 'sound-thumb-box', html: thumbnail(s) })).get(name),
-          h('span', { className: 'sprite-label' }, name),
-          own ? h('small', { className: 'instrument-kind' }, 'game') : null),
+          h('span', { className: 'sprite-label' }, name)),
           menu.el))
     }
   }
