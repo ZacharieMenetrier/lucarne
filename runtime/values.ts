@@ -14,8 +14,8 @@
 // one set winning: the code's default, then each parent's actor file, then the actor's own
 // file, then the placed actor (see `spawn` in world.ts).
 //
-// Position (x, y) is where an actor is placed, not a variable of its kind, and `modal` says
-// what a class is in the code (a menu, a dialogue): neither is set in an actor file.
+// Position (x, y) is where an actor is placed, not a variable of its kind: it is never set
+// in an actor file.
 
 import type { Box } from './collision'
 
@@ -32,7 +32,7 @@ export interface Variable {
 }
 
 /** Fields of every actor that are not variables of its kind. */
-const NOT_VARIABLES = new Set(['x', 'y', 'modal'])
+const NOT_VARIABLES = new Set(['x', 'y'])
 
 /**
  * The kind of a default value, or null: a field of another kind is not a variable. A list

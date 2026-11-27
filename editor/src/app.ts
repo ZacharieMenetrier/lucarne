@@ -139,8 +139,8 @@ export class App {
   mapsUsing: (tileset: string) => string[] = () => []
   /** A tileset was renamed (names without "tiles/"): the maps follow. */
   onTilesetRenamed: (from: string, to: string) => Promise<void> = async () => {}
-  /** Saves what else the game is made of (the maps) before playing. */
-  beforePlay: () => Promise<void> = async () => {}
+  /** Saves what the other pages edit (maps, actors, songs, sounds) and stops what they play: before playing or syncing. */
+  savePages: () => Promise<void> = async () => {}
   /** Saves the sprites not saved yet (what the game's code draws with). */
   saveSprites() {
     return this.saver.flush()
@@ -789,9 +789,21 @@ export class App {
 
   // --- GitHub sync ----------------------------------------------------------
 
-  /** The sync button shows when sync is set up and the editor saves to the browser (iPad). */
+  /** The sync button of every page's bar (this one's, then the other pages'). */
+  private syncButtons: HTMLElement[] = []
+
+  /** A sync button for a page's bar: every page can sync, so the iPad never has to switch to pixels for it. */
+  createSyncButton() {
+    const button = h('button', { type: 'button', className: 'icon sync', title: 'Sync with GitHub', 'aria-label': 'Sync with GitHub', html: icon('sync'), onclick: () => void this.sync() })
+    this.syncButtons.push(button)
+    this.refreshSync()
+    return button
+  }
+
+  /** The sync buttons show when sync is set up and the editor saves to the browser (iPad). */
   refreshSync() {
-    $('sync').hidden = this.project.storage.kind !== 'opfs' || !isConfigured(loadSettings())
+    const hidden = this.project.storage.kind !== 'opfs' || !isConfigured(loadSettings())
+    for (const button of this.syncButtons) button.hidden = hidden
   }
 
   private syncing = false
@@ -808,8 +820,11 @@ export class App {
     progress.showModal()
     let result: Awaited<ReturnType<typeof syncWithGitHub>> = null
     try {
+      // Every page's changes, not only the pixels': sync reads the files.
       await this.saver.flush()
-      if (this.saver.status === 'error') throw new Error('Some changes could not be saved on this device.')
+      await this.savePages()
+      if (this.saver.status === 'error' || document.querySelector('.save-status[data-status="error"]'))
+        throw new Error('Some changes could not be saved on this device.')
       result = await syncWithGitHub(
         this.project.storage,
         settings,
@@ -864,13 +879,14 @@ export class App {
     $('topbar').prepend(createMenu(), createEditorSwitch())
     const player = new Player(this.project, async () => {
       await this.saver.flush()
-      await this.beforePlay()
+      await this.savePages()
     })
     this.player = player
     $('run-game').innerHTML = `${icon('play')}<span>Play</span>`
     $('run-game').addEventListener('click', () => void player.play())
     $('sync').innerHTML = icon('sync')
     $('sync').addEventListener('click', () => void this.sync())
+    this.syncButtons.push($('sync'))
     this.refreshSync()
     $('sprites-new').innerHTML = icon('add')
     $('tilesets-new').innerHTML = icon('add')

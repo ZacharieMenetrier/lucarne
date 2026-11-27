@@ -1,9 +1,9 @@
 // The game's clocks. They count updates, so they run at the same speed on every display,
 // and they stop while the game is paused.
 //
-// There are two: the world's (`time.ms`), which also stops while a modal UI (a menu, a
-// dialogue) is open, so the world freezes behind it; and the UI's (`time.uiMs`), which
-// keeps running then, so text still appears and cursors still blink.
+// There are two: the world's (`time.ms`), which also stops while the game sets
+// `game.paused`, so the world freezes behind a menu; and the UI's (`time.uiMs`), which keeps
+// running then, so the UI's sprites still play and cursors still blink.
 
 import { TICK_RATE } from './game'
 
@@ -19,7 +19,7 @@ export const time = {
   get ms() {
     return (ticks * 1000) / TICK_RATE
   },
-  /** Milliseconds since the game started, modal UIs included: the UI's clock. */
+  /** Milliseconds since the game started, pauses included: the UI's clock. */
   get uiMs() {
     return (uiTicks * 1000) / TICK_RATE
   },
@@ -31,7 +31,7 @@ export function resetTime() {
   uiTicks = 0
 }
 
-/** One update went by; `world` is false when a modal UI stopped the world. */
+/** One update went by; `world` is false when `game.paused` stopped the world. */
 export function tickTime(world: boolean) {
   uiTicks++
   if (world) ticks++

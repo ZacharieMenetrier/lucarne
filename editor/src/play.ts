@@ -10,11 +10,12 @@ import { setMaps, type TilesetData } from '../../runtime/maps'
 import { setFonts, type FontData } from '../../runtime/fonts'
 import type { Button } from '../../runtime/input'
 import { Runner } from '../../runtime/runner'
+import { waitingScripts } from '../../runtime/scripts'
 import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { heardSounds, setSounds } from '../../runtime/sounds'
 import { time } from '../../runtime/time'
-import { actorName, camera, cameraMapName, drawWorld, modalActor, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
+import { actorName, camera, cameraMapName, drawWorld, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
 import { TRANSPARENT } from './color'
 import { h } from './dialog'
@@ -384,11 +385,12 @@ export function toFontData(name: string, sheet: Bitmap): FontData {
  * `window.lucarne`, to drive the game from a script (what an AI uses to test it), in play
  * mode. Everything works with the page hidden: the game only moves when told to.
  *
- *   lucarne.step(60, ['right'])   // one second with "right" held, then shows the result
- *                                 // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
+ *   await lucarne.step(60, ['right'])   // one second with "right" held, then shows the result
+ *                                       // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
  *   lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, box: { x, y, width, height }, … }]
  *   lucarne.picture()             // the frame at game resolution, as a PNG data URL
- *   lucarne.ui()                  // the text on screen, and the modal actor in charge
+ *   lucarne.ui()                  // the text on screen: ['♥ 3', 'Want a sword?']
+ *   lucarne.scripts()             // what each script waits on: [{ by: 'npc', waiting: 'press action' }]
  *   lucarne.camera()              // { x, y, map }: where the camera is, and in which map
  *   lucarne.timings()             // milliseconds per update, per drawing, per frame
  */
@@ -399,9 +401,9 @@ function installHandle(player: Player) {
     return r
   }
   ;(window as unknown as { lucarne: unknown }).lucarne = {
-    step(count = 1, buttons: Button[] = []) {
+    async step(count = 1, buttons: Button[] = []) {
       heardSounds()
-      runner().step(count, buttons)
+      await runner().step(count, buttons)
       return { ticks: time.ticks, actors: describeActors(), sounds: heardSounds() }
     },
     pause() {
@@ -412,10 +414,8 @@ function installHandle(player: Player) {
     },
     actors: describeActors,
     camera: () => ({ x: camera.x, y: camera.y, map: cameraMapName() }),
-    ui() {
-      const modal = modalActor()
-      return { modal: modal ? modal.constructor.name : null, text: writtenText().map((t) => t.text) }
-    },
+    ui: () => writtenText().map((t) => t.text),
+    scripts: waitingScripts,
     timings: () => ({ ...runner().timings }),
     /** The world as shown now, at 1 display pixel per game pixel. */
     async picture() {
@@ -423,7 +423,7 @@ function installHandle(player: Player) {
       const canvas = new OffscreenCanvas(r.width, r.height)
       attachScreen(canvas, r.width, r.height)
       try {
-        drawWorld(1, r.draw)
+        drawWorld(1, r.draw, r.ui)
       } finally {
         attachScreen(r.canvas, r.width, r.height)
       }

@@ -144,6 +144,7 @@ export class WorldPage {
         createEditorSwitch(),
         h('span', { className: 'spacer' }),
         this.status,
+        this.app.createSyncButton(),
         h('button', { type: 'button', className: 'run-game', title: 'Play the game (⌘↵)', html: `${icon('play')}<span>Play</span>`, onclick: () => this.app.play() })),
       h('div', { className: 'world-body' },
         tools,
@@ -189,8 +190,8 @@ export class WorldPage {
       for (const name of this.world.renameTileset(from, to)) this.pending.add(name)
       await this.flush()
     }
-    const before = app.beforePlay
-    app.beforePlay = async () => {
+    const before = app.savePages
+    app.savePages = async () => {
       await before()
       await this.flush()
     }

@@ -9,7 +9,7 @@
 //
 // The screen is drawn on only while the world draws (see world.ts): in the game's `draw`
 // (the background, through the camera), in an actor's `draw` (around the actor: (0, 0) is
-// where it is) and in an actor's `drawUI` (on the screen itself, over everything).
+// where it is) and in the game's `ui` (on the screen itself, over everything).
 
 import { font as gameFont, type TextOptions } from './fonts'
 import type { Sprite } from './sprites'
@@ -38,7 +38,7 @@ export interface SpriteFrame {
 }
 
 function check() {
-  if (!phase) throw new Error("The screen can only be drawn on in draw(), drawUI() or the game's draw().")
+  if (!phase) throw new Error("The screen can only be drawn on in an actor's draw(), or the game's draw() and ui().")
   return ctx
 }
 
@@ -68,7 +68,7 @@ export const screen = {
 
   /**
    * Draws a sprite with its origin pixel on (x, y). By default it plays its animation,
-   * looping, on the game's clock (`time.ms`; in `drawUI`, the UI's clock, `time.uiMs`).
+   * looping, on the game's clock (`time.ms`; in the game's `ui`, the UI's clock, `time.uiMs`).
    */
   sprite(s: Sprite, x: number, y: number, options: SpriteOptions = {}) {
     const c = check()
@@ -159,7 +159,7 @@ function wrap(i: number, n: number) {
   return ((i % n) + n) % n
 }
 
-/** The clock animations play on: the world's, or the UI's (which a modal UI keeps running). */
+/** The clock animations play on: the world's, or the UI's (which `game.paused` does not stop). */
 function clock() {
   return phase === 'ui' ? time.uiMs : time.ms
 }

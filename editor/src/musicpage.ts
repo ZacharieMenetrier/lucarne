@@ -210,6 +210,7 @@ export class MusicPage {
         createEditorSwitch(),
         h('span', { className: 'spacer' }),
         this.status,
+        this.app.createSyncButton(),
         h('button', { type: 'button', className: 'run-game', title: 'Play the game (⌘↵)', html: `${icon('play')}<span>Play</span>`, onclick: () => this.app.play() })),
       h('div', { className: 'music-body' },
         tools,
@@ -235,8 +236,8 @@ export class MusicPage {
     this.bindPointer()
     this.bindKeys()
 
-    const before = app.beforePlay
-    app.beforePlay = async () => {
+    const before = app.savePages
+    app.savePages = async () => {
       // The game plays alone.
       this.stop()
       await before()

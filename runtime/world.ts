@@ -17,8 +17,10 @@
 // where it is, with no in-between.
 
 import { collide, type Box } from './collision'
+import { game } from './game'
 import { drawMaps, mapAt, placements, solidsIn, type Rect } from './maps'
 import { attachScreen, beginDraw, endDraw, setOrigin, screen, screenScale } from './screen'
+import { resetScripts, setRunning } from './scripts'
 import { checkValues, copyValue, variablesOf, type Value, type Variable } from './values'
 
 /** Where the engine keeps its own state on each actor (a symbol: games never see it). */
@@ -56,10 +58,9 @@ let constructing: 'world' | 'probe' | null = null
  * - `draw()` draws the actor around itself: (0, 0) is its position, where a sprite drawn
  *   at (0, 0) puts its origin pixel. Actors are drawn from the top of the world down (by
  *   `y`), so the lower one is in front.
- * - `drawUI()` draws on the screen itself, over the world, in screen pixels: the camera
- *   does not move it.
  *
- * An actor that has nothing to draw (a clock, a spawner) only has an `update()`.
+ * An actor that has nothing to draw (a clock, a spawner) only has an `update()`. The UI is
+ * not an actor's: the game draws it, in its `ui()` (see game.ts).
  */
 export class Actor {
   /** Position in the world, in game pixels (fractions are fine). */
@@ -71,13 +72,7 @@ export class Actor {
    * through everything, and nothing bumps into it. Drawn on the Actors page; the code may
    * change it as the game runs (a hero crouching), for this actor alone.
    */
-  box: Box | null = null
-  /**
-   * While a modal actor is in the world (a menu, a dialogue), the world stops: only the
-   * last modal actor created updates, the world's clock (`time.ms`) and the camera stop,
-   * and everything is still drawn.
-   */
-  modal = false;
+  box: Box | null = null;
   /** @internal */
   [track]: Track
 
@@ -104,9 +99,6 @@ export class Actor {
 
   /** Draws the actor, around (0, 0). Only draws: changes nothing in the game. */
   draw(): void {}
-
-  /** Draws on the screen, over the world, in screen pixels. Only draws. */
-  drawUI(): void {}
 
   /**
    * Moves by (dx, dy), drawn smoothly between its two positions. An actor with a `box`
@@ -163,7 +155,6 @@ export type Values<T extends Actor> = Partial<Omit<T, keyof Actor>> & { x?: numb
  * (its actor files, see below), then `values`, then its `create()`. Returns it.
  *
  *   spawn(Villager, { x: 40, y: 96, lines: ['Nice weather.'] })
- *   spawn(Dialogue, { pages: ['Hello!'] })
  */
 export function spawn<T extends Actor>(Type: ActorType<T>, values?: Values<T>): T {
   const actor = construct(Type, 'world')
@@ -425,6 +416,8 @@ export function resetWorld() {
   camera.x = 0
   camera.y = 0
   cameraJumped = true
+  game.paused = false
+  resetScripts()
 }
 
 /** The map the camera stays in (the followed actor's), or null. */
@@ -437,16 +430,18 @@ export function worldActors(): readonly Actor[] {
   return actors
 }
 
-/** The modal actor in charge, if any: the last one created. */
-export function modalActor(): Actor | null {
-  for (let i = actors.length - 1; i >= 0; i--) {
-    const t = actors[i]
-    if (t.modal && !t[track].removed) return t
-  }
+/**
+ * The first actor of that class in the world (of a class that extends it too), in creation
+ * order, or null: to read the hero from anywhere, the game's `ui()` among them.
+ *
+ *   const hero = find(Hero)
+ */
+export function find<T extends Actor>(Type: abstract new () => T): T | null {
+  for (const t of actors) if (t instanceof Type && !t[track].removed) return t
   return null
 }
 
-/** One update of the world. Returns whether the world ran (no modal actor stopped it). */
+/** One update of the world. Returns whether the world ran (`game.paused` did not stop it). */
 export function updateWorld(): boolean {
   for (const t of actors) {
     const k = t[track]
@@ -458,14 +453,20 @@ export function updateWorld(): boolean {
   cameraFromY = camera.y
   cameraJumped = false
 
-  const modal = modalActor()
-  if (modal) modal.update()
-  else {
+  const paused = game.paused
+  if (!paused) {
     // Actors created during this update wait for the next one.
     const count = actors.length
-    for (let i = 0; i < count; i++) {
-      const t = actors[i]
-      if (!t[track].removed) t.update()
+    try {
+      for (let i = 0; i < count; i++) {
+        const t = actors[i]
+        if (t[track].removed) continue
+        // A script the actor starts is its own (see `lucarne.scripts()`).
+        setRunning(actorName(t.constructor) ?? t.constructor.name)
+        t.update()
+      }
+    } finally {
+      setRunning('game')
     }
     if (target && !target[track].removed) {
       if (centerOn(target) || target[track].jumped) cameraJumped = true
@@ -476,7 +477,7 @@ export function updateWorld(): boolean {
     if (target?.[track].removed) target = null
     anyRemoved = false
   }
-  return modal === null
+  return !paused
 }
 
 /** The actors in depth order, reused from frame to frame. */
@@ -485,12 +486,13 @@ const sorted: Actor[] = []
 /**
  * Draws the world on the screen, `alpha` (0 to 1) of the way between the update before
  * and the last one: first `background` (the game's own draw, through the camera), then the
- * maps, then the actors from the top of the world down, then their UI.
+ * maps, then the actors from the top of the world down, then `ui` (the game's UI, on the
+ * screen itself).
  *
  * Positions are rounded to display pixels only once, relative to the camera: an actor the
  * camera follows stays perfectly still on screen while the world scrolls behind it.
  */
-export function drawWorld(alpha: number, background?: () => void) {
+export function drawWorld(alpha: number, background?: () => void, ui?: () => void) {
   const scale = screenScale()
   const camX = cameraJumped ? camera.x : lerp(cameraFromX, camera.x, alpha)
   const camY = cameraJumped ? camera.y : lerp(cameraFromY, camera.y, alpha)
@@ -515,7 +517,7 @@ export function drawWorld(alpha: number, background?: () => void) {
 
     beginDraw('ui')
     setOrigin(0, 0)
-    for (const t of actors) if (!t[track].removed) t.drawUI()
+    ui?.()
   } finally {
     endDraw()
   }

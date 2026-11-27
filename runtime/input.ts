@@ -28,6 +28,8 @@ const tapped = new Set<string>()
 let now = new Set<Button>()
 let before = new Set<Button>()
 let stick = { x: 0, y: 0 }
+/** Presses a script took this update (see `takePress`): actors no longer see them. */
+const taken = new Set<Button>()
 /** Buttons held by a script instead of the player (`lucarne.step`), or null. */
 let forced: Set<Button> | null = null
 
@@ -40,16 +42,28 @@ export const input = {
   down(button: Button) {
     return now.has(button)
   },
-  /** Was the button pressed just now (true for one update only)? */
+  /**
+   * Was the button pressed just now (true for one update only)? Not when a script waiting
+   * for that press took it (`await press(button)`): one press does one thing.
+   */
   pressed(button: Button) {
-    return now.has(button) && !before.has(button)
+    return now.has(button) && !before.has(button) && !taken.has(button)
   },
+}
+
+/**
+ * A script takes this update's press of the button: `input.pressed` is false for it until
+ * the next update (the button is still `down`).
+ */
+export function takePress(button: Button) {
+  taken.add(button)
 }
 
 /** Reads keyboard and gamepads; called by the loop before each update. */
 export function sampleInput() {
   before = now
   now = new Set()
+  taken.clear()
   if (forced) {
     for (const b of forced) now.add(b)
     input.x = (now.has('right') ? 1 : 0) - (now.has('left') ? 1 : 0)
@@ -118,6 +132,7 @@ export function listenInput(on: boolean) {
   }
   held.clear()
   tapped.clear()
+  taken.clear()
   now = new Set()
   before = new Set()
   input.x = 0

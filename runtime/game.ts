@@ -13,12 +13,26 @@ export interface GameConfig {
    * `Actor`), drawn smoothly between its updates.
    */
   draw?(): void
+  /**
+   * Draws the game's UI on the screen itself, over the world, in screen pixels (the camera
+   * does not move it): on every displayed frame. Only draw: read the actors (`find`) and
+   * the game's own values, change nothing. A dialogue, a menu or a HUD is the game's own
+   * code: a script (see scripts.ts) changes values, and `ui` shows them.
+   */
+  ui?(): void
 }
 
 /** Declares the game. `code/main.ts` exports its result: `export default game({ … })`. */
 export function game(config: GameConfig): GameConfig {
   return config
 }
+
+/**
+ * While true, the world stops: actors do not update, and the camera and the world's clock
+ * (`time.ms`) stop. Everything is still drawn, and scripts still run (a conversation goes on).
+ * The game sets it, for as long as it wants (a dialogue, a menu): the engine never does.
+ */
+game.paused = false
 
 /**
  * The settings of the whole game, in game.json at the root of the game folder:

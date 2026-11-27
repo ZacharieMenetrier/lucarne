@@ -107,6 +107,7 @@ export class ActorsPage {
         createEditorSwitch(),
         h('span', { className: 'spacer' }),
         this.status,
+        this.app.createSyncButton(),
         h('button', { type: 'button', className: 'run-game', title: 'Play the game (⌘↵)', html: `${icon('play')}<span>Play</span>`, onclick: () => this.app.play() })),
       h('div', { className: 'actors-body' },
         h('aside', { className: 'world-side actors-list' },
@@ -139,8 +140,8 @@ export class ActorsPage {
     this.bindPointer()
     this.bindKeys()
 
-    const before = app.beforePlay
-    app.beforePlay = async () => {
+    const before = app.savePages
+    app.savePages = async () => {
       await before()
       await this.flush()
     }

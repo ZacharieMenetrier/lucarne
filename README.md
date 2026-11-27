@@ -100,6 +100,7 @@ import { game, screen } from 'lucarne'
 
 export default game({
   draw() { screen.clear('#1a1c2c') },             // the background, under the maps and actors
+  ui() { screen.text('♥ 3', 4, 4, '#f4f4f4') },   // the UI, over everything (see "Text and UI")
 })
 ```
 
@@ -134,7 +135,9 @@ actor by it. A class in `code/` (a helper, a dialogue) is an actor that is never
   teleport); `this.remove()` takes the actor out of the world at the end of the update.
 - An actor's box is drawn on the **Actors** page (see "Walls"). Walls and the other actors'
   boxes stop it; without one, it goes through everything.
-- `drawUI()` draws on the screen itself, over the world, where the camera does not move it.
+- An actor draws only itself: the UI is the game's (its `ui()`, see "Text and UI").
+- `find(Hero)` gives the first actor of that class in the world (or of a class that extends
+  it), or null: to read the hero from anywhere.
 
 Displays refresh at other rates (120 Hz, 144 Hz…), so on each displayed frame the engine
 draws every actor between where it was before its last update and where it is now: motion
@@ -386,9 +389,6 @@ their rectangle in pixels inside the tile. It exists only when some tile is soli
 screen.text('Bonjour !', 8, 8, '#f4f4f4')                 // in the game's font
 screen.text(long, 8, 8, '#f4f4f4', { width: 120 })        // wrapped at 120 pixels
 font().measure('Bonjour !')                               // { width, height }
-
-spawn(Dialogue, { pages: ['Hello!', 'Nice weather.'] })   // letter by letter, page by page
-spawn(Menu, { items: ['Yes', 'No'], onChoose: (i) => { … } })   // up, down, action
 ```
 
 Text is stamped from the font's own pixels: the browser never draws it, so it is as crisp
@@ -418,13 +418,60 @@ travels with it). **Import…**, in the same window, takes a pixel font file (.t
 together with its license file: it finds the size the font is drawn for and reads it pixel
 by pixel. A font that is not made of pixels comes out as it can, to be fixed by hand.
 
-An actor whose `modal` is true (a menu, a dialogue) stops the world while it is there: only
-the last modal actor created updates, the camera and the world's clock (`time.ms`) stop,
-and everything is still drawn behind it. The UI's clock (`time.uiMs`) keeps running, so
-text still appears and cursors still blink. `Dialogue` and `Menu` are modal, and remove
-themselves when done. They draw their box with the game's sprite named `panel` if it has
-one, and the menu's cursor with `cursor`. Their text color is `color`:
-`spawn(Dialogue, { pages, color: '#1a1c2c' })`.
+The UI is the game's own code: the engine has no dialogue box, no menu and no HUD, since
+every game wants them differently. It gives three things to write them with.
+
+- **`ui()`**, next to `draw` in `code/main.ts`, draws the UI on the screen itself, over the
+  world, in screen pixels: on every displayed frame, from what the game is now. It only
+  draws: it reads the actors (`find`) and the game's own values, and changes nothing.
+- **Scripts** are the game's async functions: what takes time (a line of dialogue, a menu,
+  a cutscene) is written top to bottom, with `await`. A script changes values; `ui()` shows
+  them. It waits on the engine only: `await wait(30)` for 30 updates (half a second;
+  `wait()` for the next one), `await press('action')` for a new press of a button (the press
+  that started a conversation never skips its first line). The script takes the press: one
+  press does one thing, so the actors don't see it (`input.pressed` is false, `input.down`
+  still true), nor does another script waiting for that button.
+- **`game.paused`**, set by the game, stops the world: actors do not update, and the camera
+  and the world's clock (`time.ms`) stop. Everything is still drawn, and scripts still run.
+  The UI's clock (`time.uiMs`) keeps running: in `ui()`, sprites play on it. Whether the
+  world stops while people talk is the game's choice.
+
+```ts
+// code/talk.ts: the game's dialogue, as it wants it
+import { game, press, screen, sprite, wait } from 'lucarne'
+
+let line = ''
+let shown = 0
+
+export async function say(text: string) {
+  game.paused = true
+  line = text
+  for (shown = 0; shown < text.length; shown += 0.5) await wait()  // 30 letters per second
+  await press('action')
+  line = ''
+  game.paused = false
+}
+
+export function drawTalk() {                                       // called by ui()
+  if (!line) return
+  screen.panel(sprite('panel'), 4, 120, 312, 52)
+  screen.text(line.slice(0, shown), 12, 128, '#f4f4f4', { width: 296 })
+}
+
+// actors/villager.ts
+async talk() {
+  await say('Want a sword?')
+  await say('Here.')
+}
+```
+
+The engine keeps scripts exact: a wait ends at the start of an update, before the actors
+update, and the script it wakes runs until its next wait before anything else happens.
+Scripts that were waiting wake one at a time, in the order they started waiting. So a
+script moves the same way on every display and when a script steps the game, as long as it
+waits only on the engine (never on `setTimeout` or the network). Two scripts at once (the
+hero talks to the villager twice) are the game's to prevent. A script that throws stops the
+game, like any error. When the game starts again, the scripts that were waiting are gone.
 
 ### Music
 
@@ -620,10 +667,11 @@ page hidden (what an AI uses to test a game). Sounds played during `step` are no
 (many updates run at once): `step` lists them instead.
 
 ```js
-lucarne.step(60, ['right'])   // 60 updates with "right" held, then shows the result
-                              // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
+await lucarne.step(60, ['right'])   // 60 updates with "right" held, then shows the result
+                                    // → { ticks, actors, sounds: ['jump'] }: the sounds played, not heard
 lucarne.actors()              // [{ actor: 'hero', x: 267, y: 120, speed: 1.25, box: { x: 262, y: 114, width: 10, height: 6 }, … }]
-lucarne.ui()                  // { modal: 'Menu', text: ['Yes', 'No', '>'] }
+lucarne.ui()                  // the text on screen: ['♥ 3', 'Want a sword?']
+lucarne.scripts()             // what each script waits on: [{ by: 'villager', waiting: 'press action' }]
 lucarne.camera()              // { x: 96, y: 0, map: 'town' }
 await lucarne.picture()       // the frame at game resolution, as a PNG data URL
 lucarne.timings()             // milliseconds per update, per drawing, per frame
@@ -695,7 +743,7 @@ npm run build        # installable static version, in dist/
 The engine that games import (`import … from 'lucarne'`) lives in `runtime/`: the loop
 (`runner.ts`), the world, its actors and the camera (`world.ts`: `spawn`, the actor files,
 smooth motion between updates), variables and how a value is checked (`values.ts`), walls (`collision.ts`), the maps and the camera's limits (`maps.ts`), `screen.ts`, `sprites.ts`,
-`fonts.ts`, the dialogue and menu (`ui.ts`), `input.ts`, the clocks (`time.ts`), songs and
+`fonts.ts`, `input.ts`, scripts and their waits (`scripts.ts`), the clocks (`time.ts`), songs and
 instruments (`sound.ts`: the song format, how a note plays, importing a recording; the
 built-in instruments in `instruments/`, made by `scripts/instruments.mjs`), sound effects
 (`sfx.ts`: the format and how a sound is made; the presets are in `editor/sounds/`; `sounds.ts`:

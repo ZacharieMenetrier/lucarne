@@ -37,6 +37,15 @@
       -webkit-background-clip: text;
       background-clip: text;
     }
+    /* Still over 10px: a new height makes WebKit sample the edge again (iosedge.ts). */
+    #ios-edge[data-resample] {
+      height: 11px;
+    }
+    /* Modal dialogs live in the top layer, above the band: their backdrop starts below it,
+       so WebKit keeps finding the band at the top edge instead of blurring. */
+    dialog::backdrop {
+      top: max(12px, env(safe-area-inset-top));
+    }
   }
 }
 
@@ -1112,7 +1121,7 @@ button.icon-btn svg {
   background: var(--accent);
 }
 
-#sync[hidden] {
+.sync[hidden] {
   display: none;
 }
 

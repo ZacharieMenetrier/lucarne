@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { FONT_CHARACTERS, FONT_COLUMNS, FONT_ROWS, Font, setFonts, type FontData } from '../runtime/fonts'
-import { parseSettings, screenSize, serializeSettings, settingsError } from '../runtime/game'
+import { game, parseSettings, screenSize, serializeSettings, settingsError } from '../runtime/game'
 import { input } from '../runtime/input'
 import { map as mapRect, mapAt, setMaps, type MapData } from '../runtime/maps'
 import { Runner } from '../runtime/runner'
@@ -9,9 +9,9 @@ import { Sprite, setSprites, sprite } from '../runtime/sprites'
 import { heardSounds, setSounds, sound } from '../runtime/sounds'
 import { emptySound } from '../runtime/sfx'
 import { time } from '../runtime/time'
-import { Dialogue, Menu } from '../runtime/ui'
+import { press, wait, waitingScripts } from '../runtime/scripts'
 import type { Box } from '../runtime/collision'
-import { Actor, actorClasses, actorParents, actorValues, actorVariables, camera, cameraMapName, drawWorld, modalActor, placeActors, probe, registerActors, resetWorld, setActorFiles, spawn, updateWorld, worldActors } from '../runtime/world'
+import { Actor, actorClasses, actorParents, actorValues, actorVariables, camera, cameraMapName, drawWorld, find, placeActors, probe, registerActors, resetWorld, setActorFiles, spawn, updateWorld, worldActors } from '../runtime/world'
 
 const data = {
   name: 'hero',
@@ -143,7 +143,7 @@ describe('screen', () => {
   })
 
   it('can only be drawn on while the world draws', () => {
-    expect(() => screen.rect(0, 0, 1, 1, '#fff')).toThrow('can only be drawn on in draw()')
+    expect(() => screen.rect(0, 0, 1, 1, '#fff')).toThrow("can only be drawn on in an actor's draw()")
   })
 
   it('stretches the middle row and column of a panel, keeping edges and corners', () => {
@@ -245,17 +245,11 @@ describe('actors', () => {
     expect(calls.map((c) => c[1])).toEqual([1, 0, 2])
   })
 
-  it('draw their UI over the world, on the screen itself', () => {
+  it("are under the game's UI, drawn on the screen itself", () => {
     const calls = screenAt(100, 100, 1)
-    class Hud extends Actor {
-      drawUI() {
-        screen.rect(2, 3, 1, 1, '#fff')
-      }
-    }
-    spawn(Hud, { x: 40, y: 40 })
     spawn(Dot, { x: 10, y: 10 })
     camera.x = 5
-    drawWorld(1)
+    drawWorld(1, undefined, () => screen.rect(2, 3, 1, 1, '#fff'))
     expect(calls).toEqual([
       ['rect', 5, 10, 1, 1],
       ['rect', 2, 3, 1, 1],
@@ -395,39 +389,32 @@ describe('maps', () => {
   })
 })
 
-describe('modal actors', () => {
-  it('stop the world: only the last one updates, and the world clock stops', () => {
+describe('game.paused', () => {
+  it('stops the actors and the world clock, not the UI clock', async () => {
     const log: string[] = []
     spawn(Dot, { x: 0, y: 0, log, name: 'world' })
-    class Modal extends Dot {
-      modal = true
-    }
-    const first = spawn(Modal, { x: 0, y: 0, log, name: 'first' })
-    const second = spawn(Modal, { x: 0, y: 0, log, name: 'second' })
+    game.paused = true
     expect(updateWorld()).toBe(false)
-    expect(log).toEqual(['second'])
-    second.remove()
-    updateWorld()
-    first.remove()
-    updateWorld()
-    expect(log).toEqual(['second', 'first', 'world'])
-    expect(modalActor()).toBe(null)
-  })
+    expect(log).toEqual([])
+    game.paused = false
+    expect(updateWorld()).toBe(true)
+    expect(log).toEqual(['world'])
 
-  it('keep the UI clock running while the world clock stops', () => {
-    const canvas = fakeCanvas(100, 100).canvas
-    const r = new Runner({}, canvas, (err) => { throw err }, { width: 100, height: 100 })
+    const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
     r.start()
-    class Modal extends Actor {
-      modal = true
-    }
-    r.step(6)
-    const m = spawn(Modal)
-    r.step(6)
-    m.remove()
-    r.step(6)
+    await r.step(6)
+    game.paused = true
+    await r.step(6)
+    game.paused = false
+    await r.step(6)
     expect([time.ms, time.uiMs]).toEqual([200, 300])
     r.stop()
+  })
+
+  it('is false again when a game starts', () => {
+    game.paused = true
+    resetWorld()
+    expect(game.paused).toBe(false)
   })
 })
 
@@ -443,8 +430,8 @@ describe('runner', () => {
     expect([r.scale, canvas.width, canvas.height]).toEqual([1, 384, 216])
   })
 
-  it('steps a given number of updates with buttons held, the same way every time', () => {
-    const run = () => {
+  it('steps a given number of updates with buttons held, the same way every time', async () => {
+    const run = async () => {
       resetWorld()
       class Walker extends Actor {
         update() {
@@ -454,14 +441,14 @@ describe('runner', () => {
       const w = spawn(Walker, { x: 10, y: 10 })
       const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
       r.start()
-      r.step(60, ['right'])
-      r.step(10, ['down', 'left'])
+      await r.step(60, ['right'])
+      await r.step(10, ['down', 'left'])
       expect(r.paused).toBe(true)
       r.stop()
       return [w.x, w.y]
     }
-    expect(run()).toEqual([10 + 75 - 12.5, 20])
-    expect(run()).toEqual(run())
+    expect(await run()).toEqual([10 + 75 - 12.5, 20])
+    expect(await run()).toEqual(await run())
   })
 })
 
@@ -479,7 +466,7 @@ describe('sounds', () => {
     expect(() => sound('jmup')).toThrow('No sound named "jmup" in sounds/ (there are: jump, coin).')
   })
 
-  it('are listed, not heard, while a script steps the game', () => {
+  it('are listed, not heard, while a script steps the game', async () => {
     resetWorld()
     setSounds([{ name: 'jump', sound: drawn() }, { name: 'empty', sound: emptySound() }])
     class Jumper extends Actor {
@@ -492,8 +479,8 @@ describe('sounds', () => {
     const r = new Runner({}, fakeCanvas(100, 100).canvas, (err) => { throw err }, { width: 100, height: 100 })
     r.start()
     heardSounds()
-    r.step(1, ['action'])
-    r.step(1, ['action'])
+    await r.step(1, ['action'])
+    await r.step(1, ['action'])
     expect(heardSounds()).toEqual(['jump', 'empty', 'empty'])
     expect(heardSounds()).toEqual([])
     r.stop()
@@ -502,7 +489,7 @@ describe('sounds', () => {
 
 describe('runner pacing', () => {
   /** Runs a game on a simulated display; returns how many updates ran on each frame. */
-  function simulate(hz: number, frames: number, jitterMs: number, size?: { width: number; height: number }, canvas?: HTMLCanvasElement) {
+  async function simulate(hz: number, frames: number, jitterMs: number, size?: { width: number; height: number }, canvas?: HTMLCanvasElement) {
     let updates = 0
     class Counter extends Actor {
       update() {
@@ -514,38 +501,38 @@ describe('runner pacing', () => {
     const r = new Runner({}, canvas, (err) => { throw err }, size)
     r.fit(canvas.width * 100, canvas.height * 100)
     r.start()
-    const loop = (r as unknown as { loop: (t: number) => void }).loop
+    const inside = r as unknown as { loop: (t: number, generation: number) => Promise<void>; generation: number }
     let seed = 1
     const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * 2 - 1
     const start = (r as unknown as { last: number }).last
     const perFrame: number[] = []
     for (let i = 1; i <= frames; i++) {
       const before = updates
-      loop(start + (i * 1000) / hz + random() * jitterMs)
+      await inside.loop(start + (i * 1000) / hz + random() * jitterMs, inside.generation)
       perFrame.push(updates - before)
     }
     r.stop()
     return perFrame
   }
 
-  it('keeps a steady beat at 120 Hz despite jittery frame times', () => {
-    const beat = simulate(120, 600, 1).slice(20).join('')
+  it('keeps a steady beat at 120 Hz despite jittery frame times', async () => {
+    const beat = (await simulate(120, 600, 1)).slice(20).join('')
     expect(beat).toMatch(/^(01)+0?$|^(10)+1?$/)
   })
 
-  it('keeps a steady beat at 180 Hz', () => {
-    const beat = simulate(180, 900, 1).slice(20).join('')
+  it('keeps a steady beat at 180 Hz', async () => {
+    const beat = (await simulate(180, 900, 1)).slice(20).join('')
     expect(beat.replace(/^0*1/, '')).toMatch(/^(001)*0{0,2}$/)
   })
 
-  it('does not take a 58.5 Hz display for a 60 Hz one', () => {
+  it('does not take a 58.5 Hz display for a 60 Hz one', async () => {
     // Counted as 60 Hz, it would run 60 updates per second of 58.5 frames: 2.5% fast.
-    const total = simulate(58.5, 585, 0.2).reduce((a, b) => a + b, 0)
+    const total = (await simulate(58.5, 585, 0.2)).reduce((a, b) => a + b, 0)
     expect(Math.abs(total - 600)).toBeLessThanOrEqual(1)
   })
 
   /** Display pixels a moving actor goes on each frame, at ×100. */
-  function steps(hz: number, jitterMs: number) {
+  async function steps(hz: number, jitterMs: number) {
     resetWorld()
     const fake = fakeCanvas(10, 10)
     class Mover extends Actor {
@@ -557,23 +544,23 @@ describe('runner pacing', () => {
       }
     }
     spawn(Mover)
-    simulate(hz, 300, jitterMs, { width: 10, height: 10 }, fake.canvas)
+    await simulate(hz, 300, jitterMs, { width: 10, height: 10 }, fake.canvas)
     const xs = fake.calls.map((c) => c[1] as number)
     return { xs, steps: xs.slice(30).map((v, i) => v - xs[29 + i]) }
   }
 
-  it('moves actors evenly on every displayed frame at 144 Hz', () => {
+  it('moves actors evenly on every displayed frame at 144 Hz', async () => {
     // 1.5 pixels × 60 updates / 144 frames = 62.5 display pixels per frame at ×100.
     // Without interpolation, steps would be 0 or 150.
-    expect(new Set(steps(144, 0).steps)).toEqual(new Set([62, 63]))
+    expect(new Set((await steps(144, 0)).steps)).toEqual(new Set([62, 63]))
     // Jittery timestamps shift each frame a little (no steady beat to lock on at 144 Hz):
     // within ±0.1 game pixel here, under half a display pixel at ×5.
-    const jittery = steps(144, 0.5).steps
+    const jittery = (await steps(144, 0.5)).steps
     expect(Math.min(...jittery)).toBeGreaterThan(62.5 - 15)
     expect(Math.max(...jittery)).toBeLessThan(62.5 + 15)
   })
 
-  it('shows the last update as it is on a 60 Hz display, without a frame of delay', () => {
+  it('shows the last update as it is on a 60 Hz display, without a frame of delay', async () => {
     resetWorld()
     let x = 0
     class Mover extends Actor {
@@ -587,13 +574,13 @@ describe('runner pacing', () => {
     }
     spawn(Mover)
     const fake = fakeCanvas(10, 10)
-    simulate(60, 120, 0.5, { width: 10, height: 10 }, fake.canvas)
+    await simulate(60, 120, 0.5, { width: 10, height: 10 }, fake.canvas)
     const last = fake.calls[fake.calls.length - 1][1] as number
     expect(last).toBe(Math.round(x * 100))
   })
 
-  it('still runs 60 updates per second at other rates', () => {
-    const total = simulate(144, 144 * 5, 1).reduce((a, b) => a + b, 0)
+  it('still runs 60 updates per second at other rates', async () => {
+    const total = (await simulate(144, 144 * 5, 1)).reduce((a, b) => a + b, 0)
     expect(Math.abs(total - 300)).toBeLessThanOrEqual(1)
   })
 })
@@ -655,46 +642,156 @@ describe('text', () => {
   })
 })
 
-describe('dialogue and menu', () => {
+describe('scripts', () => {
   beforeEach(testFont)
 
-  function play() {
-    const r = new Runner({}, fakeCanvas(200, 100).canvas, (err) => { throw err }, { width: 200, height: 100 })
+  function play(ui?: () => void) {
+    const r = new Runner({ ui }, fakeCanvas(200, 100).canvas, (err) => { throw err }, { width: 200, height: 100 })
     r.start()
     return r
   }
 
-  it('shows a dialogue letter by letter, page by page, then closes', () => {
+  it('wait a number of updates, at least one', async () => {
     const r = play()
-    const d = spawn(Dialogue, { pages: ['ab ab', 'b ab ab'] })
-    r.step(4) // half a letter per update
-    expect(writtenText().map((t) => t.text)).toEqual(['ab'])
-    r.step(1, ['action']) // the whole page at once
-    expect(d.done).toBe(true)
-    expect(writtenText().map((t) => t.text)).toEqual(['ab ab'])
-    r.step(1)
-    r.step(1, ['action']) // next page
-    r.step(1)
-    r.step(1, ['action']) // shown at once
-    r.step(1)
-    r.step(1, ['action']) // closes
-    expect(d.removed).toBe(true)
+    const log: number[] = []
+    void (async () => {
+      await wait(3)
+      log.push(time.ticks)
+      await wait(0)
+      log.push(time.ticks)
+      await wait()
+      log.push(time.ticks)
+    })()
+    // A wait ends at the start of an update, before the actors (time.ticks counts after).
+    await r.step(10)
+    expect(log).toEqual([2, 3, 4])
     r.stop()
   })
 
-  it('moves a menu cursor and calls back with the choice', () => {
+  it('move on every update, even when many run at once', async () => {
     const r = play()
-    let chosen = -1
-    spawn(Menu, { items: ['a', 'b', 'ab'], onChoose: (i) => (chosen = i) })
-    r.step(1, ['up']) // wraps to the last
-    r.step(1)
-    r.step(1, ['down'])
-    r.step(1)
-    r.step(1, ['down'])
-    r.step(1, ['action'])
-    expect(chosen).toBe(1)
-    expect(modalActor()).toBe(null)
+    let count = 0
+    void (async () => {
+      for (;;) {
+        count++
+        await wait()
+      }
+    })()
+    await r.step(10)
+    expect(count).toBe(11)
     r.stop()
+  })
+
+  it('wait for a new press: not the one that started them', async () => {
+    const r = play()
+    const log: string[] = []
+    class Npc extends Actor {
+      update() {
+        if (input.pressed('action')) void this.talk()
+      }
+      async talk() {
+        log.push('hello')
+        await press('action')
+        log.push('bye')
+      }
+    }
+    spawn(Npc)
+    await r.step(1, ['action'])
+    expect(log).toEqual(['hello'])
+    expect(waitingScripts()).toEqual([{ by: 'Npc', waiting: 'press action' }])
+    await r.step(3, ['action']) // still the same press, held
+    expect(log).toEqual(['hello'])
+    await r.step(1)
+    await r.step(1, ['action'])
+    // The script took that press: the actor's update did not see it, so no new conversation.
+    expect(log).toEqual(['hello', 'bye'])
+    await r.step(1)
+    await r.step(1, ['action'])
+    expect(log).toEqual(['hello', 'bye', 'hello'])
+    r.stop()
+  })
+
+  it('take a press: the first waiting for it, and the button is still held', async () => {
+    const r = play()
+    const log: string[] = []
+    const script = async (name: string) => {
+      await press('action')
+      log.push(`${name} ${input.pressed('action')} ${input.down('action')}`)
+    }
+    void script('a')
+    void script('b')
+    await r.step(1, ['action'])
+    expect(log).toEqual(['a false true'])
+    await r.step(1)
+    await r.step(1, ['action'])
+    expect(log).toEqual(['a false true', 'b false true'])
+    r.stop()
+  })
+
+  it('wake in the order they started waiting', async () => {
+    const r = play()
+    const log: string[] = []
+    const script = async (name: string, first: number) => {
+      await wait(first)
+      log.push(name)
+      await wait(2)
+      log.push(name)
+    }
+    void script('a', 2)
+    void script('b', 1)
+    void script('c', 2)
+    await r.step(5)
+    expect(log).toEqual(['b', 'a', 'c', 'b', 'a', 'c'])
+    r.stop()
+  })
+
+  it('run while the game is paused, and show through ui()', async () => {
+    let line = ''
+    let shown = 0
+    const r = play(() => screen.text(line.slice(0, shown), 0, 0, '#fff'))
+    const log: string[] = []
+    spawn(Dot, { x: 0, y: 0, log, name: 'world' })
+    void (async () => {
+      game.paused = true
+      line = 'ab ab'
+      for (shown = 0; shown < line.length; shown++) await wait()
+      await press('action')
+      line = ''
+      game.paused = false
+    })()
+    await r.step(2)
+    expect(writtenText().map((t) => t.text)).toEqual(['ab'])
+    await r.step(10)
+    expect(writtenText().map((t) => t.text)).toEqual(['ab ab'])
+    expect(log).toEqual([])
+    await r.step(1, ['action'])
+    expect(log).toEqual(['world'])
+    r.stop()
+  })
+
+  it('are forgotten when a game starts', async () => {
+    let woke = false
+    void wait().then(() => (woke = true))
+    resetWorld()
+    expect(waitingScripts()).toEqual([])
+    const r = play()
+    await r.step(2)
+    expect(woke).toBe(false)
+    r.stop()
+  })
+})
+
+describe('find', () => {
+  it('gives the first actor of a class, its subclasses included, or null', () => {
+    class Hero extends Actor {}
+    class Knight extends Hero {}
+    expect(find(Hero)).toBe(null)
+    const k = spawn(Knight)
+    spawn(Hero)
+    expect(find(Hero)).toBe(k)
+    k.remove()
+    updateWorld()
+    expect(find(Knight)).toBe(null)
   })
 })
 

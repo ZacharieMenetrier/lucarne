@@ -11,7 +11,7 @@
 // code/main.ts, when there is one, exports the game: `export default game({ … })`.
 
 export { game, type GameConfig } from './game'
-export { Actor, camera, spawn, type Values } from './world'
+export { Actor, camera, find, spawn, type Values } from './world'
 export { type Box } from './collision'
 export { map, mapAt, type MapRect } from './maps'
 export { input, type Button } from './input'
@@ -19,7 +19,7 @@ export { screen, type SpriteOptions } from './screen'
 export { sprite, type Sprite } from './sprites'
 export { sound, type Sound } from './sounds'
 export { font, type Font, type TextOptions } from './fonts'
-export { Dialogue, Menu } from './ui'
+export { press, wait } from './scripts'
 export { time } from './time'
 // For game.js only (see server/build.mjs): it registers the actor files.
 export { registerActors } from './world'

@@ -1,5 +1,6 @@
 import { ActorsPage } from './actorspage'
 import { App } from './app'
+import { keepIOSEdge } from './iosedge'
 import { MusicPage } from './musicpage'
 import { Project } from './project'
 import { isTileset } from './sprite'
@@ -9,6 +10,7 @@ import { openStorage } from './storage'
 import { WorldPage } from './worldpage'
 
 async function main() {
+  keepIOSEdge()
   const storage = await openStorage()
   const project = new Project(storage)
   await project.load()

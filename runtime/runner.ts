@@ -6,11 +6,15 @@
 // runner scales it up by the largest whole number that fits the space it is given (see
 // `fit`), and the canvas gets the display's own pixels. What is left around is the
 // editor's black bars.
+//
+// An update waits for the scripts it wakes (see scripts.ts), so updates are async: they run
+// one after the other, never two at once, whoever asks for them (the loop, `step`).
 
 import { DEFAULT_SETTINGS, TICK_RATE, screenSize, type GameConfig } from './game'
 import { forceInput, listenInput, sampleInput, type Button } from './input'
 import { attachScreen } from './screen'
 import { quietSounds, stopSounds } from './sounds'
+import { wakeScripts } from './scripts'
 import { resetTime, tickTime } from './time'
 import { drawWorld, settleCamera, updateWorld } from './world'
 
@@ -35,6 +39,10 @@ export class Runner {
   readonly width: number
   readonly height: number
   private frame = 0
+  /** Changes whenever the loop is paused, resumed or stopped: a frame of an older loop stops. */
+  private generation = 0
+  /** The updates asked for, one after the other. */
+  private work: Promise<unknown> = Promise.resolve()
   private last = 0
   private lag = 0
   private _paused = false
@@ -69,6 +77,11 @@ export class Runner {
     return () => this.config.draw?.()
   }
 
+  /** The game's UI, for whoever draws the world again. */
+  get ui() {
+    return () => this.config.ui?.()
+  }
+
   get paused() {
     return this._paused
   }
@@ -98,18 +111,20 @@ export class Runner {
     this.started = true
     attachScreen(this.canvas, this.width, this.height)
     listenInput(true)
+    if (typeof window !== 'undefined') window.addEventListener('unhandledrejection', this.onRejection)
     resetTime()
     if (!this.guard(() => this.config.start?.())) return
     settleCamera()
     // A first frame right away, so the screen is never blank (even if paused at once).
     if (!this.present()) return
     this.last = performance.now()
-    this.frame = requestAnimationFrame(this.loop)
+    this.schedule()
   }
 
   pause() {
     if (this.stopped || this._paused) return
     this._paused = true
+    this.generation++
     cancelAnimationFrame(this.frame)
     listenInput(false)
     stopSounds()
@@ -121,13 +136,16 @@ export class Runner {
     listenInput(true)
     this.last = performance.now()
     this.lag = 0
-    this.frame = requestAnimationFrame(this.loop)
+    this.generation++
+    this.schedule()
   }
 
   stop() {
     if (this.stopped) return
     this.stopped = true
+    this.generation++
     cancelAnimationFrame(this.frame)
+    if (typeof window !== 'undefined') window.removeEventListener('unhandledrejection', this.onRejection)
     listenInput(false)
     stopSounds()
     attachScreen(null)
@@ -139,41 +157,68 @@ export class Runner {
    * same way every time (the AI handle, tests). Its sounds are not heard, only listed
    * (`heardSounds`): played all at once, they would be noise.
    */
-  step(count: number, buttons: Iterable<Button> = []) {
-    if (this.stopped) return
+  step(count: number, buttons: Iterable<Button> = []): Promise<void> {
+    if (this.stopped) return Promise.resolve()
     this.pause()
-    forceInput(buttons)
-    quietSounds(true)
-    try {
-      for (let i = 0; i < count; i++) if (!this.update()) return
-    } finally {
-      forceInput(null)
-      quietSounds(false)
-    }
-    this.alpha = 1
-    this.present()
+    return this.queue(async () => {
+      if (this.stopped) return
+      forceInput(buttons)
+      quietSounds(true)
+      try {
+        for (let i = 0; i < count; i++) if (!(await this.update())) return
+      } finally {
+        forceInput(null)
+        quietSounds(false)
+      }
+      this.alpha = 1
+      this.present()
+    })
   }
 
-  private loop = (time: number) => {
+  /** Runs `fn` once the work asked for before it is done. */
+  private queue(fn: () => Promise<void>): Promise<void> {
+    const done = this.work.then(fn)
+    this.work = done.catch(() => {})
+    return done
+  }
+
+  /** Asks for the next displayed frame, in the loop as it is now. */
+  private schedule() {
+    const generation = this.generation
+    this.frame = requestAnimationFrame((time) => void this.queue(() => this.loop(time, generation)))
+  }
+
+  private async loop(time: number, generation: number) {
+    // Paused, resumed or stopped since: that loop is over.
+    const current = () => generation === this.generation
+    if (!current()) return
     average(this.timings, 'frame', time - this.last)
     this.lag = Math.min(this.pace(this.lag, time - this.last), STEP * MAX_CATCH_UP)
     this.last = time
     // A hair under a whole update counts: three thirds of one may round just below it.
     while (this.lag >= STEP - 1e-6) {
       this.lag -= STEP
-      if (!this.update()) return
+      if (!(await this.update()) || !current()) return
     }
     // On a 60 Hz display each frame shows exactly one update: show it as it is, rather
     // than between it and the one before (which only adds a frame of delay).
     this.alpha = this.period === STEP ? 1 : Math.min(1, Math.max(0, this.lag / STEP))
     if (!this.present()) return
-    this.frame = requestAnimationFrame(this.loop)
+    this.schedule()
   }
 
-  /** One update of the world. False if the game failed. */
-  private update() {
+  /** One update: the scripts it wakes, then the world. False if the game failed. */
+  private async update() {
     const start = performance.now()
     sampleInput()
+    try {
+      await wakeScripts()
+    } catch (err) {
+      this.fail(err)
+      return false
+    }
+    // A script that failed stopped the game (see `onRejection`).
+    if (this.stopped) return false
     let ran = true
     if (!this.guard(() => (ran = updateWorld()))) return false
     tickTime(ran)
@@ -184,7 +229,7 @@ export class Runner {
   /** Draws the world as it is shown on this frame. False if the game failed. */
   private present() {
     const start = performance.now()
-    const ok = this.guard(() => drawWorld(this.alpha, this.draw))
+    const ok = this.guard(() => drawWorld(this.alpha, this.draw, this.ui))
     average(this.timings, 'draw', performance.now() - start)
     return ok
   }
@@ -221,10 +266,24 @@ export class Runner {
       fn()
       return true
     } catch (err) {
-      this.stop()
-      this.onError(err)
+      this.fail(err)
       return false
     }
+  }
+
+  private fail(err: unknown) {
+    if (this.stopped) return
+    this.stop()
+    this.onError(err)
+  }
+
+  /**
+   * A script that throws rejects its promise, which nobody awaits (an actor starts a script
+   * and goes on): the browser reports it here, and the game stops on it like any error.
+   */
+  private onRejection = (e: PromiseRejectionEvent) => {
+    e.preventDefault()
+    this.fail(e.reason)
   }
 }
 
