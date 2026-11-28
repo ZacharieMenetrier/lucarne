@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prepares the built-in instruments (runtime/instruments/) from their source recordings,
 // the way the editor imports a recording: from the start of the note, cut where it should
-// end, 16 kHz, 8-bit, its note detected.
+// end, 16 kHz, 16-bit, its note detected.
 //
 //   node scripts/instruments.mjs <folder of sources>
 //
@@ -69,7 +69,7 @@ function read(name) {
 }
 
 fs.mkdirSync(out, { recursive: true })
-const credits = ['# Built-in instruments', '', 'Prepared by `scripts/instruments.mjs` (16 kHz, 8-bit, cut as the editor imports). Sources:', '']
+const credits = ['# Built-in instruments', '', 'Prepared by `scripts/instruments.mjs` (16 kHz, 16-bit, cut as the editor imports). Sources:', '']
 for (const inst of INSTRUMENTS) {
   const { data, rate } = read(inst.name)
   const src = inst.cut ? data.subarray(0, Math.round(inst.cut * rate) + firstSound(data)) : data

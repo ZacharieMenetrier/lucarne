@@ -60,7 +60,7 @@ my-game/
   fonts/name.license.txt   the font's license, when it has one
   actors/hero.ts     an actor: its code (TypeScript), a class that extends Actor (see "Actors")
   actors/hero.json   its values set in the editor, its box among them, only when it has some
-  instruments/lute.wav   an instrument of the game's own: one note, as it plays (16 kHz, 8-bit)
+  instruments/lute.wav   an instrument of the game's own: one note, as it plays (16 kHz, 16-bit)
   instruments/lute.json  { "note": "C4", "volume": 4 }: the note it was recorded at (none: a
                          drum) and its volume in dB, each only when it has one
   instruments/snare.json { "volume": 6 } alone, with no .wav: the engine's snare's volume in this game
@@ -577,7 +577,7 @@ is imported at its level. A game's volume for one of the engine's is a `.json` a
 A song that would go past full volume is turned down as a whole, every instrument by the
 same amount.
 
-Every instrument plays at 16 kHz, 8-bit: the sound's own pixels. The engine has twenty,
+Every instrument plays at 16 kHz, 16-bit: soft like an old console, without its grit. The engine has twenty,
 usable by name in every game (`runtime/instruments/`, from the University of Iowa's
 Musical Instrument Samples and VSCO 2 Community Edition, see `SOURCES.md`): winds (flute,
 alto-flute, oboe, bassoon, horn, trumpet, organ), strings (violin, viola, cello,
@@ -586,7 +586,7 @@ tambourine, triangle, claves). **Import an instrument…** (in the instrument
 list) turns any recording of one note into one of the game's (`instruments/<name>.wav`):
 it starts at the note, is cut before the player stops (a held sound, whose end then
 repeats) or once it has died out (a strike, a pluck), is tuned exactly to its note, and is
-stored at 16 kHz, 8-bit. Its `.json` holds that note; without one, it is a drum. A game's
+stored at 16 kHz, 16-bit. Its `.json` holds that note; without one, it is a drum. A game's
 instrument with the name of a built-in one replaces it in that game.
 
 How a game plays its music comes later.
@@ -627,7 +627,7 @@ The texture, then each setting only when it is not the default (`"speed": "fast"
 last pixel (`null`: empty), and its volume (0 to 23) only when one is not the loudest.
 
 The engine makes the sound from that file, and it sounds like the music: mono, 16 kHz,
-8-bit. It varies a little each time it is made (a struck pitch, noise), so repeats are not
+16-bit. It varies a little each time it is made (a struck pitch, noise), so repeats are not
 identical. A game has only its own sounds, the ones in its `sounds/` folder. **+** next to
 Sounds names a new one and picks what it starts from: empty, or one of 25 presets (coin,
 jump, laser, bomb, footstep, water-drop…), each played when pressed. A preset is copied

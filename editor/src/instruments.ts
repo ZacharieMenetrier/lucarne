@@ -197,7 +197,7 @@ export class Instruments {
     }, 'Listen')
     const seconds = (data.length / RATE).toFixed(1)
     const body = h('div', { className: 'fields' },
-      h('p', { className: 'muted' }, `${file.name}: ${seconds} s kept, from the start of the note${note === null ? '' : `, tuned to ${noteName(note)}`}. It plays at 16 kHz, 8-bit.`),
+      h('p', { className: 'muted' }, `${file.name}: ${seconds} s kept, from the start of the note${note === null ? '' : `, tuned to ${noteName(note)}`}. It plays at 16 kHz, 16-bit.`),
       h('label', {}, 'Name', nameInput),
       h('label', {}, 'Note it was recorded at', noteSelect),
       h('div', { className: 'row' }, listen),

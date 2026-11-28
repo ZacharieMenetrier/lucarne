@@ -1,6 +1,6 @@
 # Built-in instruments
 
-Prepared by `scripts/instruments.mjs` (16 kHz, 8-bit, cut as the editor imports). Sources:
+Prepared by `scripts/instruments.mjs` (16 kHz, 16-bit, cut as the editor imports). Sources:
 
 - **flute** (C5): Flute.nonvib.ff.C5. University of Iowa Electronic Music Studios, Musical Instrument Samples (theremin.music.uiowa.edu/MIS.html): "freely available … may be downloaded and used for any projects, without restrictions."
 - **alto-flute** (C5): AltoFlute.vib.ff.C5. University of Iowa Electronic Music Studios, Musical Instrument Samples (theremin.music.uiowa.edu/MIS.html): "freely available … may be downloaded and used for any projects, without restrictions."

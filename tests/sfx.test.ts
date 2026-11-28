@@ -49,7 +49,7 @@ describe('making a sound', () => {
     expect(synthesize(emptySound())).toBeNull()
   })
 
-  it('every texture makes a sound at 16 kHz in 8-bit steps, as long as drawn at least', async () => {
+  it('every texture makes a sound at 16 kHz in 16-bit steps, as long as drawn at least', async () => {
     for (const texture of TEXTURES) {
       const s = preset('jump')
       s.texture = texture
@@ -58,7 +58,7 @@ describe('making a sound', () => {
       let peak = 0
       for (const x of d) {
         expect(Number.isFinite(x)).toBe(true)
-        expect(Math.round(x * 127)).toBeCloseTo(x * 127, 4)
+        expect(x * 32767).toBeCloseTo(Math.round(x * 32767), 2)
         peak = Math.max(peak, Math.abs(x))
       }
       expect(peak, texture).toBeGreaterThan(0.5)

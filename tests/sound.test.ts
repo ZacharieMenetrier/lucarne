@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TEMPO,
   RATE,
+  quantize,
   decodeWav,
   detectPitch,
   encodeWav,
@@ -107,11 +108,11 @@ describe('songs', () => {
 })
 
 describe('wav files', () => {
-  it('stores 8-bit mono and reads it back', () => {
-    const d = Float32Array.from([0, 0.5, -0.5, 1, -1].map((v) => Math.round(v * 127) / 127))
+  it('stores 16-bit mono and reads it back', () => {
+    const d = Float32Array.from([0, 0.5, -0.5, 1, -1, 0.001].map(quantize))
     const { data, rate } = decodeWav(encodeWav(d))
     expect(rate).toBe(RATE)
-    data.forEach((v, i) => expect(v).toBeCloseTo(d[i], 1))
+    data.forEach((v, i) => expect(v).toBeCloseTo(d[i], 4))
   })
 })
 
@@ -237,12 +238,12 @@ describe('importing a recording', () => {
   // A marimba-like note: a strike that dies out.
   const struck = tone(523, 2, rate, (t) => (t < 0.1 ? 0 : 0.9 * Math.exp(-(t - 0.1) * 6)))
 
-  it('starts at the note, ends before the player stops, at 16 kHz in 8 bits', () => {
+  it('starts at the note, ends before the player stops, at 16 kHz in 16 bits', () => {
     const d = prepareRecording(held, rate)
     expect(d.length / RATE).toBeGreaterThan(1.3)
     expect(d.length / RATE).toBeLessThan(1.75)
     expect(Math.abs(d[0])).toBeLessThan(0.1)
-    for (const v of d.subarray(0, 200)) expect(Math.round(v * 127) / 127).toBeCloseTo(v, 6)
+    for (const v of d.subarray(0, 200)) expect(v * 32767).toBeCloseTo(Math.round(v * 32767), 2)
     expect(Math.max(...d)).toBeCloseTo(0.95, 1)
   })
 

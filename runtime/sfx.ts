@@ -5,13 +5,13 @@
 //
 // Unlike instruments (sound.ts), effects are synthesized: a jump, a coin or an explosion is a
 // shape drawn in time, not a note played. What comes out is the same as the music's, though:
-// mono, 16 kHz, 8-bit. It is made at 44.1 kHz (the textures' partials and filters were tuned
+// mono, 16 kHz, 16-bit. It is made at 44.1 kHz (the textures' partials and filters were tuned
 // there), then brought down.
 //
 // A render varies slightly every time (a struck texture's pitch, noise, crackles), on purpose:
 // repeats of a sound are not identical.
 
-import { RATE, resample } from './sound'
+import { RATE, quantize, resample } from './sound'
 
 export const COLUMNS = 24
 export const ROWS = 24
@@ -575,7 +575,7 @@ function addEcho(dry: Float32Array, echo: Echo): Float32Array {
 
 /**
  * As it plays, from the sound at RATE: its peak at 0.9, then lowered to its level, its silent
- * end cut off (20 ms kept, faded), in 8-bit steps.
+ * end cut off (20 ms kept, faded), in 16-bit steps.
  */
 function finish(d: Float32Array, level: number): Float32Array {
   let pk = 0, end = 0
@@ -589,11 +589,11 @@ function finish(d: Float32Array, level: number): Float32Array {
   const n = Math.max(1, Math.min(d.length, end + Math.floor(0.02 * RATE)))
   const m = pk > 0 ? (0.9 * volumeGain(level)) / pk : 1, fl = Math.floor(0.02 * RATE)
   const out = new Float32Array(n)
-  for (let i = 0; i < n; i++) out[i] = Math.round(d[i] * m * (i > n - fl ? (n - i) / fl : 1) * 127) / 127
+  for (let i = 0; i < n; i++) out[i] = quantize(d[i] * m * (i > n - fl ? (n - i) / fl : 1))
   return out
 }
 
-/** The sound, as it plays: mono, at RATE, 8-bit steps; null when nothing is drawn. */
+/** The sound, as it plays: mono, at RATE, 16-bit steps; null when nothing is drawn. */
 export function renderSound(s: Sound): Float32Array | null {
   const dry = synthesize(s)
   return dry ? finish(addEcho(resample(dry, SR, RATE), s.echo), s.level) : null

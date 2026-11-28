@@ -1,7 +1,7 @@
 // Lucarne's sound: songs are notes, played with recorded instruments.
 //
 // An instrument is the recording of one note (instruments/<name>.wav), stored as it plays:
-// mono, 16 kHz, 8-bit. Its .json holds the note it was recorded at; an instrument without
+// mono, 16 kHz, 16-bit. Its .json holds the note it was recorded at; an instrument without
 // one has no pitch (a drum): it always plays as recorded. The engine does three things, and
 // nothing else (no vibrato, no effects, no settings):
 //
@@ -22,8 +22,14 @@
 // This file has no imports: the script that prepares the built-in instruments runs it with
 // plain Node.
 
-/** Every instrument plays at 16 kHz, 8-bit: what the import stores, and what is heard. */
+/** Every instrument plays at 16 kHz, 16-bit: what the import stores, and what is heard. */
 export const RATE = 16000
+/**
+ * A sample in 16-bit steps (between -1 and 1), as a WAV stores it. 16-bit rather than 8:
+ * 8-bit's rounding buzzed on every quiet part (a decaying tail, a soft effect, an echo), and
+ * dithering only traded the buzz for hiss. 16 kHz stays: it is what softens the sound.
+ */
+export const quantize = (v: number) => Math.round(Math.max(-1, Math.min(1, v)) * 32767) / 32767
 /** The grid: a note starts and lasts a whole number of sixteenth notes, four to a quarter. */
 export const STEPS_PER_QUARTER = 4
 /**
@@ -205,7 +211,7 @@ export const stepSeconds = (tempo: number) => 60 / tempo / STEPS_PER_QUARTER
 // Instruments
 
 export interface Instrument {
-  /** The recording at RATE, its values between -1 and 1 (8-bit steps). */
+  /** The recording at RATE, its values between -1 and 1 (16-bit steps). */
   data: Float32Array
   /** The note it was recorded at (MIDI); null for a drum. */
   note: number | null
@@ -256,7 +262,7 @@ export function serializeInstrumentFile({ note, volume }: InstrumentFile): strin
  * are stored as loud as they can be, peak at the top, but the ear hears how much sound there
  * is, not the peak: a drum, one sharp hit, sounded far softer than a bassoon held at its
  * peak (up to 16 dB). So the engine measures each one where it plays and evens them out,
- * when it is loaded rather than in its file, where turning a sound down would cost it 8-bit
+ * when it is loaded rather than in its file, where turning a sound down would cost it
  * steps. The quarter second is how long the ear takes to judge a sound, for a short hit and
  * the start of a held note alike. The level is the middle of the built-in instruments'.
  */
@@ -413,7 +419,7 @@ export function renderNote(inst: Instrument, pitch: number | null, seconds: numb
 
 /**
  * Makes an instrument of a recording: from the start of its note, cut where it should end,
- * at 16 kHz, 8-bit, as loud as it can be. A sustained sound (a flute, a bow) is cut before the
+ * at 16 kHz, 16-bit, as loud as it can be. A sustained sound (a flute, a bow) is cut before the
  * player stops, so its end still sounds and can repeat; a sound that fades (a strike, a
  * pluck) is kept until it has died out.
  */
@@ -451,7 +457,7 @@ export function prepareRecording(src: Float32Array, rate: number): Float32Array 
   const out = d.slice(start, Math.min(d.length, end))
   let p = 0
   for (const v of out) p = Math.max(p, Math.abs(v))
-  for (let i = 0; i < out.length; i++) out[i] = Math.round((out[i] / p) * 0.95 * 127) / 127
+  for (let i = 0; i < out.length; i++) out[i] = quantize((out[i] / p) * 0.95)
   return out
 }
 
@@ -471,7 +477,7 @@ export function tuneRecording(d: Float32Array, near?: number): { data: Float32Ar
     const x = j * step
     const i = Math.floor(x)
     const v = d[i] * (1 - (x - i)) + (d[i + 1] ?? d[i]) * (x - i)
-    tuned[j] = Math.max(-1, Math.min(1, Math.round(v * 127) / 127))
+    tuned[j] = quantize(v)
   }
   return { data: tuned, note }
 }
@@ -535,24 +541,24 @@ export function detectPitch(d: Float32Array, rate: number, near?: number): numbe
 // ---------------------------------------------------------------------------
 // WAV files
 
-/** An 8-bit mono WAV at `rate` (values between -1 and 1). */
+/** A 16-bit mono WAV at `rate` (values between -1 and 1). */
 export function encodeWav(data: Float32Array, rate = RATE): Uint8Array {
-  const out = new Uint8Array(44 + data.length)
+  const out = new Uint8Array(44 + data.length * 2)
   const v = new DataView(out.buffer)
   const ascii = (at: number, s: string) => [...s].forEach((c, i) => (out[at + i] = c.charCodeAt(0)))
   ascii(0, 'RIFF')
-  v.setUint32(4, 36 + data.length, true)
+  v.setUint32(4, 36 + data.length * 2, true)
   ascii(8, 'WAVEfmt ')
   v.setUint32(16, 16, true)
   v.setUint16(20, 1, true)
   v.setUint16(22, 1, true)
   v.setUint32(24, rate, true)
-  v.setUint32(28, rate, true)
-  v.setUint16(32, 1, true)
-  v.setUint16(34, 8, true)
+  v.setUint32(28, rate * 2, true)
+  v.setUint16(32, 2, true)
+  v.setUint16(34, 16, true)
   ascii(36, 'data')
-  v.setUint32(40, data.length, true)
-  for (let i = 0; i < data.length; i++) out[44 + i] = Math.max(0, Math.min(255, Math.round(data[i] * 127) + 128))
+  v.setUint32(40, data.length * 2, true)
+  for (let i = 0; i < data.length; i++) v.setInt16(44 + i * 2, Math.round(Math.max(-1, Math.min(1, data[i])) * 32767), true)
   return out
 }
 
