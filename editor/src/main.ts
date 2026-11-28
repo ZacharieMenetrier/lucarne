@@ -1,4 +1,3 @@
-import { ActorsPage } from './actorspage'
 import { App } from './app'
 import { keepIOSEdge } from './iosedge'
 import { MusicPage } from './musicpage'
@@ -16,9 +15,7 @@ async function main() {
   await project.load()
   const app = new App(project)
   await app.start()
-  const actors = new ActorsPage(project, app)
-  await actors.load()
-  const world = new WorldPage(project, app, actors.files)
+  const world = new WorldPage(project, app)
   await world.load()
   await new MusicPage(project, app).load()
   await new SoundsPage(project, app).load()

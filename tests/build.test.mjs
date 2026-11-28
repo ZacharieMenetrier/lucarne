@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { gameBuilder } from '../server/build.mjs'
 import * as engine from '../runtime/index.ts'
-import { actorClasses, actorName, resetWorld, setActorFiles, worldActors } from '../runtime/world.ts'
+import { actorClasses, actorName, resetActorClasses, resetWorld, worldActors } from '../runtime/world.ts'
 
 const quiet = { info() {}, error() {} }
 let dir = ''
@@ -25,7 +25,7 @@ async function build(files) {
 async function run() {
   globalThis.__lucarne = engine
   resetWorld()
-  setActorFiles({})
+  resetActorClasses()
   const mod = await import(pathToFileURL(path.join(dir, 'game.js')).href)
   return mod.default
 }

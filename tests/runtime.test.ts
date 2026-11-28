@@ -11,7 +11,7 @@ import { emptySound } from '../runtime/sfx'
 import { time } from '../runtime/time'
 import { press, wait, waitingScripts } from '../runtime/scripts'
 import type { Box } from '../runtime/collision'
-import { Actor, actorClasses, actorParents, actorValues, actorVariables, camera, cameraMapName, drawWorld, find, placeActors, probe, registerActors, resetWorld, setActorFiles, spawn, updateWorld, worldActors } from '../runtime/world'
+import { Actor, actorClasses, actorsIn, actorVariables, camera, cameraMapName, drawWorld, find, placeActors, probe, registerActors, resetActorClasses, resetWorld, spawn, updateWorld, worldActors } from '../runtime/world'
 
 const data = {
   name: 'hero',
@@ -73,7 +73,7 @@ beforeEach(() => {
   resetWorld()
   setSprites([data])
   setMaps(16, [], [])
-  setActorFiles({})
+  resetActorClasses()
 })
 
 describe('settings', () => {
@@ -668,6 +668,49 @@ describe('scripts', () => {
     r.stop()
   })
 
+  it('run through nested async functions to their next wait before the actors update', async () => {
+    const r = play()
+    let said = ''
+    const seen: string[] = []
+    // A conversation, as games write them: each level awaits the one below.
+    async function page(text: string) {
+      await wait()
+      said = text
+    }
+    async function line(text: string, depth: number): Promise<void> {
+      if (depth === 0) return page(text)
+      await line(text, depth - 1)
+    }
+    void (async () => {
+      await line('one', 20)
+      await line('two', 20)
+    })()
+    class Listener extends Actor {
+      update() {
+        seen.push(said)
+      }
+    }
+    spawn(Listener)
+    await r.step(3)
+    // Each word is there on the very update its wait ends.
+    expect(seen).toEqual(['one', 'two', 'two'])
+    r.stop()
+  })
+
+  it('never wait for the browser: an update that wakes a script asks for no task', async () => {
+    const r = play()
+    void (async () => {
+      for (;;) await wait()
+    })()
+    let tasks = 0
+    const count = setInterval(() => tasks++, 0)
+    await r.step(60)
+    clearInterval(count)
+    // 60 updates, each waking the script, all in promise steps: no task ran in between.
+    expect(tasks).toBe(0)
+    r.stop()
+  })
+
   it('move on every update, even when many run at once', async () => {
     const r = play()
     let count = 0
@@ -971,8 +1014,76 @@ describe('boxes', () => {
   it('belong to each actor: changing one changes no other', () => {
     const a = spawn(Hero)
     const b = spawn(Hero)
-    a.box!.height = 2
+    a.box = { ...a.box!, height: 2 }
     expect(b.box!.height).toBe(4)
+  })
+
+  it('are changed by setting a new one: a box is frozen, so walls always know where it is', () => {
+    const a = spawn(Hero)
+    expect(() => {
+      ;(a.box as Box).height = 2
+    }).toThrow(TypeError)
+    // A crouching hero is lower: the rock above no longer stops it.
+    spawn(Rock, { x: 100, y: 100 })
+    const h = spawn(Hero, { x: 80, y: 100 })
+    expect(h.move(20, 0)).toBe(false)
+    h.box = { x: -4, y: 0, width: 8, height: 2 }
+    expect(h.move(20, 0)).toBe(true)
+  })
+})
+
+describe('actorsIn', () => {
+  class Hero extends Actor {
+    box: Box | null = { x: -4, y: -4, width: 8, height: 4 }
+  }
+  class Cat extends Actor {
+    box: Box | null = { x: -4, y: -2, width: 8, height: 3 }
+  }
+  class Sign extends Actor {}
+
+  it('finds the actors whose box overlaps the area, and the ones without a box by their feet', () => {
+    const cat = spawn(Cat, { x: 100, y: 100 })
+    const sign = spawn(Sign, { x: 120, y: 100 })
+    spawn(Hero, { x: 300, y: 100 })
+    expect(actorsIn({ x: 90, y: 95, width: 40, height: 10 })).toEqual([cat, sign])
+    // Edges that only touch do not count: the cat's box ends at x 104.
+    expect(actorsIn({ x: 104, y: 95, width: 10, height: 10 })).toEqual([])
+    expect(actorsIn({ x: 103, y: 95, width: 10, height: 10 })).toEqual([cat])
+  })
+
+  it('keeps only a class when given one, and comes in creation order wherever they are', () => {
+    const far = spawn(Cat, { x: 1000, y: 1000 })
+    const near = spawn(Cat, { x: 10, y: 10 })
+    spawn(Hero, { x: 500, y: 500 })
+    // An area over many cells of the grid.
+    expect(actorsIn({ x: -2000, y: -2000, width: 4000, height: 4000 }, Cat)).toEqual([far, near])
+  })
+
+  it('follows actors however they move: move, place, or setting x and y', () => {
+    const cat = spawn(Cat, { x: 0, y: 0 })
+    const here = { x: 500, y: 500, width: 10, height: 10 }
+    cat.move(505, 505)
+    expect(actorsIn(here)).toEqual([cat])
+    cat.place(-300, 40)
+    expect(actorsIn(here)).toEqual([])
+    cat.x = 505
+    cat.y = 505
+    expect(actorsIn(here)).toEqual([cat])
+  })
+
+  it('leaves out removed actors, and actors that are not in the world', () => {
+    const cat = spawn(Cat, { x: 0, y: 0 })
+    probe(Cat)
+    cat.remove()
+    expect(actorsIn({ x: -10, y: -10, width: 20, height: 20 })).toEqual([])
+  })
+
+  it('stops movers against actors far from where the world starts, on any side of a cell', () => {
+    // A wall of rocks across cell edges (cells are 64 pixels).
+    for (let y = -64; y <= 64; y += 8) spawn(Cat, { x: 1028, y })
+    const h = spawn(Hero, { x: 1000, y: 63 })
+    expect(h.move(100, 0)).toBe(false)
+    expect(h.x).toBe(1020)
   })
 })
 
@@ -996,7 +1107,7 @@ describe('spawn', () => {
   })
 })
 
-describe('actor files', () => {
+describe('actor classes', () => {
   class Villager extends Actor {
     speed = 1
     lines = ['Hello!']
@@ -1005,71 +1116,54 @@ describe('actor files', () => {
     home = { x: 0, y: 0 }
     friends: Actor[] = []
   }
-  class Guard extends Villager {}
-  class Helper extends Guard {}
 
-  /** The game's actor files: their values, then their classes, as game.js registers them. */
-  function files(values: Record<string, Record<string, unknown>>) {
-    setActorFiles(values)
-    registerActors({ villager: Villager, guard: Guard })
-  }
-
-  it('declare variables in the code: fields of a simple kind, the box first', () => {
-    files({})
+  it('declare variables in the code: fields of a simple kind, never the box', () => {
+    registerActors({ villager: Villager })
     expect(actorVariables(Villager)).toEqual([
-      { name: 'box', kind: 'box', value: null },
       { name: 'speed', kind: 'number', value: 1 },
       { name: 'lines', kind: 'lines', value: ['Hello!'] },
       { name: 'shy', kind: 'switch', value: false },
     ])
   })
 
-  it("set values over the code's, a parent's file first, the nearest last", () => {
-    const box = { x: -4, y: -4, width: 8, height: 4 }
-    files({ villager: { box, speed: 0.5, lines: ['Hi.'] }, guard: { lines: ['Halt!'] } })
-    const v = spawn(Villager)
-    expect([v.box, v.speed, v.lines]).toEqual([box, 0.5, ['Hi.']])
-    const g = spawn(Guard, { speed: 2 })
-    expect([g.box, g.speed, g.lines]).toEqual([box, 2, ['Halt!']])
-    // A class with no file of its own (made in code/) takes its parents' files.
-    expect(spawn(Helper).lines).toEqual(['Halt!'])
-    expect(actorParents(Helper)).toEqual(['guard', 'villager'])
-    expect(actorValues(Guard)).toEqual({ box, speed: 0.5, lines: ['Halt!'] })
-    // A list set in a file is each actor's own.
-    v.lines.push('More.')
-    expect(spawn(Villager).lines).toEqual(['Hi.'])
-  })
-
-  it('name the file and the variable when a value does not fit the code', () => {
-    files({ villager: { sped: 2 } })
-    expect(() => spawn(Villager)).toThrow('actors/villager.json sets "sped", but the villager has no variable named so (its variables: box, speed, lines, shy). Declare it in actors/villager.ts')
-    files({ villager: { speed: 'fast' } })
-    expect(() => spawn(Guard)).toThrow('actors/villager.json: "speed" of the villager must be a number, not "fast".')
-    files({ villager: { lines: [] } })
-    expect(spawn(Villager).lines).toEqual([])
-    files({ villager: { box: { x: 0, y: 0, width: 0, height: 4 } } })
-    expect(() => spawn(Villager)).toThrow('"box" of the villager must be a box')
-  })
-
-  it('are checked when the game starts, even for an actor nothing places', () => {
-    files({ guard: { shy: 'yes' } })
-    expect(() => placeActors()).toThrow('actors/guard.json: "shy" of the guard must be true or false')
-    files({ ghost: {} })
-    expect(() => placeActors()).toThrow('actors/ghost.json has no actors/ghost.ts')
-  })
-
   it('register only classes of actors', () => {
-    setActorFiles({})
     expect(() => registerActors({ helper: () => 1 })).toThrow('actors/helper.ts must end with `export default class … extends Actor`')
     registerActors({ villager: Villager })
     expect([...actorClasses().keys()]).toEqual(['villager'])
+    resetActorClasses()
+    expect([...actorClasses().keys()]).toEqual([])
   })
 
   it('let the editor create an actor outside the world, to draw it', () => {
-    files({})
-    const v = probe(Villager, { speed: 4 })
-    expect(v.speed).toBe(4)
+    const v = probe(Villager)
+    expect(v.speed).toBe(1)
     expect(worldActors()).toEqual([])
+  })
+})
+
+describe('sprite boxes', () => {
+  it("are relative to the sprite's origin, frozen, and null when none is drawn", () => {
+    setSprites([
+      { ...data, origin: { x: 4, y: 7 }, box: { x: 1, y: 5, width: 6, height: 3 } },
+      { ...data, name: 'rock' },
+    ])
+    const b = sprite('hero').box!
+    expect(b).toEqual({ x: -3, y: -2, width: 6, height: 3 })
+    expect(Object.isFrozen(b)).toBe(true)
+    expect(sprite('rock').box).toBeNull()
+  })
+
+  it('are an actor\'s only when its code takes one, never by its name', () => {
+    setSprites([{ ...data, box: { x: 0, y: 0, width: 8, height: 8 } }])
+    class Hero extends Actor {}
+    class Boxed extends Actor {
+      box = sprite('hero').box
+    }
+    class Child extends Boxed {}
+    registerActors({ hero: Hero, boxed: Boxed })
+    expect(spawn(Hero).box).toBeNull()
+    expect(spawn(Boxed).box).toEqual({ x: 0, y: 0, width: 8, height: 8 })
+    expect(spawn(Child).box).toEqual({ x: 0, y: 0, width: 8, height: 8 })
   })
 })
 

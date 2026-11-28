@@ -430,6 +430,82 @@ describe('sprite origin', () => {
   })
 })
 
+describe("a sprite's box", () => {
+  const at = (x: number, y: number) => ({ x, y, shift: false, alt: false })
+  /** An 8 × 8 sprite at (10, 10), active, with the Box tool. */
+  function hero() {
+    const ed = new Editor(['#ff0000'])
+    ed.addSprite(newSprite('hero', 8, 8), 10, 10)
+    ed.activate('hero')
+    ed.setTool('box')
+    return ed
+  }
+  const click = (ed: Editor, x: number, y: number) => (ed.down(at(x, y)), ed.up(at(x, y)))
+  function drag(ed: Editor, from: [number, number], to: [number, number]) {
+    ed.down(at(...from))
+    ed.move(at(...to))
+    ed.up(at(...to))
+  }
+
+  it('is drawn from corner to corner, both pixels in, kept inside the frame', () => {
+    const ed = hero()
+    const edited: string[] = []
+    ed.onEdit = (n) => edited.push(n)
+    drag(ed, [16, 17], [12, 30])
+    expect(ed.spriteBox).toEqual({ x: 2, y: 7, width: 5, height: 1 })
+    // A new drag replaces it.
+    drag(ed, [11, 11], [12, 12])
+    expect(ed.spriteBox).toEqual({ x: 1, y: 1, width: 2, height: 2 })
+    expect(edited).toEqual(['hero', 'hero'])
+  })
+
+  it('covers the whole frame with a click, and is taken away with another', () => {
+    const ed = hero()
+    click(ed, 12, 12)
+    expect(ed.spriteBox).toEqual({ x: 0, y: 0, width: 8, height: 8 })
+    click(ed, 12, 12)
+    expect(ed.spriteBox).toBeNull()
+    expect(ed.sprite!.meta.box).toBeUndefined()
+  })
+
+  it('undoes and redoes as one step each', () => {
+    const ed = hero()
+    click(ed, 12, 12)
+    drag(ed, [10, 16], [17, 17])
+    ed.undo()
+    expect(ed.spriteBox).toEqual({ x: 0, y: 0, width: 8, height: 8 })
+    ed.undo()
+    expect(ed.spriteBox).toBeNull()
+    ed.redo()
+    ed.redo()
+    expect(ed.spriteBox).toEqual({ x: 0, y: 6, width: 8, height: 2 })
+  })
+
+  it('stays on its pixels when the sprite is resized, cut to the new frame', () => {
+    const ed = hero()
+    drag(ed, [12, 14], [15, 17])
+    ed.resize(12, 12, 2, 2)
+    expect(ed.spriteBox).toEqual({ x: 4, y: 6, width: 4, height: 4 })
+    // Cut down to 6 × 6, the box is outside the frame: it goes.
+    ed.resize(6, 6, 0, 0)
+    expect(ed.spriteBox).toBeNull()
+    ed.undo()
+    ed.undo()
+    expect(ed.spriteBox).toEqual({ x: 2, y: 4, width: 4, height: 4 })
+  })
+
+  it('round-trips through the JSON, in the frame\'s pixels, and is optional', () => {
+    const meta = newSprite('a', 8, 8).meta
+    expect(parseMeta(serializeMeta(meta)).box).toBeUndefined()
+    meta.origin = { x: 4, y: 7 }
+    meta.box = { x: 1, y: 5, width: 6, height: 3 }
+    const text = serializeMeta(meta)
+    expect(text).toContain('  "origin": { "x": 4, "y": 7 },\n  "box": { "x": 1, "y": 5, "width": 6, "height": 3 }\n}')
+    expect(parseMeta(text).box).toEqual(meta.box)
+    expect(parseMeta('{ "box": { "x": 0, "y": 0, "width": 0, "height": 2 } }').box).toBeUndefined()
+  })
+})
+
 describe('solid boxes of a tileset', () => {
   const at = (x: number, y: number) => ({ x, y, shift: false, alt: false })
   /** A tileset of 8 × 2 tiles of 4 pixels, active, with the Box tool. */
@@ -448,18 +524,18 @@ describe('solid boxes of a tileset', () => {
     ed.up(at(...to))
   }
 
-  it('belong to tilesets, as the origin belongs to sprites: elsewhere, a click says so', () => {
+  it('belong to tilesets and sprites, not to fonts: there, a click says so', () => {
     const ed = tileset()
-    ed.addSprite(newSprite('hero', 4, 4), 100, 0)
+    ed.addSprite(newSprite('fonts/small', 4, 4), 100, 0)
     expect(ed.toolApplies('box')).toBe(true)
     expect(ed.toolApplies('origin')).toBe(false)
     const said: string[] = []
     ed.onMessage = (t) => said.push(t)
-    // On a sprite, the Walls tool stays chosen (never switched silently) and explains.
-    ed.activate('hero')
-    expect([ed.tool, ed.toolApplies('box'), ed.toolApplies('origin')]).toEqual(['box', false, true])
+    // On a font, the Box tool stays chosen (never switched silently) and explains.
+    ed.activate('fonts/small')
+    expect([ed.tool, ed.toolApplies('box')]).toEqual(['box', false])
     click(ed, 101, 1)
-    expect(said).toEqual(['Walls are for tilesets: pick one to set its solid tiles'])
+    expect(said).toEqual(["The box is a sprite's or a tileset's: pick one"])
     expect(ed.sprite!.meta.solid).toBeUndefined()
   })
 
@@ -512,13 +588,14 @@ describe('solid boxes of a tileset', () => {
     expect(ed.solid.map((b) => b.row)).toEqual([0, 1])
   })
 
-  it('do nothing on a sprite, for now', () => {
+  it('are not drawn on a sprite: a sprite has one box of its own', () => {
     const ed = new Editor(['#ff0000'])
     ed.addSprite(newSprite('hero', 8, 8), 0, 0)
     ed.activate('hero')
     ed.setTool('box')
     click(ed, 1, 1)
     expect(ed.sprite!.meta.solid).toBeUndefined()
+    expect(ed.spriteBox).toEqual({ x: 0, y: 0, width: 8, height: 8 })
   })
 
   it('are saved one line per tile, and read back cut to their tile', () => {

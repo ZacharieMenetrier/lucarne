@@ -8,21 +8,17 @@
 //     lines = ['Hello!']          // a list of lines of text
 //   }
 //
-// Its value, once set in the editor, is data: actors/villager.json for every villager, a map
-// for one placed villager. The box is a variable too, the engine's own: every actor has one
-// (null: none), and it is set by drawing it. A value is looked up in this order, the last
-// one set winning: the code's default, then each parent's actor file, then the actor's own
-// file, then the placed actor (see `spawn` in world.ts).
+// A value set in the editor is data, on the map, for one placed villager: the code's default
+// holds for every other. A value is the code's default, then the map's, then spawn's: the
+// last set wins (see `spawn` in world.ts).
 //
-// Position (x, y) is where an actor is placed, not a variable of its kind: it is never set
-// in an actor file.
-
-import type { Box } from './collision'
+// Position (x, y) is where an actor is placed, and its box is the code's (see `Actor`):
+// neither is a variable.
 
 /** What a variable holds, which says how the editor edits it. */
-export type VariableKind = 'number' | 'text' | 'switch' | 'lines' | 'box'
+export type VariableKind = 'number' | 'text' | 'switch' | 'lines'
 
-export type Value = number | string | boolean | string[] | Box | null
+export type Value = number | string | boolean | string[]
 
 export interface Variable {
   name: string
@@ -32,14 +28,14 @@ export interface Variable {
 }
 
 /** Fields of every actor that are not variables of its kind. */
-const NOT_VARIABLES = new Set(['x', 'y'])
+const NOT_VARIABLES = new Set(['x', 'y', 'box'])
 
 /**
  * The kind of a default value, or null: a field of another kind is not a variable. A list
  * is a list of lines when its default holds lines: an empty one says nothing of what it
  * will hold (`targets: Actor[] = []` is no list of lines), so it is not a variable.
  */
-export function kindOf(value: unknown): Exclude<VariableKind, 'box'> | null {
+export function kindOf(value: unknown): VariableKind | null {
   if (typeof value === 'number') return Number.isFinite(value) ? 'number' : null
   if (typeof value === 'string') return 'text'
   if (typeof value === 'boolean') return 'switch'
@@ -49,40 +45,29 @@ export function kindOf(value: unknown): Exclude<VariableKind, 'box'> | null {
 
 /**
  * The variables of an actor, from an instance that has only its code's defaults: its own
- * fields of a simple kind, in the order the code declares them, the box first. A field
- * of another kind (an object, a function, a list of numbers) is the code's own business.
+ * fields of a simple kind, in the order the code declares them. A field of another kind
+ * (an object, a function, a list of numbers) is the code's own business.
  */
 export function variablesOf(actor: object): Variable[] {
   const out: Variable[] = []
   for (const [name, value] of Object.entries(actor)) {
     if (NOT_VARIABLES.has(name)) continue
-    const kind = name === 'box' ? 'box' : kindOf(value)
+    const kind = kindOf(value)
     if (kind) out.push({ name, kind, value: copyValue(value as Value) })
   }
   return out
 }
 
-/** Is it a value of that kind? A box has whole pixels, and is at least one pixel each way. */
+/** Is it a value of that kind? */
 export function isValue(kind: VariableKind, v: unknown): v is Value {
-  if (kind === 'box') {
-    if (v === null) return true
-    if (!v || typeof v !== 'object') return false
-    const b = v as Record<string, unknown>
-    return [b.x, b.y, b.width, b.height].every(Number.isInteger) && (b.width as number) >= 1 && (b.height as number) >= 1
-  }
   // A value set may be an empty list: a sign that says nothing.
   if (kind === 'lines') return Array.isArray(v) && v.every((x) => typeof x === 'string')
   return kindOf(v) === kind
 }
 
-/** A copy that shares nothing: two actors never share a list or a box. */
+/** A copy that shares nothing: two actors never share a list. */
 export function copyValue<T extends Value>(v: T): T {
-  if (Array.isArray(v)) return [...v] as T
-  if (v && typeof v === 'object') {
-    const b = v as Box
-    return { x: b.x, y: b.y, width: b.width, height: b.height } as T
-  }
-  return v
+  return (Array.isArray(v) ? [...v] : v) as T
 }
 
 const KIND_NAMES: Record<VariableKind, string> = {
@@ -90,13 +75,12 @@ const KIND_NAMES: Record<VariableKind, string> = {
   text: 'text',
   switch: 'true or false',
   lines: 'a list of lines of text',
-  box: 'a box ({ "x", "y", "width", "height" } in whole pixels) or null',
 }
 
 /**
  * Checks values read from a file against an actor's variables, and returns copies of them.
  * Throws on a name that is not a variable, or a value of the wrong kind, saying where:
- * `file` ("actors/villager.json") and `actor` ("villager").
+ * `file` ("maps/village.json") and `actor` ("villager").
  */
 export function checkValues(values: Record<string, unknown>, variables: readonly Variable[], file: string, actor: string): Record<string, Value> {
   const out: Record<string, Value> = {}

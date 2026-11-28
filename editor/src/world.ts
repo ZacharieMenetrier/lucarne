@@ -13,7 +13,7 @@
 // the maps; a map cannot be dragged by accident while selecting actors. One selection holds
 // either actors or a map, whatever the tool: the page's list selects both.
 //
-// Actors (instances of the game's actor files, actors/<name>.ts) are kept by the map they
+// Actors (instances of the game's actors, actors/<name>.ts) are kept by the map they
 // start in, in pixels from its top left, so they move with it, with the values set for
 // each one alone. They snap to half tiles by their
 // sprite's frame, or go anywhere by the pixel (see `snapActor`), are selected one by one or with a box, and can be
@@ -325,7 +325,7 @@ export class World {
 
   /**
    * Sets a value on every selected actor, for each of them alone, or clears it (undefined):
-   * they take their actor file's again. One undo brings them all back.
+   * they take their code's default again. One undo brings them all back.
    */
   setValue(name: string, value: unknown) {
     if (this.drag || !this.selection.size) return

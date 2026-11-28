@@ -5,12 +5,25 @@
 //
 //   sprites/hero.png
 //   sprites/hero.json  { "version": 1, "frameWidth": 16, "frameHeight": 16,
-//                        "frames": [{ "duration": 100 }] }
+//                        "frames": [{ "duration": 100 }],
+//                        "origin": { "x": 8, "y": 15 },
+//                        "box": { "x": 3, "y": 10, "width": 10, "height": 6 } }
+//
+// The box is in the frame's pixels, like the origin: it stays on the art when the origin
+// moves. The runtime makes it relative to the origin (runtime/sprites.ts).
 
 import { Bitmap, blit, extract } from './bitmap'
 import type { TileBox } from '../../runtime/maps'
 
 export type { TileBox }
+
+/** A sprite's box, in its frame's pixels. */
+export interface SpriteBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 export interface SpriteMeta {
   version: 1
@@ -20,6 +33,8 @@ export interface SpriteMeta {
   frames: { duration: number }[]
   /** Origin pixel of the sprite (where it is anchored in the game), if set. */
   origin?: { x: number; y: number }
+  /** The sprite's box, in the frame's pixels, if drawn: the body of the actor named like it. */
+  box?: SpriteBox
   /** A tileset's solid tiles (tiles/<name>.json), sorted by row then column. */
   solid?: TileBox[]
 }
@@ -118,12 +133,17 @@ export function parseMeta(text: string): SpriteMeta {
     : [{ duration: 100 }]
   const o = raw.origin
   const origin = o && Number.isInteger(o.x) && Number.isInteger(o.y) ? { x: o.x, y: o.y } : undefined
+  const b = raw.box
+  const box = b && [b.x, b.y, b.width, b.height].every(Number.isInteger) && b.width > 0 && b.height > 0
+    ? { x: b.x, y: b.y, width: b.width, height: b.height }
+    : undefined
   return {
     version: 1,
     frameWidth: positiveInt(raw.frameWidth, 16),
     frameHeight: positiveInt(raw.frameHeight, 16),
     frames,
     ...(origin && { origin }),
+    ...(box && { box }),
   }
 }
 
@@ -133,16 +153,15 @@ export function serializeMeta(meta: SpriteMeta): string {
     `{ ${Object.entries(o).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(', ')} }`
   const list = (items: object[]) =>
     items.length === 1 ? `[${obj(items[0])}]` : `[\n${items.map((i) => `    ${obj(i)}`).join(',\n')}\n  ]`
-  return [
-    '{',
-    `  "version": ${meta.version},`,
-    `  "frameWidth": ${meta.frameWidth},`,
-    `  "frameHeight": ${meta.frameHeight},`,
-    `  "frames": ${list(meta.frames)}${meta.origin ? ',' : ''}`,
+  const lines = [
+    `  "version": ${meta.version}`,
+    `  "frameWidth": ${meta.frameWidth}`,
+    `  "frameHeight": ${meta.frameHeight}`,
+    `  "frames": ${list(meta.frames)}`,
     ...(meta.origin ? [`  "origin": ${obj(meta.origin)}`] : []),
-    '}',
-    '',
-  ].join('\n')
+    ...(meta.box ? [`  "box": ${obj(meta.box)}`] : []),
+  ]
+  return `{\n${lines.join(',\n')}\n}\n`
 }
 
 export function splitSheet(sheet: Bitmap, meta: SpriteMeta): Bitmap[] {

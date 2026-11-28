@@ -8,7 +8,7 @@
 // The entry is made here, not written by the game: it registers every actors/<name>.ts by
 // its file name, then runs code/main.ts (optional: a game can be only actors on maps) and
 // exports its game. Registering comes first so that the actors main.ts spawns at its top
-// level already know their actor files (see "Actor files" in runtime/world.ts).
+// level already know their names (see "Actor classes" in runtime/world.ts).
 //
 // game.js contains only the game's code. `import … from 'lucarne'` reads the engine the
 // editor provides when it starts the game (globalThis.__lucarne), so a game always runs

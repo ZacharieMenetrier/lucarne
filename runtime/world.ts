@@ -8,7 +8,8 @@
 //   }
 //
 // Actors are created with `spawn(Hero, { x: 100, y: 80 })`, or placed on a map. Either way
-// the engine creates it, sets its values (see "Actor files" below), then calls `create()`.
+// the engine creates it with its code's defaults, sets the values the map (or `spawn`)
+// gives it, then calls `create()`.
 //
 // Actors update 60 times per second, in the order they were created. Displays refresh at
 // other rates (120 Hz, 144 Hz…), so each displayed frame draws every actor between where it
@@ -18,22 +19,31 @@
 
 import { collide, type Box } from './collision'
 import { game } from './game'
+import { Grid, type Listed } from './grid'
 import { drawMaps, mapAt, placements, solidsIn, type Rect } from './maps'
 import { attachScreen, beginDraw, endDraw, setOrigin, screen, screenScale } from './screen'
 import { resetScripts, setRunning } from './scripts'
-import { checkValues, copyValue, variablesOf, type Value, type Variable } from './values'
+import { checkValues, variablesOf, type Variable } from './values'
 
 /** Where the engine keeps its own state on each actor (a symbol: games never see it). */
 const track = Symbol('lucarne')
 
-interface Track {
+interface Track extends Listed {
+  /** The actor this is the state of (the grid lists tracks). */
+  readonly actor: Actor
+  /** Its position and box, behind `x`, `y` and `box`: setting one keeps the grid up to date. */
+  x: number
+  y: number
+  box: Readonly<Box> | null
+  /** In the world (spawned, not removed): listed in the grid. Probes never are. */
+  inWorld: boolean
   /** Where the actor was before its last update. */
   fromX: number
   fromY: number
   /** Drawn where it is, without in-between, until its next update (new, or placed). */
   jumped: boolean
   removed: boolean
-  /** Creation order: updates follow it, and it breaks ties in the depth order. */
+  /** Creation order: updates follow it, it breaks ties in the depth order, and queries keep it. */
   order: number
   /** Where it is shown on the frame being drawn: its depth. */
   shownY: number
@@ -41,6 +51,19 @@ interface Track {
 
 let actors: Actor[] = []
 let created = 0
+/** Where every actor of the world is: what moves and `actorsIn` look in. */
+const grid = new Grid<Track>()
+
+/**
+ * Lists an actor in the grid where it is now: over its box, or at its feet without one.
+ * Called whenever its position or its box changes; cheap when it stays in the same cells.
+ */
+function relist(k: Track) {
+  if (!k.inWorld) return
+  const b = k.box
+  if (b) grid.set(k, k.x + b.x, k.y + b.y, k.x + b.x + b.width, k.y + b.y + b.height)
+  else grid.set(k, k.x, k.y, k.x, k.y)
+}
 let anyRemoved = false
 
 /**
@@ -63,31 +86,52 @@ let constructing: 'world' | 'probe' | null = null
  * not an actor's: the game draws it, in its `ui()` (see game.ts).
  */
 export class Actor {
-  /** Position in the world, in game pixels (fractions are fine). */
-  x = 0
-  y = 0
-  /**
-   * Its box: `{ x, y, width, height }` in game pixels, (x, y) its top left relative to the
-   * actor's position. Walls stop it, and so do the boxes of other actors. Null: it goes
-   * through everything, and nothing bumps into it. Drawn on the Actors page; the code may
-   * change it as the game runs (a hero crouching), for this actor alone.
-   */
-  box: Box | null = null;
   /** @internal */
   [track]: Track
 
+  // x, y and box are accessors (defined after the class): setting one keeps the grid up
+  // to date. Declared as properties, so that a class may give them defaults as fields.
+
+  /** Position in the world, in game pixels (fractions are fine). */
+  declare x: number
+  declare y: number
+  /**
+   * Its box: `{ x, y, width, height }` in game pixels, (x, y) its top left relative to the
+   * actor's position. Walls stop it, and so do the boxes of other actors. Null (the
+   * default): it goes through everything, and nothing bumps into it. The code gives it one,
+   * usually a sprite's, drawn on the sprite with the Box tool: `box = sprite('hero').box`.
+   * It may change as the game runs (a hero crouching), for this actor alone, by setting a
+   * new one: the box is frozen, so that the engine always knows where it is.
+   */
+  declare box: Readonly<Box> | null
+
   /**
    * Not called by the game: `spawn` creates actors. A constructor runs before the values
-   * set in the editor, which would make them lie to it; `create()` runs after them.
+   * set on the map, which would make them lie to it; `create()` runs after them.
    */
   constructor() {
     if (!constructing) {
       throw new Error(`Actors are created with spawn(${new.target.name}, { x, y }), not with new.`)
     }
-    this[track] = { fromX: 0, fromY: 0, jumped: true, removed: false, order: 0, shownY: 0 }
-    if (constructing === 'world') {
-      this[track].order = created++
+    const k: Track = {
+      actor: this,
+      x: 0,
+      y: 0,
+      box: null,
+      inWorld: constructing === 'world',
+      cells: null,
+      fromX: 0,
+      fromY: 0,
+      jumped: true,
+      removed: false,
+      order: 0,
+      shownY: 0,
+    }
+    this[track] = k
+    if (k.inWorld) {
+      k.order = created++
       actors.push(this)
+      relist(k)
     }
   }
 
@@ -133,8 +177,11 @@ export class Actor {
 
   /** Takes the actor out of the world, at the end of the current update. */
   remove() {
-    if (this[track].removed) return
-    this[track].removed = true
+    const k = this[track]
+    if (k.removed) return
+    k.removed = true
+    k.inWorld = false
+    grid.set(k, null)
     anyRemoved = true
   }
 
@@ -144,6 +191,39 @@ export class Actor {
   }
 }
 
+Object.defineProperties(Actor.prototype, {
+  x: {
+    get(this: Actor) {
+      return this[track].x
+    },
+    set(this: Actor, v: number) {
+      const k = this[track]
+      k.x = v
+      relist(k)
+    },
+  },
+  y: {
+    get(this: Actor) {
+      return this[track].y
+    },
+    set(this: Actor, v: number) {
+      const k = this[track]
+      k.y = v
+      relist(k)
+    },
+  },
+  box: {
+    get(this: Actor) {
+      return this[track].box
+    },
+    set(this: Actor, v: Box | null) {
+      const k = this[track]
+      k.box = v ? Object.freeze({ x: v.x, y: v.y, width: v.width, height: v.height }) : null
+      relist(k)
+    },
+  },
+})
+
 /** A class of actors: created by `spawn`, never with `new`. */
 export type ActorType<T extends Actor = Actor> = new () => T
 
@@ -151,14 +231,13 @@ export type ActorType<T extends Actor = Actor> = new () => T
 export type Values<T extends Actor> = Partial<Omit<T, keyof Actor>> & { x?: number; y?: number; box?: Box | null }
 
 /**
- * Creates an actor in the world: its code's defaults, then the values set in the editor
- * (its actor files, see below), then `values`, then its `create()`. Returns it.
+ * Creates an actor in the world: its code's defaults, then `values`, then its `create()`.
+ * Returns it.
  *
  *   spawn(Villager, { x: 40, y: 96, lines: ['Nice weather.'] })
  */
 export function spawn<T extends Actor>(Type: ActorType<T>, values?: Values<T>): T {
   const actor = construct(Type, 'world')
-  setValues(actor, actorValues(Type))
   if (values) Object.assign(actor, values)
   const k = actor[track]
   k.fromX = actor.x
@@ -171,46 +250,40 @@ export function spawn<T extends Actor>(Type: ActorType<T>, values?: Values<T>): 
 function construct<T extends Actor>(Type: ActorType<T>, how: 'world' | 'probe'): T {
   const before = constructing
   constructing = how
+  let actor: T
   try {
-    return new Type()
+    actor = new Type()
   } finally {
     constructing = before
   }
+  // A class that gives `x`, `y` or `box` a default as a field makes it its own property,
+  // hiding the engine's accessor: the value goes through the accessor instead.
+  for (const name of ['x', 'y', 'box'] as const) {
+    if (!Object.hasOwn(actor, name)) continue
+    const v = (actor as unknown as Record<string, unknown>)[name]
+    delete (actor as unknown as Record<string, unknown>)[name]
+    ;(actor as unknown as Record<string, unknown>)[name] = v
+  }
+  return actor
 }
 
-/** Sets checked values on an actor, each a copy of its own: no two share a list or a box. */
-function setValues(actor: Actor, values: Record<string, Value>) {
-  for (const [name, v] of Object.entries(values)) (actor as unknown as Record<string, Value>)[name] = copyValue(v)
-}
-
-// --- Actor files ------------------------------------------------------------
+// --- Actor classes ----------------------------------------------------------
 //
-// An actor is a pair of files named alike: actors/<name>.ts exports its class (the code
-// declares), actors/<name>.json holds the values set in the editor for every actor of that
-// kind (the editor sets), its box among them. The name is the file's: maps place an actor
-// by it. game.js registers the classes before the game's other code runs, so that actors
-// spawned at the top level of code/main.ts get their values too.
-//
-// A class gets the values of every actor file on its way up to Actor, the nearest last:
-// a guard that extends the villager is a villager with its own differences. A class
-// defined in code/ (a helper, a dialogue) has no file, and only its code's defaults.
+// An actor is actors/<name>.ts, exporting its class: its behavior, and each variable's
+// default. The name is the file's: maps place an actor by it, with its own values. game.js
+// registers the classes before the game's other code runs. Reuse goes through `extends`.
 
-/** Each actor file's values, by name, as read: checked when first used. */
-let files: Record<string, Record<string, unknown>> = {}
 /** The classes of actors/*.ts, by name, and the other way round. */
 let classes = new Map<string, ActorType>()
 let names = new WeakMap<Function, string>()
-/** Worked out on first use: a class's variables, and its values from its actor files. */
+/** Worked out on first use: a class's variables. */
 let variablesCache = new WeakMap<Function, Variable[]>()
-let valuesCache = new WeakMap<Function, Record<string, Value>>()
 
-/** Called by the editor before the game's code runs, with every actors/<name>.json. */
-export function setActorFiles(values: Record<string, Record<string, unknown>>) {
-  files = values
+/** Called by the editor before the game's code runs: no class of an earlier run stays. */
+export function resetActorClasses() {
   classes = new Map()
   names = new WeakMap()
   variablesCache = new WeakMap()
-  valuesCache = new WeakMap()
 }
 
 /**
@@ -232,29 +305,17 @@ export function actorClasses(): ReadonlyMap<string, ActorType> {
   return classes
 }
 
-/** The name of a class's actor file, or null for a class that has none. */
+/** The name of a class's file (actors/<name>.ts), or null for a class defined in code/. */
 export function actorName(Type: Function): string | null {
   return names.get(Type) ?? null
 }
 
-/** The names of the actor files a class inherits from, the nearest first (not its own). */
-export function actorParents(Type: Function): string[] {
-  const out: string[] = []
-  for (let c = Object.getPrototypeOf(Type); c && c !== Actor; c = Object.getPrototypeOf(c)) {
-    const n = names.get(c)
-    if (n) out.push(n)
-  }
-  return out
-}
-
 /**
  * Creates an actor outside the world, with its code's defaults only: to read its variables,
- * or for the editor to draw it with values of its own.
+ * or for the editor to draw it.
  */
-export function probe<T extends Actor>(Type: ActorType<T>, values: Record<string, Value> = {}): T {
-  const actor = construct(Type, 'probe')
-  setValues(actor, values)
-  return actor
+export function probe<T extends Actor>(Type: ActorType<T>): T {
+  return construct(Type, 'probe')
 }
 
 /** A class's variables, with its code's defaults (see values.ts). */
@@ -267,36 +328,13 @@ export function actorVariables(Type: ActorType): Variable[] {
   return v
 }
 
-/** The values a class gets from its actor files, checked, the nearest file last. Throws on
- * a value its class does not declare, or of the wrong kind. */
-export function actorValues(Type: Function): Record<string, Value> {
-  let out = valuesCache.get(Type)
-  if (out) return out
-  out = {}
-  const chain: Function[] = []
-  for (let c: Function | null = Type; c && c !== Actor; c = Object.getPrototypeOf(c)) if (names.has(c)) chain.unshift(c)
-  for (const c of chain) {
-    const name = names.get(c)!
-    const own = files[name]
-    if (own) Object.assign(out, checkValues(own, actorVariables(c as ActorType), `actors/${name}.json`, name))
-  }
-  valuesCache.set(Type, out)
-  return out
-}
-
 /**
- * Checks every actor file, then creates every actor placed on the maps, map by map, with
- * its values from the map. Called once the game's code has run, before `start()`: the
- * actors code/main.ts spawns at its top level come first. A file that sets what its class
- * does not declare, or a map that places an actor with no actors/<name>.ts, is an error to
- * fix, rather than a value or an actor silently missing.
+ * Creates every actor placed on the maps, map by map, with its values from the map. Called
+ * once the game's code has run, before `start()`: the actors code/main.ts spawns at its top
+ * level come first. A map that sets what a class does not declare, or places an actor with
+ * no actors/<name>.ts, is an error to fix, rather than a value or an actor silently missing.
  */
 export function placeActors() {
-  for (const name of Object.keys(files)) {
-    const Type = classes.get(name)
-    if (!Type) throw new Error(`actors/${name}.json has no actors/${name}.ts: write the actor's code, or delete the file.`)
-    actorValues(Type)
-  }
   for (const p of placements()) {
     const Type = classes.get(p.actor)
     if (!Type) {
@@ -314,17 +352,16 @@ let mover: Actor | null = null
 /**
  * The walls of a move: the solid tiles, everything outside the maps, and every other
  * actor's box. All bodies are solid to each other, with no option: an actor that should
- * be walked through (a coin, a trigger) has no box. Actors are few in a pixel art game, so
- * looking at all of them is fast enough.
+ * be walked through (a coin, a trigger) has no box. Only the actors near the move are
+ * looked at (see grid.ts).
  */
 function walls(left: number, top: number, right: number, bottom: number, out: Rect[]) {
   solidsIn(left, top, right, bottom, out)
-  for (const a of actors) {
-    if (a === mover || a[track].removed) continue
-    const b = a.box
-    if (!b) continue
-    const x = a.x + b.x
-    const y = a.y + b.y
+  for (const k of grid.near(left, top, right, bottom)) {
+    const b = k.box
+    if (!b || k.actor === mover) continue
+    const x = k.x + b.x
+    const y = k.y + b.y
     if (x > right || x + b.width < left || y > bottom || y + b.height < top) continue
     out.push({ x, y, width: b.width, height: b.height })
   }
@@ -409,6 +446,7 @@ export function drawActorOn(actor: Actor, canvas: HTMLCanvasElement | OffscreenC
 /** Empties the world: called before a game's code runs. */
 export function resetWorld() {
   actors = []
+  grid.clear()
   created = 0
   anyRemoved = false
   target = null
@@ -439,6 +477,43 @@ export function worldActors(): readonly Actor[] {
 export function find<T extends Actor>(Type: abstract new () => T): T | null {
   for (const t of actors) if (t instanceof Type && !t[track].removed) return t
   return null
+}
+
+/** A rectangle of the world, in game pixels: (x, y) its top left. */
+export interface Area {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * The actors in a part of the world, in creation order: the ones whose box overlaps it,
+ * and the ones without a box whose feet are in it. With a class, only actors of that class
+ * (or of a class that extends it). Edges that only touch do not count.
+ *
+ *   // what stands just in front of the hero, facing east
+ *   const ahead = actorsIn({ x: this.x + 6, y: this.y - 4, width: 8, height: 8 })
+ *
+ * The engine looks only near the area, however many actors the world holds.
+ */
+export function actorsIn(area: Area): Actor[]
+export function actorsIn<T extends Actor>(area: Area, Type: abstract new () => T): T[]
+export function actorsIn(area: Area, Type?: abstract new () => Actor): Actor[] {
+  const l = area.x
+  const t = area.y
+  const r = area.x + area.width
+  const b = area.y + area.height
+  const out: Actor[] = []
+  for (const k of grid.near(l, t, r, b)) {
+    if (Type && !(k.actor instanceof Type)) continue
+    const box = k.box
+    const inside = box
+      ? k.x + box.x < r && k.x + box.x + box.width > l && k.y + box.y < b && k.y + box.y + box.height > t
+      : k.x >= l && k.x < r && k.y >= t && k.y < b
+    if (inside) out.push(k.actor)
+  }
+  return out
 }
 
 /** One update of the world. Returns whether the world ran (`game.paused` did not stop it). */

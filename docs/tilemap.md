@@ -158,9 +158,8 @@ Each step is checked on a throwaway game (`npm run dev -- "$TMPDIR/lucarne-test-
 
 - **v2**: a small picture-in-picture of the map on the board, which redraws as a tileset is
   drawn, to see a tile change in place.
-- Collisions: done (solid tiles, boxes drawn on the Actors page, actors solid to each other).
-  Next: zones that are touched without blocking (coins, doors), trying an actor alone on
-  the Actors page.
+- Collisions: done (solid tiles, boxes drawn on sprites and given by the actor's code,
+  actors solid to each other). Next: zones that are touched without blocking (coins, doors).
 - Props on the map (trees, rocks, houses), sorted by `y` with the actors.
 - The code reading and changing tiles (hoed soil, an opened door).
 - How the code finds places in the world (where a door leads, where the hero starts):

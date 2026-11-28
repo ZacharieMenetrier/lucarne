@@ -1,8 +1,7 @@
 // The game folder as the editor sees it: the settings, the palette, the sprites, the
-// tilesets, the actor files' values, the maps, the fonts, the instruments, the songs and the
+// tilesets, the maps, the fonts, the instruments, the songs and the
 // sounds.
 
-import { ACTORS_DIR, parseActorFile, serializeActorFile, type Values } from './actors'
 import { Bitmap, resized } from './bitmap'
 import { parseBoard, serializeBoard, type BoardFile } from './board'
 import { isHex } from './color'
@@ -215,32 +214,6 @@ export class Project {
     }
     await this.storage.remove(`${SPRITES_DIR}/${name}.png`)
     await this.storage.remove(`${SPRITES_DIR}/${name}.json`)
-  }
-
-  /** The values of every actor file (actors/<name>.json), by actor name. */
-  async loadActorFiles(): Promise<Map<string, Values>> {
-    const names = (await this.storage.list(ACTORS_DIR))
-      .map((f) => /^(.+)\.json$/.exec(f)?.[1])
-      .filter((n): n is string => n !== undefined && NAME_RE.test(n))
-      .sort()
-    const out = new Map<string, Values>()
-    for (const name of names) {
-      const text = await readText(this.storage, `${ACTORS_DIR}/${name}.json`)
-      if (text === null) continue
-      try {
-        out.set(name, parseActorFile(text))
-      } catch (err) {
-        throw new Error(`${ACTORS_DIR}/${name}.json could not be read: ${(err as Error).message}`)
-      }
-    }
-    return out
-  }
-
-  /** Saves an actor's file; with no value set, there is no file. */
-  async saveActorFile(name: string, values: Values) {
-    const path = `${ACTORS_DIR}/${name}.json`
-    if (Object.keys(values).length) await writeText(this.storage, path, serializeActorFile(values))
-    else await this.storage.remove(path)
   }
 
   /** Map names: maps/<name>.json. */

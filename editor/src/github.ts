@@ -57,7 +57,6 @@ export function isEditorFile(path: string) {
     /^sprites\/[^/]+\.(png|json)$/.test(path) ||
     /^tiles\/[^/]+\.(png|json)$/.test(path) ||
     /^maps\/[^/]+\.json$/.test(path) ||
-    /^actors\/[^/]+\.json$/.test(path) ||
     /^fonts\/[^/]+\.(png|license\.txt)$/.test(path) ||
     /^instruments\/[^/]+\.(wav|json|license\.txt)$/.test(path) ||
     /^songs\/[^/]+\.json$/.test(path) ||
@@ -249,7 +248,6 @@ export async function syncWithGitHub(
     ...(await storage.list('fonts')).map((n) => `fonts/${n}`),
     ...(await storage.list('tiles')).map((n) => `tiles/${n}`),
     ...(await storage.list('maps')).map((n) => `maps/${n}`),
-    ...(await storage.list('actors')).map((n) => `actors/${n}`),
     ...(await storage.list('instruments')).map((n) => `instruments/${n}`),
     ...(await storage.list('songs')).map((n) => `songs/${n}`),
     ...(await storage.list('sounds')).map((n) => `sounds/${n}`),

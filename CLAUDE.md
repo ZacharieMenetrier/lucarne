@@ -33,16 +33,17 @@ the loop, time, input, drawing, the store, waiting.
 
 ## The code declares, the editor sets
 
-An actor is `actors/<name>.ts` (its class: behavior and each variable's default) and
-`actors/<name>.json` (the values set in the editor, the box among them); a map holds where
-each one starts and its own values. A value is the code's default, then the parents'
-files, the actor's file, the map, `spawn`'s values: the last set wins (`runtime/values.ts`).
+An actor is `actors/<name>.ts` alone: its class, its behavior and each variable's default.
+A map holds where each one starts and its own values. A value is the code's default, then
+the map, then `spawn`'s values: the last set wins (`runtime/values.ts`). What is drawn
+belongs to the art: a sprite's box is drawn on it (`sprites/<name>.json`), and an actor has
+a box only when its code takes one (`box = sprite('hero').box`), never by its name.
 
 - Anything the editor sets is data, never written into the code; anything the code declares
   gets its default there, never in a file. A new engine-level fact about actors becomes a
-  variable on `Actor` (like `box`), not a new file or setting.
-- A default in the code may not be what the game uses: check the actor's file and the maps,
-  or `lucarne.actors()`, before reasoning from it.
+  field on `Actor` (like `box`), not a new file or setting.
+- A default in the code may not be what the game uses: check the maps, or
+  `lucarne.actors()`, before reasoning from it.
 - Reuse goes through inheritance (`extends` another actor) and plain functions in `code/`.
   There are no components.
 

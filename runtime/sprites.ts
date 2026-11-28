@@ -5,6 +5,11 @@
 //
 // The editor loads every sprite before the game's code runs, so `sprite()` works
 // anywhere, even at the top of a file.
+//
+// A sprite may have a box, drawn on it in the editor with the Box tool: the body that walls
+// and other actors stop. An actor takes the box of the sprite named like it (see `Actor`).
+
+import type { Box } from './collision'
 
 /** A sprite as the editor hands it to the engine. */
 export interface SpriteData {
@@ -14,6 +19,8 @@ export interface SpriteData {
   /** One duration per sheet column, in milliseconds. */
   durations: number[]
   origin?: { x: number; y: number }
+  /** Its box, in the frame's pixels (its top left at 0, 0), if drawn. */
+  box?: Box
   /** The sheet: one frame after the other, left to right. */
   sheet: CanvasImageSource
 }
@@ -25,6 +32,11 @@ export class Sprite {
   readonly height: number
   /** The pixel placed on the position given to `screen.sprite` (top left if not set). */
   readonly origin: { readonly x: number; readonly y: number }
+  /**
+   * Its box, relative to its origin (where an actor drawing it at (0, 0) stands), as an
+   * actor's `box` is; null if none is drawn. Frozen, like an actor's.
+   */
+  readonly box: Readonly<Box> | null
   /** Duration of each frame, in milliseconds. */
   readonly durations: readonly number[]
   /** Duration of the whole animation, in milliseconds. */
@@ -37,6 +49,8 @@ export class Sprite {
     this.width = data.frameWidth
     this.height = data.frameHeight
     this.origin = data.origin ?? { x: 0, y: 0 }
+    const b = data.box
+    this.box = b ? Object.freeze({ x: b.x - this.origin.x, y: b.y - this.origin.y, width: b.width, height: b.height }) : null
     this.durations = data.durations
     this.duration = data.durations.reduce((a, b) => a + b, 0)
     this.sheet = data.sheet

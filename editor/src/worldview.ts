@@ -27,7 +27,7 @@ export class WorldView extends Viewport {
     /** The board color (the game's, else the editor's). */
     private readonly background: () => string,
     /** An actor's picture; null when it draws nothing, undefined when the game has no
-     * such actor file (or its code could not be run). */
+     * such actor (or its code could not be run). */
     private readonly picture: (actor: string) => ActorPicture | null | undefined,
   ) {
     super(canvas, world)
@@ -210,7 +210,7 @@ export class WorldView extends Viewport {
 
   /**
    * Draws an actor with its feet at (x, y), in world pixels: its picture, or a dashed frame
-   * when it draws nothing, or a red one when the game has no such actor file.
+   * when it draws nothing, or a red one when the game has no such actor.
    */
   private drawActor(actor: string, x: number, y: number, ink: typeof ON_DARK) {
     const { ctx, world } = this

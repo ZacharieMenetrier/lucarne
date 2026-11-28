@@ -9,7 +9,7 @@
 // that map or actor whatever the tool: the tool only says what a click on the maps does.
 
 import type { App } from './app'
-import { fileLayers, resolve, sameValue, staleNames, type ActorFiles } from './actors'
+import { sameValue, staleNames } from './actors'
 import { Inspector, type Row } from './inspector'
 import { confirmDialog, h, openDialog, toast } from './dialog'
 import { icon } from './icons'
@@ -79,8 +79,6 @@ export class WorldPage {
   constructor(
     private readonly project: Project,
     private readonly app: App,
-    /** The actor files' values, as the Actors page edits them: what placed actors inherit. */
-    private readonly files: ActorFiles,
   ) {
     const canvas = h('canvas', { className: 'world-canvas' })
     this.status = h('span', { className: 'save-status', 'data-status': 'saved' }, 'Saved')
@@ -610,7 +608,7 @@ export class WorldPage {
     const kind = this.byName.get(name)
     const count = placed.length > 1 ? `${placed.length} ${names.size > 1 ? 'actors' : `${name}s`}` : name
     this.selectedTitle.textContent = count
-    this.selectedTitle.title = `A value set here is for ${placed.length > 1 ? 'these alone' : 'this one alone'}; the others come from actors/${name}.json or the code.`
+    this.selectedTitle.title = `A value set here is for ${placed.length > 1 ? 'these alone' : 'this one alone'}; the others are the code's, in actors/${name}.ts.`
     const info = (text: string) => {
       this.selectedInfo.textContent = text
       this.inspector.show([])
@@ -618,19 +616,17 @@ export class WorldPage {
     if (names.size > 1) return info('Of several kinds: select one kind to set values.')
     if (!kind) return info(`The game has no actors/${name}.ts.`)
     if (kind.error) return info(kind.error)
-    const variables = kind.variables.filter((v) => v.kind !== 'box')
+    const variables = kind.variables
     const stale = [...new Set(placed.flatMap((t) => staleNames(t.values, kind.variables)))].sort()
     if (!variables.length && !stale.length) return info('No variables')
     this.selectedInfo.textContent = ''
-    const files = fileLayers(kind, this.files)
     this.inspector.show(variables.map((variable): Row => {
-      const each = placed.map((t) => resolve(variable.name, variable.value, [...files, { from: 'here', values: t.values }]))
+      const each = placed.map((t) => (variable.name in t.values ? t.values[variable.name] : variable.value))
       return {
         variable,
-        value: each[0].value,
-        from: each[0].from,
-        own: each.some((r) => r.from === 'here'),
-        mixed: each.some((r) => !sameValue(r.value, each[0].value)),
+        value: each[0],
+        own: placed.some((t) => variable.name in t.values),
+        mixed: each.some((v) => !sameValue(v, each[0])),
       }
     }), stale)
   }

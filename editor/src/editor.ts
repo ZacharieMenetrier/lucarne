@@ -26,7 +26,7 @@ import {
 import { boundsOf, findFreeSpot, overlaps, resizeRect, resolveOverlaps, type BoardFile, type Corner, type Placements } from './board'
 import { TRANSPARENT, colorToHex, hexToColor, type Color } from './color'
 import { History } from './history'
-import { MAX_SIZE, isFont, isStill, isTileset, sortTileBoxes, type Sprite, type TileBox } from './sprite'
+import { MAX_SIZE, isFont, isStill, isTileset, sortTileBoxes, type Sprite, type SpriteBox, type TileBox } from './sprite'
 import { FONT_COLUMNS, FONT_ROWS } from '../../runtime/fonts'
 import { relayoutFont } from './font'
 
@@ -73,6 +73,7 @@ type Change =
   | { kind: 'frames'; name: string; before: FrameState; after: FrameState }
   | { kind: 'origin'; name: string; before: Point | null; after: Point | null }
   | { kind: 'solid'; name: string; before: TileBox[]; after: TileBox[] }
+  | { kind: 'spriteBox'; name: string; before: SpriteBox | null; after: SpriteBox | null }
   | { kind: 'group'; items: Change[] }
 
 // Drag points are local to the active sprite, except 'place' (board).
@@ -84,6 +85,7 @@ type Drag =
   | { kind: 'pick' }
   | { kind: 'origin'; before: Point | null }
   | { kind: 'box'; before: TileBox[]; column: number; row: number; start: Point; moved: boolean }
+  | { kind: 'spriteBox'; before: SpriteBox | null; start: Point; moved: boolean }
   | { kind: 'place'; name: string; start: Point; origin: Point }
   | { kind: 'resize'; name: string; corner: Corner; start: Point; origin: Rect; frames: Bitmap[]; rect: Rect }
 
@@ -328,13 +330,13 @@ export class Editor {
    */
   toolApplies(tool: ToolId, name = this.active): boolean {
     if (tool === 'origin') return name !== null && !isStill(name)
-    if (tool === 'box') return name !== null && isTileset(name)
+    if (tool === 'box') return name !== null && !isFont(name)
     return true
   }
 
   /** Why a tool cannot work on the image being edited (see `toolApplies`). */
   whyNot(tool: ToolId): string {
-    return tool === 'origin' ? 'The origin is for sprites: a tileset or a font has none' : 'Walls are for tilesets: pick one to set its solid tiles'
+    return tool === 'origin' ? 'The origin is for sprites: a tileset or a font has none' : "The box is a sprite's or a tileset's: pick one"
   }
 
   setTool(tool: ToolId) {
@@ -410,9 +412,14 @@ export class Editor {
         break
       }
       case 'box': {
-        // Tilesets only, for now: on a sprite, a box will be its frame's hitbox.
         if (!this.toolApplies('box')) {
           this.onMessage(this.whyNot('box'))
+          break
+        }
+        // On a sprite, one box: the body of the actor named like it.
+        if (!isTileset(this.active!)) {
+          const before = this.spriteBox
+          this.drag = { kind: 'spriteBox', before: before && { ...before }, start: q, moved: false }
           break
         }
         const ts = this.tileSize
@@ -555,6 +562,10 @@ export class Editor {
         if (q.x !== d.start.x || q.y !== d.start.y) d.moved = true
         if (d.moved) this.dragBox(d, q)
         break
+      case 'spriteBox':
+        if (q.x !== d.start.x || q.y !== d.start.y) d.moved = true
+        if (d.moved) this.dragSpriteBox(d, q)
+        break
       case 'shape':
         this.updateShape(q)
         break
@@ -631,6 +642,20 @@ export class Editor {
         const after = this.solid
         if (JSON.stringify(after) !== JSON.stringify(d.before)) {
           this.history.push({ kind: 'solid', name: this.active!, before: d.before, after: after.map((b) => ({ ...b })) })
+          this.onEdit(this.active!)
+        }
+        break
+      }
+      case 'spriteBox': {
+        if (d.moved) this.dragSpriteBox(d, q)
+        else {
+          // A click, as on a tile: a sprite without a box gets one over its whole frame;
+          // one with a box loses it. The drag draws it from corner to corner.
+          this.setSpriteBoxRaw(d.before ? null : { x: 0, y: 0, width: bmp.width, height: bmp.height })
+        }
+        const after = this.spriteBox
+        if (JSON.stringify(after) !== JSON.stringify(d.before)) {
+          this.history.push({ kind: 'spriteBox', name: this.active!, before: d.before, after: after && { ...after } })
           this.onEdit(this.active!)
         }
         break
@@ -724,6 +749,28 @@ export class Editor {
     const inTile = (p: Point) => ({ x: Math.max(x0, Math.min(x0 + ts - 1, p.x)), y: Math.max(y0, Math.min(y0 + ts - 1, p.y)) })
     const r = rectFromCorners(inTile(d.start), inTile(q))
     this.setTileBox(d.column, d.row, { x: r.x - x0, y: r.y - y0, width: r.w, height: r.h })
+  }
+
+  /** The box of the active sprite (in its frame's pixels), or null. */
+  get spriteBox(): SpriteBox | null {
+    return this.sprite?.meta.box ?? null
+  }
+
+  /** Sets (or clears, with null) the active sprite's box, with no history. */
+  private setSpriteBoxRaw(b: SpriteBox | null) {
+    const sprite = this.sprite
+    if (!sprite) return
+    if (b) sprite.meta.box = b
+    else delete sprite.meta.box
+  }
+
+  /** The sprite's box being dragged: from the pixel pressed to the one under the pointer,
+   * both in, kept inside the frame. */
+  private dragSpriteBox(d: Extract<Drag, { kind: 'spriteBox' }>, q: Point) {
+    const bmp = this.bmp!
+    const inFrame = (p: Point) => ({ x: Math.max(0, Math.min(bmp.width - 1, p.x)), y: Math.max(0, Math.min(bmp.height - 1, p.y)) })
+    const r = rectFromCorners(inFrame(d.start), inFrame(q))
+    this.setSpriteBoxRaw({ x: r.x, y: r.y, width: r.w, height: r.h })
   }
 
   private pick(p: Point) {
@@ -1075,6 +1122,11 @@ export class Editor {
       if (boxes.length) pl.sprite.meta.solid = boxes
       else delete pl.sprite.meta.solid
       this.onEdit(c.name)
+    } else if (c.kind === 'spriteBox') {
+      const b = undo ? c.before : c.after
+      if (b) pl.sprite.meta.box = { ...b }
+      else delete pl.sprite.meta.box
+      this.onEdit(c.name)
     } else if (c.kind === 'frames') {
       this.restore(pl, undo ? c.before : c.after)
       this.onEdit(c.name)
@@ -1127,6 +1179,18 @@ export class Editor {
         if (moved.length) pl.sprite.meta.solid = moved
         else delete pl.sprite.meta.solid
         items.push({ kind: 'solid', name, before: solid, after: moved.map((b) => ({ ...b })) })
+      }
+    }
+    // A sprite's box stays with its pixels too, cut to the new frame (gone if outside it).
+    const b = pl.sprite.meta.box
+    if (b) {
+      const l = Math.max(0, b.x + ox), t = Math.max(0, b.y + oy)
+      const r = Math.min(w, b.x + ox + b.width), bt = Math.min(h, b.y + oy + b.height)
+      const moved = r > l && bt > t ? { x: l, y: t, width: r - l, height: bt - t } : null
+      if (JSON.stringify(moved) !== JSON.stringify(b)) {
+        if (moved) pl.sprite.meta.box = moved
+        else delete pl.sprite.meta.box
+        items.push({ kind: 'spriteBox', name, before: b, after: moved && { ...moved } })
       }
     }
     const o = pl.sprite.meta.origin

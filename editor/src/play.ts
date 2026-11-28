@@ -15,7 +15,7 @@ import { attachScreen, writtenText } from '../../runtime/screen'
 import { setSprites, type SpriteData } from '../../runtime/sprites'
 import { heardSounds, setSounds } from '../../runtime/sounds'
 import { time } from '../../runtime/time'
-import { actorName, camera, cameraMapName, drawWorld, placeActors, resetWorld, setActorFiles, worldActors } from '../../runtime/world'
+import { actorName, camera, cameraMapName, drawWorld, placeActors, resetActorClasses, resetWorld, worldActors } from '../../runtime/world'
 import type { Bitmap } from './bitmap'
 import { TRANSPARENT } from './color'
 import { h } from './dialog'
@@ -158,7 +158,7 @@ export class Player {
     resetWorld()
     setMaps(16, [], [])
     setSounds([])
-    setActorFiles({})
+    resetActorClasses()
     this.run(noGame, NO_GAME_SIZE, h('div', {}, h('p', { className: 'play-caption-title' }, 'No game in Lucarne yet.'), hint))
   }
 
@@ -297,7 +297,7 @@ export async function fetchGameCode(storage: Storage): Promise<{ code: string } 
   return code === null ? { missing: true, built } : { code }
 }
 
-/** Hands the engine every sprite, font, sound, tileset, actor file and map of the game, as saved,
+/** Hands the engine every sprite, font, sound, tileset and map of the game, as saved,
  * before its code runs. Returns the game's settings. */
 export async function loadGameData(project: Project) {
   const settings = await project.loadSettings()
@@ -305,7 +305,7 @@ export async function loadGameData(project: Project) {
   setFonts(await loadFonts(project))
   setSounds(await loadSounds(project))
   setMaps(settings.tileSize, await loadTilesets(project), await loadMaps(project))
-  setActorFiles(Object.fromEntries(await project.loadActorFiles()))
+  resetActorClasses()
   return settings
 }
 
@@ -373,6 +373,7 @@ function toSpriteData(sprite: Sprite): SpriteData {
     frameHeight: meta.frameHeight,
     durations: meta.frames.map((f) => f.duration),
     origin: meta.origin,
+    box: meta.box,
     sheet: canvas,
   }
 }
@@ -445,7 +446,7 @@ function describeActors() {
   return worldActors()
     .filter((t) => !t.removed)
     .map((t) => {
-      const out: Record<string, unknown> = { actor: actorName(t.constructor) ?? t.constructor.name }
+      const out: Record<string, unknown> = { actor: actorName(t.constructor) ?? t.constructor.name, x: round(t.x), y: round(t.y) }
       for (const [k, v] of Object.entries(t)) {
         if (['number', 'string', 'boolean'].includes(typeof v)) out[k] = typeof v === 'number' ? round(v) : v
         else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[k] = v
@@ -459,7 +460,7 @@ function describeActors() {
 }
 
 /**
- * Runs game.js: it registers the actor files (see `actorClasses`), its top-level code runs
+ * Runs game.js: it registers the actors (see `actorClasses`), its top-level code runs
  * (spawning its actors), and it gives the game code/main.ts declares.
  */
 export async function importGame(code: string): Promise<GameConfig> {

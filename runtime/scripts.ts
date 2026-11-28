@@ -81,9 +81,9 @@ export async function wakeScripts() {
   for (const w of due) {
     running = w.by
     w.resolve()
-    // Every promise the script awaits settles before the next task: once it has run, the
-    // script is waiting on the engine again, or done.
-    await nextTask()
+    // The script runs in promise steps (microtasks): let it take them until it waits on
+    // the engine again, or is done.
+    await settle()
   }
   running = 'game'
 }
@@ -103,16 +103,21 @@ export function resetScripts() {
   running = 'game'
 }
 
-/** Resolves on the next task, after every pending promise (setTimeout would wait 4 ms). */
-function nextTask() {
-  // Node (the tests) has setImmediate; browsers have MessageChannel.
-  const immediate = (globalThis as { setImmediate?: (fn: () => void) => void }).setImmediate
-  return new Promise<void>((resolve) => {
-    if (immediate) immediate(() => resolve())
-    else {
-      const channel = new MessageChannel()
-      channel.port1.onmessage = () => resolve()
-      channel.port2.postMessage(null)
-    }
-  })
+/**
+ * Promise steps a woken script may take before the update goes on. Each `await` takes one
+ * to three, so this lets a script go through scores of nested async functions (a
+ * conversation calling `say` calling `showPage`…) to its next wait. Steps cost next to
+ * nothing: 256 take about 10 µs.
+ */
+const SETTLE_STEPS = 256
+
+/**
+ * Lets the promises a script is waiting on settle, in promise steps only. It never waits
+ * for the browser's next task: the browser may run a task late (Safari passes the messages
+ * of a MessageChannel through another process), and an update that waited on one for every
+ * script it woke made the game fall behind, then drop frames. Promise steps run in an
+ * order the language fixes, the same on every browser: scripts stay exact.
+ */
+async function settle() {
+  for (let i = 0; i < SETTLE_STEPS; i++) await null
 }

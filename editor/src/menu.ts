@@ -4,17 +4,16 @@
 import { h } from './dialog'
 import { icon } from './icons'
 
-export type Page = 'editor' | 'actors' | 'world' | 'music' | 'sounds' | 'settings'
+export type Page = 'editor' | 'world' | 'music' | 'sounds' | 'settings'
 
-const PAGES: Record<Page, string> = { editor: '', actors: '#actors', world: '#world', music: '#music', sounds: '#sounds', settings: '#settings' }
+const PAGES: Record<Page, string> = { editor: '', world: '#world', music: '#music', sounds: '#sounds', settings: '#settings' }
 
 /**
  * The engine's editors, in the switch at the left of every top bar, in the order a game is
- * made: the pixels, the actors made of them, the world they are placed in, its music and sounds.
+ * made: the pixels, the world the actors are placed in, its music and sounds.
  */
 const EDITORS: { page: Page; label: string; title: string }[] = [
   { page: 'editor', label: 'Pixels', title: 'Pixel art editor: sprites and tilesets' },
-  { page: 'actors', label: 'Actors', title: 'Actors: the box and the values of each actor' },
   { page: 'world', label: 'World', title: 'World editor: maps and actors' },
   { page: 'music', label: 'Music', title: 'Music: songs, played by instruments' },
   { page: 'sounds', label: 'Sounds', title: 'Sounds: sound effects, drawn' },
@@ -23,7 +22,6 @@ const EDITORS: { page: Page; label: string; title: string }[] = [
 export function currentPage(): Page {
   if (location.hash === PAGES.settings) return 'settings'
   if (location.hash === PAGES.world) return 'world'
-  if (location.hash === PAGES.actors) return 'actors'
   if (location.hash === PAGES.music) return 'music'
   if (location.hash === PAGES.sounds) return 'sounds'
   return 'editor'

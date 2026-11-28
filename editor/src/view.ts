@@ -191,10 +191,15 @@ export class View extends Viewport {
       }
     }
 
-    // Solid boxes of the tilesets (Box tool only): hatched, so the art shows through.
+    // Boxes (Box tool only): the tilesets' solid tiles and the sprites' bodies, hatched, so
+    // the art shows through.
     if (tool === 'box') {
       for (const { name, pl, x, y } of visible) {
-        if (!isTileset(name)) continue
+        const box = pl.sprite.meta.box
+        if (!isTileset(name)) {
+          if (box) this.drawSolid(x + box.x * z, y + box.y * z, box.width * z, box.height * z, lw)
+          continue
+        }
         for (const b of pl.sprite.meta.solid ?? []) {
           const bx = x + (b.column * editor.tileSize + b.x) * z
           const by = y + (b.row * editor.tileSize + b.y) * z

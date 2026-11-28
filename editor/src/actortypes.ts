@@ -1,17 +1,16 @@
-// The game's actors, as the Actors page and the world editor show them: one per actor file
-// (actors/<name>.ts), with what its code declares.
+// The game's actors, as the world editor shows them: one per actors/<name>.ts, with what
+// its code declares.
 //
 // The classes live in the game's code, so the editor runs it: game.js is built (on Mac), it
-// registers the actor files, and its top-level code runs. Each actor is then created once
-// outside the world, with its code's defaults (its variables) and with the values of its
-// actor files (its picture), never updated, and drawn by its own `draw()`: the editor
-// shows exactly what the game's first frame shows, with no picture to choose for the
-// editor.
+// registers the actors, and its top-level code runs. Each actor is then created once
+// outside the world, with its code's defaults, never updated, and drawn by its own
+// `draw()`: the editor shows exactly what the game's first frame shows, with no picture to
+// choose for the editor.
 
 import { resetTime } from '../../runtime/time'
 import { spriteFramesOf, type SpriteFrame } from '../../runtime/screen'
 import type { Variable } from '../../runtime/values'
-import { actorClasses, actorParents, actorValues, actorVariables, drawActorOn, probe, resetWorld, type Actor } from '../../runtime/world'
+import { actorClasses, actorVariables, drawActorOn, probe, resetWorld, type Actor } from '../../runtime/world'
 import type { Rect } from './bitmap'
 import { fetchGameCode, importGame, isPlaying, loadGameData, useEngine } from './play'
 import type { Project } from './project'
@@ -33,13 +32,11 @@ export interface ActorPicture {
 export interface ActorKind {
   /** Its file's name: what maps place it by. */
   name: string
-  /** The actors it extends, the nearest first: their files' values come before its own. */
-  parents: string[]
-  /** What its code declares, with its defaults, the box first (see runtime/values.ts). */
+  /** What its code declares, with its defaults (see runtime/values.ts). */
   variables: Variable[]
   /** Its picture; null when it draws nothing (a spawner, a trigger). */
   picture: ActorPicture | null
-  /** Why it could not be created or drawn, or what is wrong in its files' values. */
+  /** Why it could not be created or drawn. */
   error?: string
 }
 
@@ -55,7 +52,7 @@ export type ActorKinds =
 const CANVAS = 256
 
 /**
- * The game's actors, with their pictures, as saved (save the actor files first). Null when
+ * The game's actors, with their pictures, as saved (save the sprites first). Null when
  * a game is playing: the engine runs one game at a time, and this runs the game's code.
  */
 export function loadActorKinds(project: Project): Promise<ActorKinds | null> {
@@ -71,17 +68,10 @@ export function loadActorKinds(project: Project): Promise<ActorKinds | null> {
       await importGame(got.code)
       const kinds: ActorKind[] = []
       for (const [name, Type] of actorClasses()) {
-        const kind: ActorKind = { name, parents: actorParents(Type), variables: [], picture: null }
+        const kind: ActorKind = { name, variables: [], picture: null }
         try {
           kind.variables = actorVariables(Type)
-          // A value its files set wrong is said, and drawn without: it is fixed on the page.
-          let values = {}
-          try {
-            values = actorValues(Type)
-          } catch (err) {
-            kind.error = (err as Error).message ?? String(err)
-          }
-          kind.picture = pictureOf(probe(Type, values))
+          kind.picture = pictureOf(probe(Type))
         } catch (err) {
           kind.error = (err as Error).message ?? String(err)
         }

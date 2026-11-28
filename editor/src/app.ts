@@ -28,9 +28,10 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: 'rectFill', label: 'Filled rectangle', key: '⇧R' },
   { id: 'select', label: 'Select', key: 'M' },
   { id: 'move', label: 'Move sprite', key: 'V' },
-  // The image's own tools, after a divider: each works on one kind of image only.
+  // The image's own tools, after a divider: not every kind of image has them. The origin is
+  // a sprite's; the box is a sprite's body, or a tileset's solid tiles (a font has neither).
   { id: 'origin', label: 'Origin (sprites)', key: 'O' },
-  { id: 'box', label: 'Walls (tilesets)', key: 'X' },
+  { id: 'box', label: 'Box', key: 'X' },
 ]
 
 /** Tiles per palette row. A palette always holds whole rows. */
